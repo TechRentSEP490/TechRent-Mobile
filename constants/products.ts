@@ -32,6 +32,7 @@ export type ProductSummary = {
 export type ProductDetail = ProductSummary & {
   brand: string;
   status: string;
+  stock: number;
   specs: ProductSpec[];
   accessories: ProductAccessory[];
   relatedProducts: RelatedProduct[];
@@ -46,6 +47,7 @@ export const products: ProductDetail[] = [
     price: '$5/day',
     brand: 'SuperTech',
     status: 'Active',
+    stock: 12,
     specs: [
       { label: 'Display', value: '6.7" OLED, 120Hz' },
       { label: 'Processor', value: 'Octa-core 3.0GHz' },
@@ -75,6 +77,7 @@ export const products: ProductDetail[] = [
     price: '$25/day',
     brand: 'ProCompute',
     status: 'In stock',
+    stock: 8,
     specs: [
       { label: 'Display', value: '17" QHD, 165Hz' },
       { label: 'Processor', value: 'Intel i9 13th Gen' },
@@ -104,6 +107,7 @@ export const products: ProductDetail[] = [
     price: '$10/day',
     brand: 'FlexiTech',
     status: 'Active',
+    stock: 15,
     specs: [
       { label: 'Display', value: '12.4" LCD, 90Hz' },
       { label: 'Processor', value: 'Octa-core 2.4GHz' },

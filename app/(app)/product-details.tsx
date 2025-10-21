@@ -6,6 +6,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -13,9 +14,20 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { products } from '../../constants/products';
 
+const formatDate = (date: Date) => date.toISOString().split('T')[0];
+const addDays = (date: Date, days: number) => {
+  const nextDate = new Date(date);
+  nextDate.setDate(nextDate.getDate() + days);
+  return nextDate;
+};
+
 export default function ProductDetailsScreen() {
   const [isSpecsOpen, setIsSpecsOpen] = useState(false);
   const [isAccessoriesOpen, setIsAccessoriesOpen] = useState(false);
+  const [isRentOpen, setIsRentOpen] = useState(false);
+  const [quantity, setQuantity] = useState(1);
+  const [startDate, setStartDate] = useState(() => formatDate(new Date()));
+  const [endDate, setEndDate] = useState(() => formatDate(addDays(new Date(), 7)));
   const router = useRouter();
   const { productId } = useLocalSearchParams<{ productId?: string }>();
 
@@ -29,7 +41,34 @@ export default function ProductDetailsScreen() {
     return products[0];
   }, [productId]);
 
-  const { name, model, brand, status, specs, accessories, relatedProducts, reviews } = product;
+  const { name, model, brand, status, specs, accessories, relatedProducts, reviews, price, stock } = product;
+
+  const isOutOfStock = stock <= 0;
+  const maxQuantity = Math.max(stock, 1);
+  const stockLabel = stock > 0 ? `${stock} in stock` : 'Out of stock';
+
+  const rentalDuration = useMemo(() => {
+    const parsedStart = new Date(startDate);
+    const parsedEnd = new Date(endDate);
+    if (Number.isNaN(parsedStart.getTime()) || Number.isNaN(parsedEnd.getTime())) {
+      return 0;
+    }
+    const diff = Math.round((parsedEnd.getTime() - parsedStart.getTime()) / (1000 * 60 * 60 * 24));
+    return diff > 0 ? diff : 0;
+  }, [startDate, endDate]);
+
+  const rentalDurationLabel = rentalDuration === 1 ? '1 day' : `${rentalDuration} days`;
+
+  const openRentModal = () => {
+    const today = new Date();
+    setQuantity(1);
+    setStartDate(formatDate(today));
+    setEndDate(formatDate(addDays(today, 7)));
+    setIsRentOpen(true);
+  };
+
+  const decreaseQuantity = () => setQuantity((prev) => Math.max(prev - 1, 1));
+  const increaseQuantity = () => setQuantity((prev) => Math.min(prev + 1, maxQuantity));
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
@@ -85,8 +124,12 @@ export default function ProductDetailsScreen() {
           </TouchableOpacity>
         </View>
 
-        <TouchableOpacity style={styles.primaryButton}>
+        <TouchableOpacity style={styles.primaryButton} onPress={openRentModal}>
           <Text style={styles.primaryButtonText}>Rent Now</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.secondaryButton} onPress={openRentModal}>
+          <Text style={styles.secondaryButtonText}>Add to Cart</Text>
         </TouchableOpacity>
 
         <View style={styles.cardSection}>
@@ -130,6 +173,119 @@ export default function ProductDetailsScreen() {
           />
         </View>
       </ScrollView>
+
+      <Modal visible={isRentOpen} transparent animationType="fade" onRequestClose={() => setIsRentOpen(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.rentModalContent}>
+            <View style={styles.rentModalHeader}>
+              <Text style={styles.rentModalTitle}>Rent Device</Text>
+              <TouchableOpacity style={styles.rentModalClose} onPress={() => setIsRentOpen(false)}>
+                <Ionicons name="close" size={20} color="#111111" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.rentSummary}>
+              <View style={styles.rentSummaryThumb}>
+                <Ionicons name="phone-portrait-outline" size={24} color="#6f6f6f" />
+              </View>
+              <View style={styles.rentSummaryDetails}>
+                <Text style={styles.rentSummaryName}>{name}</Text>
+                <Text style={styles.rentSummaryMeta}>{`${model} • ${brand}`}</Text>
+                <Text style={styles.rentSummaryPrice}>{price}</Text>
+              </View>
+            </View>
+
+            <View style={styles.rentFieldGroup}>
+              <Text style={styles.rentFieldLabel}>Quantity</Text>
+              <View style={styles.rentQuantityControl}>
+                <TouchableOpacity
+                  style={[styles.rentQuantityButton, quantity === 1 && styles.rentQuantityButtonDisabled]}
+                  onPress={decreaseQuantity}
+                  disabled={quantity === 1}
+                >
+                  <Ionicons name="remove" size={18} color="#111111" />
+                </TouchableOpacity>
+                <Text style={styles.rentQuantityValue}>{quantity}</Text>
+                <TouchableOpacity
+                  style={[
+                    styles.rentQuantityButton,
+                    quantity === maxQuantity && styles.rentQuantityButtonDisabled,
+                  ]}
+                  onPress={increaseQuantity}
+                  disabled={quantity === maxQuantity}
+                >
+                  <Ionicons name="add" size={18} color="#111111" />
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.rentStockLabel}>{stockLabel}</Text>
+            </View>
+
+            <View style={styles.rentFieldRow}>
+              <View style={styles.rentFieldHalf}>
+                <Text style={styles.rentFieldLabel}>Start Date</Text>
+                <View style={styles.rentDateControl}>
+                  <TextInput
+                    style={styles.rentDateInput}
+                    value={startDate}
+                    onChangeText={setStartDate}
+                    placeholder="YYYY-MM-DD"
+                    placeholderTextColor="#9c9c9c"
+                  />
+                  <TouchableOpacity
+                    style={styles.rentCalendarButton}
+                    onPress={() => setStartDate(formatDate(new Date()))}
+                  >
+                    <Ionicons name="calendar-outline" size={18} color="#111111" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+              <View style={styles.rentFieldHalf}>
+                <Text style={styles.rentFieldLabel}>End Date</Text>
+                <View style={styles.rentDateControl}>
+                  <TextInput
+                    style={styles.rentDateInput}
+                    value={endDate}
+                    onChangeText={setEndDate}
+                    placeholder="YYYY-MM-DD"
+                    placeholderTextColor="#9c9c9c"
+                  />
+                  <TouchableOpacity
+                    style={styles.rentCalendarButton}
+                    onPress={() => {
+                      const base = new Date();
+                      setEndDate(formatDate(addDays(base, 7)));
+                    }}
+                  >
+                    <Ionicons name="calendar-outline" size={18} color="#111111" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+
+            <View style={styles.rentFieldGroup}>
+              <Text style={styles.rentFieldLabel}>Rental Duration</Text>
+              <View style={styles.rentDurationRow}>
+                <Text style={styles.rentDurationValue}>{rentalDurationLabel}</Text>
+              </View>
+            </View>
+
+            <View style={styles.rentFooter}>
+              <TouchableOpacity
+                style={[styles.rentSecondaryAction, isOutOfStock && styles.disabledButton]}
+                disabled={isOutOfStock}
+              >
+                <Text style={styles.rentSecondaryActionText}>Add to Cart</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.rentPrimaryAction, isOutOfStock && styles.disabledButton]}
+                disabled={isOutOfStock}
+              >
+                <Text style={styles.rentPrimaryActionText}>Rent Now</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       <Modal visible={isSpecsOpen} transparent animationType="fade">
         <View style={styles.modalBackdrop}>
@@ -279,6 +435,19 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
+  secondaryButton: {
+    borderWidth: 1,
+    borderColor: '#111111',
+    borderRadius: 12,
+    paddingVertical: 16,
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  secondaryButtonText: {
+    color: '#111111',
+    fontSize: 16,
+    fontWeight: '600',
+  },
   cardSection: {
     marginBottom: 24,
   },
@@ -392,5 +561,182 @@ const styles = StyleSheet.create({
   modalCloseText: {
     color: '#ffffff',
     fontWeight: '600',
+  },
+  rentModalContent: {
+    width: '100%',
+    borderRadius: 20,
+    backgroundColor: '#ffffff',
+    padding: 24,
+  },
+  rentModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  rentModalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#111111',
+  },
+  rentModalClose: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#f4f4f4',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rentSummary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  rentSummaryThumb: {
+    width: 56,
+    height: 56,
+    borderRadius: 18,
+    backgroundColor: '#f4f4f4',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 16,
+  },
+  rentSummaryDetails: {
+    flex: 1,
+  },
+  rentSummaryName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#111111',
+  },
+  rentSummaryMeta: {
+    color: '#6f6f6f',
+    marginTop: 4,
+  },
+  rentSummaryPrice: {
+    color: '#111111',
+    fontWeight: '600',
+    marginTop: 4,
+  },
+  rentFieldGroup: {
+    marginBottom: 18,
+  },
+  rentFieldLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111111',
+    marginBottom: 8,
+  },
+  rentQuantityControl: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderColor: '#e5e5e5',
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#fafafa',
+  },
+  rentQuantityButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e1e1e1',
+    backgroundColor: '#ffffff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rentQuantityButtonDisabled: {
+    opacity: 0.5,
+  },
+  rentQuantityValue: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#111111',
+  },
+  rentStockLabel: {
+    marginTop: 8,
+    color: '#6f6f6f',
+  },
+  rentFieldRow: {
+    flexDirection: 'row',
+    gap: 16,
+  },
+  rentFieldHalf: {
+    flex: 1,
+  },
+  rentDateControl: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e5e5e5',
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    backgroundColor: '#fafafa',
+  },
+  rentDateInput: {
+    flex: 1,
+    fontSize: 15,
+    color: '#111111',
+    paddingVertical: 12,
+    marginRight: 12,
+  },
+  rentCalendarButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#e1e1e1',
+    backgroundColor: '#ffffff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rentDurationRow: {
+    borderWidth: 1,
+    borderColor: '#e5e5e5',
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    backgroundColor: '#fafafa',
+  },
+  rentDurationValue: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#111111',
+  },
+  rentFooter: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 8,
+  },
+  rentSecondaryAction: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#111111',
+    borderRadius: 12,
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  rentSecondaryActionText: {
+    color: '#111111',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  rentPrimaryAction: {
+    flex: 1,
+    borderRadius: 12,
+    backgroundColor: '#111111',
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  rentPrimaryActionText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  disabledButton: {
+    opacity: 0.5,
   },
 });
