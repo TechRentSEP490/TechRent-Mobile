@@ -1,5 +1,5 @@
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   FlatList,
   Modal,
@@ -10,37 +10,26 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
-
-const specs = [
-  { label: 'Display', value: '6.7" OLED, 120Hz' },
-  { label: 'Processor', value: 'Octa-core 3.0GHz' },
-  { label: 'RAM', value: '12GB' },
-  { label: 'Storage', value: '256GB' },
-  { label: 'Battery', value: '4500mAh' },
-];
-
-const accessories = [
-  { label: 'Wireless Charger', category: 'Power' },
-  { label: 'Protective Case', category: 'Covers' },
-  { label: 'USB-C Cable', category: 'Connectivity' },
-  { label: 'Noise Cancelling Buds', category: 'Audio' },
-];
-
-const relatedProducts = [
-  { id: 'modelY', title: 'Best Seller', subtitle: 'Model Y overview', price: '$299' },
-  { id: 'modelZ', title: 'New Arrival', subtitle: 'Model Z overview', price: '$349' },
-];
-
-const customerReviews = [
-  { id: 'alice', name: 'Alice', comment: 'Amazing product! Totally worth the price.' },
-  { id: 'bob', name: 'Bob', comment: 'Great performance. Life could be better.' },
-];
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { products } from '../../constants/products';
 
 export default function ProductDetailsScreen() {
   const [isSpecsOpen, setIsSpecsOpen] = useState(false);
   const [isAccessoriesOpen, setIsAccessoriesOpen] = useState(false);
   const router = useRouter();
+  const { productId } = useLocalSearchParams<{ productId?: string }>();
+
+  const product = useMemo(() => {
+    if (typeof productId === 'string') {
+      const match = products.find((item) => item.id === productId);
+      if (match) {
+        return match;
+      }
+    }
+    return products[0];
+  }, [productId]);
+
+  const { name, model, brand, status, specs, accessories, relatedProducts, reviews } = product;
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
@@ -71,8 +60,8 @@ export default function ProductDetailsScreen() {
 
         <View style={styles.productInfo}>
           <View>
-            <Text style={styles.productName}>Smartphone X</Text>
-            <Text style={styles.productMeta}>Brand: SuperTech | Active</Text>
+            <Text style={styles.productName}>{name}</Text>
+            <Text style={styles.productMeta}>{`Model: ${model} | Brand: ${brand} | ${status}`}</Text>
           </View>
           <MaterialCommunityIcons name="bookmark-outline" size={28} color="#111" />
         </View>
@@ -116,7 +105,7 @@ export default function ProductDetailsScreen() {
         <View style={styles.cardSection}>
           <Text style={styles.sectionTitle}>Customer Reviews</Text>
           <FlatList
-            data={customerReviews}
+            data={reviews}
             keyExtractor={(item) => item.id}
             renderItem={({ item }) => (
               <View style={styles.reviewCard}>
@@ -126,7 +115,7 @@ export default function ProductDetailsScreen() {
                     {Array.from({ length: 5 }).map((_, index) => (
                       <Ionicons
                         key={index}
-                        name={index < 4 ? 'star' : 'star-outline'}
+                        name={index < item.rating ? 'star' : 'star-outline'}
                         size={16}
                         color="#f8b400"
                       />

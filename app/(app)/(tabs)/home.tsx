@@ -11,33 +11,13 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import { productSummaries } from '../../../constants/products';
 
 const categories = [
   { id: 'mobile', title: 'Mobile Phones', icon: 'phone-portrait-outline' },
   { id: 'laptop', title: 'Laptops', icon: 'laptop-outline' },
   { id: 'desktop', title: 'Desktops', icon: 'desktop-outline' },
   { id: 'gaming', title: 'Gaming Consoles', icon: 'game-controller-outline' },
-];
-
-const products = [
-  {
-    id: '1',
-    name: 'Sleek smartphone',
-    model: 'SmartPhone X',
-    price: '$5/day',
-  },
-  {
-    id: '2',
-    name: 'Gaming Laptop',
-    model: 'PowerPlay Z',
-    price: '$25/day',
-  },
-  {
-    id: '3',
-    name: 'Tablet 2-in-1',
-    model: 'FlexTab 12',
-    price: '$10/day',
-  },
 ];
 
 const reviews = [
@@ -109,7 +89,7 @@ export default function HomeScreen() {
 
           <Text style={styles.sectionTitle}>Our Products</Text>
           <FlatList
-            data={products}
+            data={productSummaries}
             keyExtractor={(item) => item.id}
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -118,7 +98,12 @@ export default function HomeScreen() {
               <TouchableOpacity
                 style={styles.productCard}
                 activeOpacity={0.85}
-                onPress={() => router.push('/(app)/product-details')}
+                onPress={() =>
+                  router.push({
+                    pathname: '/(app)/product-details',
+                    params: { productId: item.id },
+                  })
+                }
               >
                 <MaterialCommunityIcons name="laptop" size={36} color="#111" style={styles.productIcon} />
                 <Text style={styles.productName}>{item.name}</Text>
