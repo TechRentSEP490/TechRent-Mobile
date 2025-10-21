@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -104,6 +104,19 @@ export default function NotificationsScreen() {
     [showAll]
   );
 
+  const handleActionPress = useCallback(
+    (action?: NotificationAction) => {
+      if (!action) {
+        return;
+      }
+
+      if (action.label === 'Continue Process') {
+        router.push('/(app)/(tabs)/orders?flow=continue');
+      }
+    },
+    [router]
+  );
+
   return (
     <SafeAreaView style={styles.safeArea} edges={["top"]}>
       <View style={styles.container}>
@@ -142,7 +155,10 @@ export default function NotificationsScreen() {
                   <View style={styles.notificationFooter}>
                     <Text style={styles.timestamp}>{item.timestamp}</Text>
                     {item.action ? (
-                      <TouchableOpacity style={styles.actionButton}>
+                      <TouchableOpacity
+                        style={styles.actionButton}
+                        onPress={() => handleActionPress(item.action)}
+                      >
                         <Text style={styles.actionLabel}>{item.action.label}</Text>
                       </TouchableOpacity>
                     ) : null}

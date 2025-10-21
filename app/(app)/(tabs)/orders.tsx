@@ -1,5 +1,5 @@
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Modal,
   Pressable,
@@ -12,6 +12,7 @@ import {
   TextInputKeyPressEventData,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 
 const PAYMENT_OPTIONS = [
   {
@@ -29,6 +30,8 @@ const PAYMENT_OPTIONS = [
 ];
 
 export default function OrdersScreen() {
+  const router = useRouter();
+  const { flow } = useLocalSearchParams<{ flow?: string | string[] }>();
   const [isModalVisible, setModalVisible] = useState(false);
   const [currentStep, setCurrentStep] = useState(1);
   const [otpDigits, setOtpDigits] = useState<string[]>(Array(6).fill(''));
@@ -37,10 +40,12 @@ export default function OrdersScreen() {
 
   const progressWidth = useMemo(() => `${(currentStep / 3) * 100}%`, [currentStep]);
 
-  const openFlow = () => {
+  const openFlow = useCallback(() => {
     setModalVisible(true);
     setCurrentStep(1);
-  };
+    setOtpDigits(Array(6).fill(''));
+    setSelectedPayment(PAYMENT_OPTIONS[0].id);
+  }, []);
 
   const resetFlow = () => {
     setModalVisible(false);
@@ -48,6 +53,15 @@ export default function OrdersScreen() {
     setOtpDigits(Array(6).fill(''));
     setSelectedPayment(PAYMENT_OPTIONS[0].id);
   };
+
+  useEffect(() => {
+    const continueFlowParam = Array.isArray(flow) ? flow[0] : flow;
+
+    if (continueFlowParam === 'continue') {
+      openFlow();
+      router.replace('/(app)/(tabs)/orders');
+    }
+  }, [flow, openFlow, router]);
 
   const goToNextStep = () => {
     setCurrentStep((prev) => Math.min(prev + 1, 3));
