@@ -10,6 +10,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 
 const categories = [
   { id: 'mobile', title: 'Mobile Phones', icon: 'phone-portrait-outline' },
@@ -58,6 +59,7 @@ const reviews = [
 ];
 
 export default function HomeScreen() {
+  const router = useRouter();
   const quickActions = useMemo(
     () => [
       { key: 'notifications', icon: 'notifications-outline' },
@@ -113,12 +115,16 @@ export default function HomeScreen() {
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.horizontalList}
             renderItem={({ item }) => (
-              <View style={styles.productCard}>
+              <TouchableOpacity
+                style={styles.productCard}
+                activeOpacity={0.85}
+                onPress={() => router.push('/(app)/product-details')}
+              >
                 <MaterialCommunityIcons name="laptop" size={36} color="#111" style={styles.productIcon} />
                 <Text style={styles.productName}>{item.name}</Text>
                 <Text style={styles.productModel}>{item.model}</Text>
                 <Text style={styles.productPrice}>{item.price}</Text>
-              </View>
+              </TouchableOpacity>
             )}
           />
 

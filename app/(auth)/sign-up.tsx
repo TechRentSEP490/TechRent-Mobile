@@ -11,18 +11,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 
-import { useAuth } from '@/contexts/AuthContext';
-
-export default function SignInScreen() {
+export default function SignUpScreen() {
   const router = useRouter();
-  const { signIn } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-
-  const handleSignIn = () => {
-    signIn();
-    router.replace('/(app)/(tabs)/home');
-  };
+  const [confirmPassword, setConfirmPassword] = useState('');
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
@@ -43,6 +36,7 @@ export default function SignInScreen() {
             onChangeText={setEmail}
             autoCapitalize="none"
           />
+          <Text style={styles.helperText}>Find what you need easily!</Text>
         </View>
 
         <View style={styles.fieldGroup}>
@@ -57,27 +51,27 @@ export default function SignInScreen() {
           />
         </View>
 
-        <View style={styles.inlineButtons}>
-          <TouchableOpacity style={[styles.button, styles.inlineButton, styles.secondaryButton]}>
-            <Text style={[styles.buttonText, styles.secondaryText]}>Forgot Password?</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.button, styles.inlineButton, styles.primaryButton]}
-            onPress={handleSignIn}
-          >
-            <Text style={[styles.buttonText, styles.primaryText]}>Sign In</Text>
-          </TouchableOpacity>
+        <View style={styles.fieldGroup}>
+          <Text style={styles.label}>Confirm Password</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="Confirm your password"
+            placeholderTextColor="#7f7f7f"
+            secureTextEntry
+            value={confirmPassword}
+            onChangeText={setConfirmPassword}
+          />
         </View>
 
-        <TouchableOpacity style={[styles.button, styles.outlineButton]}>
-          <Text style={[styles.buttonText, styles.outlineText]}>Login with Google</Text>
+        <TouchableOpacity style={[styles.button, styles.primaryButton]}>
+          <Text style={[styles.buttonText, styles.primaryText]}>Create Account</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.button, styles.primaryButton, styles.fullWidthButton]}
-          onPress={() => router.push('/(auth)/sign-up')}
+          style={[styles.button, styles.outlineButton]}
+          onPress={() => router.replace('/(auth)/sign-in')}
         >
-          <Text style={[styles.buttonText, styles.primaryText]}>Sign Up</Text>
+          <Text style={[styles.buttonText, styles.outlineText]}>Sign In</Text>
         </TouchableOpacity>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -109,6 +103,11 @@ const styles = StyleSheet.create({
     color: '#1a1a1a',
     marginBottom: 8,
   },
+  helperText: {
+    marginTop: 8,
+    color: '#7f7f7f',
+    fontSize: 13,
+  },
   input: {
     borderWidth: 1,
     borderColor: '#e0e0e0',
@@ -119,12 +118,6 @@ const styles = StyleSheet.create({
     color: '#000000',
     backgroundColor: '#ffffff',
   },
-  inlineButtons: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 12,
-    marginTop: 12,
-  },
   button: {
     borderRadius: 10,
     paddingVertical: 14,
@@ -132,22 +125,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  inlineButton: {
-    flex: 1,
-  },
   primaryButton: {
     backgroundColor: '#000000',
   },
   primaryText: {
     color: '#ffffff',
-    fontWeight: '600',
-    fontSize: 16,
-  },
-  secondaryButton: {
-    backgroundColor: '#f5f5f5',
-  },
-  secondaryText: {
-    color: '#000000',
     fontWeight: '600',
     fontSize: 16,
   },
@@ -161,9 +143,6 @@ const styles = StyleSheet.create({
     color: '#000000',
     fontWeight: '600',
     fontSize: 16,
-  },
-  fullWidthButton: {
-    marginTop: 16,
   },
   buttonText: {
     textAlign: 'center',
