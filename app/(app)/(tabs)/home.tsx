@@ -42,10 +42,14 @@ export default function HomeScreen() {
   const router = useRouter();
   const quickActions = useMemo(
     () => [
-      { key: 'notifications', icon: 'notifications-outline' },
+      {
+        key: 'notifications',
+        icon: 'notifications-outline',
+        onPress: () => router.push('/(app)/notifications'),
+      },
       { key: 'cart', icon: 'cart-outline' },
     ],
-    []
+    [router]
   );
 
   return (
@@ -56,7 +60,12 @@ export default function HomeScreen() {
             <Text style={styles.brand}>TechRent</Text>
             <View style={styles.headerIcons}>
               {quickActions.map((item) => (
-                <TouchableOpacity key={item.key} style={styles.headerIconButton}>
+                <TouchableOpacity
+                  key={item.key}
+                  style={styles.headerIconButton}
+                  onPress={item.onPress}
+                  activeOpacity={item.onPress ? 0.7 : 1}
+                >
                   <Ionicons name={item.icon as any} size={22} color="#111" />
                 </TouchableOpacity>
               ))}
