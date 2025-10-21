@@ -25,6 +25,7 @@ export default function ProductDetailsScreen() {
   const [isSpecsOpen, setIsSpecsOpen] = useState(false);
   const [isAccessoriesOpen, setIsAccessoriesOpen] = useState(false);
   const [isRentOpen, setIsRentOpen] = useState(false);
+  const [rentMode, setRentMode] = useState<'rent' | 'cart' | null>(null);
   const [quantity, setQuantity] = useState(1);
   const [startDate, setStartDate] = useState(() => formatDate(new Date()));
   const [endDate, setEndDate] = useState(() => formatDate(addDays(new Date(), 7)));
@@ -59,12 +60,44 @@ export default function ProductDetailsScreen() {
 
   const rentalDurationLabel = rentalDuration === 1 ? '1 day' : `${rentalDuration} days`;
 
-  const openRentModal = () => {
+  const openRentModal = (mode: 'rent' | 'cart') => {
     const today = new Date();
     setQuantity(1);
     setStartDate(formatDate(today));
     setEndDate(formatDate(addDays(today, 7)));
+    setRentMode(mode);
     setIsRentOpen(true);
+  };
+
+  const closeRentModal = () => {
+    setIsRentOpen(false);
+    setRentMode(null);
+  };
+
+  const isPrimaryDisabled = isOutOfStock || rentalDuration <= 0 || rentMode === null;
+
+  const handlePrimaryAction = () => {
+    if (isPrimaryDisabled || rentMode === null) {
+      return;
+    }
+
+    const destinationProductId = product.id;
+
+    if (rentMode === 'cart') {
+      closeRentModal();
+      return;
+    }
+
+    closeRentModal();
+    router.push({
+      pathname: '/(app)/cart',
+      params: {
+        productId: destinationProductId,
+        quantity: String(quantity),
+        startDate,
+        endDate,
+      },
+    });
   };
 
   const decreaseQuantity = () => setQuantity((prev) => Math.max(prev - 1, 1));
@@ -124,11 +157,11 @@ export default function ProductDetailsScreen() {
           </TouchableOpacity>
         </View>
 
-        <TouchableOpacity style={styles.primaryButton} onPress={openRentModal}>
+        <TouchableOpacity style={styles.primaryButton} onPress={() => openRentModal('rent')}>
           <Text style={styles.primaryButtonText}>Rent Now</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.secondaryButton} onPress={openRentModal}>
+        <TouchableOpacity style={styles.secondaryButton} onPress={() => openRentModal('cart')}>
           <Text style={styles.secondaryButtonText}>Add to Cart</Text>
         </TouchableOpacity>
 
@@ -174,12 +207,12 @@ export default function ProductDetailsScreen() {
         </View>
       </ScrollView>
 
-      <Modal visible={isRentOpen} transparent animationType="fade" onRequestClose={() => setIsRentOpen(false)}>
+      <Modal visible={isRentOpen} transparent animationType="fade" onRequestClose={closeRentModal}>
         <View style={styles.modalBackdrop}>
           <View style={styles.rentModalContent}>
             <View style={styles.rentModalHeader}>
               <Text style={styles.rentModalTitle}>Rent Device</Text>
-              <TouchableOpacity style={styles.rentModalClose} onPress={() => setIsRentOpen(false)}>
+              <TouchableOpacity style={styles.rentModalClose} onPress={closeRentModal}>
                 <Ionicons name="close" size={20} color="#111111" />
               </TouchableOpacity>
             </View>
@@ -271,16 +304,23 @@ export default function ProductDetailsScreen() {
 
             <View style={styles.rentFooter}>
               <TouchableOpacity
-                style={[styles.rentSecondaryAction, isOutOfStock && styles.disabledButton]}
-                disabled={isOutOfStock}
+                style={[
+                  styles.rentPrimaryAction,
+                  rentMode === 'cart' && styles.cartModeButton,
+                  isPrimaryDisabled && styles.disabledButton,
+                ]}
+                disabled={isPrimaryDisabled}
+                onPress={handlePrimaryAction}
               >
-                <Text style={styles.rentSecondaryActionText}>Add to Cart</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.rentPrimaryAction, isOutOfStock && styles.disabledButton]}
-                disabled={isOutOfStock}
-              >
-                <Text style={styles.rentPrimaryActionText}>Rent Now</Text>
+                <Text
+                  style={[
+                    styles.rentPrimaryActionText,
+                    rentMode === 'cart' && styles.cartModeButtonText,
+                    isPrimaryDisabled && styles.disabledButtonText,
+                  ]}
+                >
+                  {rentMode === 'cart' ? 'Add to Cart' : 'Rent Now'}
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -707,36 +747,33 @@ const styles = StyleSheet.create({
     color: '#111111',
   },
   rentFooter: {
-    flexDirection: 'row',
-    gap: 12,
     marginTop: 8,
-  },
-  rentSecondaryAction: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: '#111111',
-    borderRadius: 12,
-    paddingVertical: 16,
-    alignItems: 'center',
-  },
-  rentSecondaryActionText: {
-    color: '#111111',
-    fontSize: 16,
-    fontWeight: '600',
+    alignItems: 'stretch',
   },
   rentPrimaryAction: {
-    flex: 1,
     borderRadius: 12,
     backgroundColor: '#111111',
     paddingVertical: 16,
     alignItems: 'center',
+    width: '100%',
   },
   rentPrimaryActionText: {
     color: '#ffffff',
     fontSize: 16,
     fontWeight: '600',
   },
+  cartModeButton: {
+    backgroundColor: '#f4f4f4',
+    borderWidth: 1,
+    borderColor: '#111111',
+  },
+  cartModeButtonText: {
+    color: '#111111',
+  },
   disabledButton: {
     opacity: 0.5,
+  },
+  disabledButtonText: {
+    color: '#cccccc',
   },
 });
