@@ -2,7 +2,6 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useMemo } from 'react';
 import {
   FlatList,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -10,6 +9,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 const categories = [
   { id: 'mobile', title: 'Mobile Phones', icon: 'phone-portrait-outline' },
@@ -58,29 +58,26 @@ const reviews = [
 ];
 
 export default function HomeScreen() {
-  const bottomItems = useMemo(
+  const quickActions = useMemo(
     () => [
-      { key: 'Home', icon: 'home-outline' },
-      { key: 'Search', icon: 'search-outline' },
-      { key: 'Orders', icon: 'cube-outline' },
-      { key: 'Profile', icon: 'person-outline' },
+      { key: 'notifications', icon: 'notifications-outline' },
+      { key: 'cart', icon: 'cart-outline' },
     ],
     []
   );
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={styles.safeArea} edges={["top"]}>
       <View style={styles.container}>
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.contentContainer}>
           <View style={styles.header}>
             <Text style={styles.brand}>TechRent</Text>
             <View style={styles.headerIcons}>
-              <TouchableOpacity style={styles.headerIconButton}>
-                <Ionicons name="notifications-outline" size={22} color="#111" />
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.headerIconButton}>
-                <Ionicons name="cart-outline" size={22} color="#111" />
-              </TouchableOpacity>
+              {quickActions.map((item) => (
+                <TouchableOpacity key={item.key} style={styles.headerIconButton}>
+                  <Ionicons name={item.icon as any} size={22} color="#111" />
+                </TouchableOpacity>
+              ))}
             </View>
           </View>
 
@@ -141,21 +138,6 @@ export default function HomeScreen() {
             )}
           />
         </ScrollView>
-
-        <View style={styles.bottomNav}>
-          {bottomItems.map((item, index) => (
-            <TouchableOpacity key={item.key} style={styles.bottomNavItem}>
-              <Ionicons
-                name={item.icon as any}
-                size={22}
-                color={index === 0 ? '#000' : '#6f6f6f'}
-              />
-              <Text style={[styles.bottomNavLabel, index === 0 && styles.bottomNavLabelActive]}>
-                {item.key}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
       </View>
     </SafeAreaView>
   );
@@ -170,7 +152,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   contentContainer: {
-    paddingBottom: 120,
+    paddingBottom: 32,
     paddingHorizontal: 20,
     paddingTop: 16,
   },
@@ -307,26 +289,5 @@ const styles = StyleSheet.create({
   reviewContent: {
     fontSize: 14,
     color: '#555555',
-  },
-  bottomNav: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-around',
-    paddingVertical: 12,
-    borderTopWidth: 1,
-    borderColor: '#eaeaea',
-    backgroundColor: '#ffffff',
-  },
-  bottomNavItem: {
-    alignItems: 'center',
-    gap: 4,
-  },
-  bottomNavLabel: {
-    fontSize: 12,
-    color: '#6f6f6f',
-  },
-  bottomNavLabelActive: {
-    color: '#000000',
-    fontWeight: '600',
   },
 });
