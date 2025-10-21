@@ -37,14 +37,18 @@ export default function OrdersScreen() {
   const [otpDigits, setOtpDigits] = useState<string[]>(Array(6).fill(''));
   const otpRefs = useRef<(TextInput | null)[]>([]);
   const [selectedPayment, setSelectedPayment] = useState(PAYMENT_OPTIONS[0].id);
+  const [hasAgreed, setHasAgreed] = useState(false);
 
   const progressWidth = useMemo(() => `${(currentStep / 3) * 100}%`, [currentStep]);
+  const isAgreementComplete = hasAgreed;
+  const isOtpComplete = useMemo(() => otpDigits.every((digit) => digit.length === 1), [otpDigits]);
 
   const openFlow = useCallback(() => {
     setModalVisible(true);
     setCurrentStep(1);
     setOtpDigits(Array(6).fill(''));
     setSelectedPayment(PAYMENT_OPTIONS[0].id);
+    setHasAgreed(false);
   }, []);
 
   const resetFlow = () => {
@@ -52,6 +56,7 @@ export default function OrdersScreen() {
     setCurrentStep(1);
     setOtpDigits(Array(6).fill(''));
     setSelectedPayment(PAYMENT_OPTIONS[0].id);
+    setHasAgreed(false);
   };
 
   useEffect(() => {
@@ -115,9 +120,41 @@ export default function OrdersScreen() {
                 </Text>
               </ScrollView>
             </View>
+            <Pressable
+              style={styles.agreementRow}
+              onPress={() => setHasAgreed((previous) => !previous)}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: hasAgreed }}
+            >
+              <MaterialCommunityIcons
+                name={hasAgreed ? 'checkbox-marked' : 'checkbox-blank-outline'}
+                size={24}
+                color={hasAgreed ? '#111111' : '#8a8a8a'}
+              />
+              <View style={styles.agreementTextWrapper}>
+                <Text style={styles.agreementLabel}>I agree to the rental contract terms</Text>
+                <Text style={styles.agreementHelper}>
+                  You must accept before proceeding to the verification step.
+                </Text>
+              </View>
+            </Pressable>
             <View style={styles.primaryActions}>
-              <Pressable style={[styles.primaryButton, styles.primaryButtonEnabled]} onPress={goToNextStep}>
-                <Text style={styles.primaryButtonText}>Next</Text>
+              <Pressable
+                style={[
+                  styles.primaryButton,
+                  isAgreementComplete ? styles.primaryButtonEnabled : styles.primaryButtonDisabled,
+                ]}
+                onPress={goToNextStep}
+                disabled={!isAgreementComplete}
+              >
+                <Text
+                  style={[
+                    styles.primaryButtonText,
+                    !isAgreementComplete && styles.primaryButtonTextDisabled,
+                  ]}
+                >
+                  Next
+                </Text>
               </Pressable>
               <Pressable style={styles.secondaryButton} onPress={resetFlow}>
                 <Text style={styles.secondaryButtonText}>Cancel</Text>
@@ -156,8 +193,22 @@ export default function OrdersScreen() {
               </Pressable>
               <Text style={styles.helperText}>Resend available in 00:45</Text>
             </View>
-            <Pressable style={[styles.primaryButton, styles.primaryButtonEnabled]} onPress={goToNextStep}>
-              <Text style={styles.primaryButtonText}>Verify Code</Text>
+            <Pressable
+              style={[
+                styles.primaryButton,
+                isOtpComplete ? styles.primaryButtonEnabled : styles.primaryButtonDisabled,
+              ]}
+              onPress={goToNextStep}
+              disabled={!isOtpComplete}
+            >
+              <Text
+                style={[
+                  styles.primaryButtonText,
+                  !isOtpComplete && styles.primaryButtonTextDisabled,
+                ]}
+              >
+                Verify Code
+              </Text>
             </Pressable>
             <Pressable style={styles.helperButton}>
               <Text style={styles.helperButtonText}>Use a different email</Text>
@@ -200,10 +251,7 @@ export default function OrdersScreen() {
               <Ionicons name="shield-checkmark" size={16} color="#1f7df4" />
               <Text style={styles.paymentSecurityText}>Your payment information is secure</Text>
             </View>
-            <Pressable
-              style={[styles.primaryButton, styles.primaryButtonEnabled]}
-              onPress={resetFlow}
-            >
+            <Pressable style={[styles.primaryButton, styles.primaryButtonEnabled]} onPress={resetFlow}>
               <Text style={styles.primaryButtonText}>Complete Rental Process</Text>
             </Pressable>
             <Pressable style={styles.secondaryButton} onPress={goToPreviousStep}>
@@ -432,6 +480,25 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     color: '#545454',
   },
+  agreementRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 8,
+  },
+  agreementTextWrapper: {
+    flex: 1,
+    gap: 2,
+  },
+  agreementLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111111',
+  },
+  agreementHelper: {
+    fontSize: 12,
+    color: '#6f6f6f',
+  },
   primaryActions: {
     gap: 12,
   },
@@ -442,12 +509,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   primaryButtonEnabled: {
-    backgroundColor: '#1f7df4',
+    backgroundColor: '#111111',
+  },
+  primaryButtonDisabled: {
+    backgroundColor: '#d9d9d9',
   },
   primaryButtonText: {
     color: '#ffffff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  primaryButtonTextDisabled: {
+    color: '#7a7a7a',
   },
   secondaryButton: {
     height: 52,
