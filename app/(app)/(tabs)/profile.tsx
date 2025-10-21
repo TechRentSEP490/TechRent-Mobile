@@ -91,7 +91,10 @@ export default function ProfileScreen() {
             <Text style={styles.kycTitle}>KYC Reminder</Text>
           </View>
           <Text style={styles.kycDescription}>Don’t forget to complete your KYC.</Text>
-          <TouchableOpacity style={styles.kycButton}>
+          <TouchableOpacity
+            style={styles.kycButton}
+            onPress={() => router.push('/(app)/kyc-documents')}
+          >
             <Text style={styles.kycButtonText}>Complete KYC</Text>
           </TouchableOpacity>
         </View>
