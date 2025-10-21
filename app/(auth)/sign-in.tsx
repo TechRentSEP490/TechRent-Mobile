@@ -58,10 +58,13 @@ export default function SignInScreen() {
         </View>
 
         <View style={styles.inlineButtons}>
-          <TouchableOpacity style={[styles.button, styles.secondaryButton]}>
+          <TouchableOpacity style={[styles.button, styles.inlineButton, styles.secondaryButton]}>
             <Text style={[styles.buttonText, styles.secondaryText]}>Forgot Password?</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.button, styles.primaryButton]} onPress={handleSignIn}>
+          <TouchableOpacity
+            style={[styles.button, styles.inlineButton, styles.primaryButton]}
+            onPress={handleSignIn}
+          >
             <Text style={[styles.buttonText, styles.primaryText]}>Sign In</Text>
           </TouchableOpacity>
         </View>
@@ -120,11 +123,14 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   button: {
-    flex: 1,
     borderRadius: 10,
     paddingVertical: 14,
+    minHeight: 56,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  inlineButton: {
+    flex: 1,
   },
   primaryButton: {
     backgroundColor: '#000000',
