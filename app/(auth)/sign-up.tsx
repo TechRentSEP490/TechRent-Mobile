@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -16,6 +16,18 @@ export default function SignUpScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+
+  const isFormValid = useMemo(() => {
+    return email.trim().length > 0 && password.length >= 6 && password === confirmPassword;
+  }, [confirmPassword, email, password]);
+
+  const handleCreateAccount = () => {
+    if (!isFormValid) {
+      return;
+    }
+
+    router.push('/(auth)/otp');
+  };
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
@@ -63,7 +75,15 @@ export default function SignUpScreen() {
           />
         </View>
 
-        <TouchableOpacity style={[styles.button, styles.primaryButton]}>
+        <TouchableOpacity
+          style={[
+            styles.button,
+            styles.primaryButton,
+            !isFormValid && styles.primaryButtonDisabled,
+          ]}
+          disabled={!isFormValid}
+          onPress={handleCreateAccount}
+        >
           <Text style={[styles.buttonText, styles.primaryText]}>Create Account</Text>
         </TouchableOpacity>
 
@@ -127,6 +147,9 @@ const styles = StyleSheet.create({
   },
   primaryButton: {
     backgroundColor: '#000000',
+  },
+  primaryButtonDisabled: {
+    backgroundColor: '#bdbdbd',
   },
   primaryText: {
     color: '#ffffff',
