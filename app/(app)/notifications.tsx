@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useMemo, useState } from 'react';
-import { FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 
@@ -111,8 +111,14 @@ export default function NotificationsScreen() {
       }
 
       if (action.label === 'Continue Process') {
-        router.push('/(app)/(tabs)/orders?flow=continue');
+        router.push({
+          pathname: '/(app)/(tabs)/orders',
+          params: { flow: 'continue', orderId: 'ORD-20001' },
+        });
+        return;
       }
+
+      Alert.alert(action.label, 'Additional handling for this notification is coming soon.');
     },
     [router]
   );
