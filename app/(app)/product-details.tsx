@@ -12,7 +12,183 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { products } from '../../constants/products';
+import { products, type ProductDetail } from '../../constants/products';
+
+type NormalizedSpecEntry = {
+  label: string;
+  value: string;
+};
+
+const formatSpecKey = (key: string) =>
+  key
+    .replace(/[_-]+/g, ' ')
+    .trim()
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+
+const formatPrimitiveSpecValue = (value: unknown): string => {
+  if (value === null || value === undefined) {
+    return '';
+  }
+
+  if (typeof value === 'boolean') {
+    return value ? 'Yes' : 'No';
+  }
+
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? String(value) : '';
+  }
+
+  return String(value).trim();
+};
+
+const joinSpecPath = (path: string[], fallback = 'Details') => {
+  if (!path.length) {
+    return fallback;
+  }
+
+  const formatted = path
+    .map((segment) => formatSpecKey(segment))
+    .filter((segment) => segment.length > 0);
+
+  return formatted.length > 0 ? formatted.join(' › ') : fallback;
+};
+
+const flattenSpecStructure = (value: unknown, path: string[] = []): NormalizedSpecEntry[] => {
+  if (value === null || value === undefined) {
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    const entries: NormalizedSpecEntry[] = [];
+
+    const primitiveValues = value
+      .filter((item) => item === null || item === undefined || typeof item !== 'object')
+      .map((item) => formatPrimitiveSpecValue(item))
+      .filter((text) => text.length > 0);
+
+    if (primitiveValues.length > 0) {
+      entries.push({
+        label: joinSpecPath(path),
+        value: primitiveValues.join(', '),
+      });
+    }
+
+    value.forEach((item, index) => {
+      if (item && typeof item === 'object') {
+        entries.push(...flattenSpecStructure(item, [...path, `Item ${index + 1}`]));
+      }
+    });
+
+    return entries;
+  }
+
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+
+    if ('label' in record && 'value' in record) {
+      const label = formatPrimitiveSpecValue(record.label);
+      const formattedValue = formatPrimitiveSpecValue(record.value);
+
+      if (!label && !formattedValue) {
+        return [];
+      }
+
+      return [
+        {
+          label: label || joinSpecPath(path),
+          value: formattedValue || '—',
+        },
+      ];
+    }
+
+    return Object.entries(record).flatMap(([key, nestedValue]) =>
+      flattenSpecStructure(nestedValue, [...path, key])
+    );
+  }
+
+  const primitiveValue = formatPrimitiveSpecValue(value);
+
+  if (!primitiveValue) {
+    return [];
+  }
+
+  return [
+    {
+      label: joinSpecPath(path),
+      value: primitiveValue,
+    },
+  ];
+};
+
+const normalizeSpecsData = (data: ProductDetail['specs']): NormalizedSpecEntry[] => {
+  if (data === null || data === undefined) {
+    return [];
+  }
+
+  if (Array.isArray(data)) {
+    return data
+      .flatMap((item, index) => {
+        if (item && typeof item === 'object' && !Array.isArray(item)) {
+          const record = item as Record<string, unknown>;
+
+          if ('label' in record && 'value' in record) {
+            const label = formatPrimitiveSpecValue(record.label);
+            const value = formatPrimitiveSpecValue(record.value);
+
+            if (!label && !value) {
+              return [];
+            }
+
+            return [
+              {
+                label: label || `Spec ${index + 1}`,
+                value: value || '—',
+              },
+            ];
+          }
+        }
+
+        return flattenSpecStructure(item, [`Spec ${index + 1}`]);
+      })
+      .filter((entry) => entry.value.length > 0);
+  }
+
+  if (typeof data === 'string') {
+    const trimmed = data.trim();
+
+    if (!trimmed) {
+      return [];
+    }
+
+    try {
+      const parsed = JSON.parse(trimmed);
+      return normalizeSpecsData(parsed as ProductDetail['specs']);
+    } catch {
+      return [
+        {
+          label: 'Details',
+          value: trimmed,
+        },
+      ];
+    }
+  }
+
+  if (typeof data === 'object') {
+    return flattenSpecStructure(data);
+  }
+
+  const fallbackValue = formatPrimitiveSpecValue(data);
+
+  return fallbackValue
+    ? [
+        {
+          label: 'Details',
+          value: fallbackValue,
+        },
+      ]
+    : [];
+};
 
 const formatDate = (date: Date) => date.toISOString().split('T')[0];
 const addDays = (date: Date, days: number) => {
@@ -43,6 +219,20 @@ export default function ProductDetailsScreen() {
   }, [productId]);
 
   const { name, model, brand, status, specs, accessories, relatedProducts, reviews, price, stock } = product;
+
+  const normalizedSpecs = useMemo(() => {
+    const entries = normalizeSpecsData(specs);
+    const seen = new Set<string>();
+
+    return entries.filter((entry) => {
+      const key = `${entry.label}|${entry.value}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+  }, [specs]);
 
   const isOutOfStock = stock <= 0;
   const maxQuantity = Math.max(stock, 1);
@@ -331,12 +521,20 @@ export default function ProductDetailsScreen() {
         <View style={styles.modalBackdrop}>
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Device Specifications</Text>
-            {specs.map((item) => (
-              <View key={item.label} style={styles.modalRow}>
-                <Text style={styles.modalLabel}>{item.label}</Text>
-                <Text style={styles.modalValue}>{item.value}</Text>
+            {normalizedSpecs.length > 0 ? (
+              normalizedSpecs.map((item) => (
+                <View key={`${item.label}-${item.value}`} style={styles.modalRow}>
+                  <Text style={styles.modalLabel}>{item.label}</Text>
+                  <Text style={styles.modalValue}>{item.value}</Text>
+                </View>
+              ))
+            ) : (
+              <View style={styles.modalEmptyState}>
+                <Text style={styles.modalEmptyText}>
+                  Specifications will appear once they are available.
+                </Text>
               </View>
-            ))}
+            )}
             <TouchableOpacity style={styles.modalCloseButton} onPress={() => setIsSpecsOpen(false)}>
               <Text style={styles.modalCloseText}>Close</Text>
             </TouchableOpacity>
@@ -590,6 +788,14 @@ const styles = StyleSheet.create({
   },
   modalValue: {
     color: '#666666',
+  },
+  modalEmptyState: {
+    paddingVertical: 4,
+  },
+  modalEmptyText: {
+    fontSize: 14,
+    color: '#6f6f6f',
+    textAlign: 'center',
   },
   modalCloseButton: {
     marginTop: 12,

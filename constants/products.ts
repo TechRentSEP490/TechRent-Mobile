@@ -1,7 +1,16 @@
+export type PrimitiveSpecValue = string | number | boolean | null;
+
 export type ProductSpec = {
   label: string;
-  value: string;
+  value: PrimitiveSpecValue;
 };
+
+export type ProductSpecsPayload =
+  | ProductSpec[]
+  | Record<string, unknown>
+  | string
+  | null
+  | undefined;
 
 export type ProductAccessory = {
   label: string;
@@ -33,7 +42,7 @@ export type ProductDetail = ProductSummary & {
   brand: string;
   status: string;
   stock: number;
-  specs: ProductSpec[];
+  specs: ProductSpecsPayload;
   accessories: ProductAccessory[];
   relatedProducts: RelatedProduct[];
   reviews: ProductReview[];
