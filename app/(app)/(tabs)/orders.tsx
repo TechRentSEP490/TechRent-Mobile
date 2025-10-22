@@ -339,6 +339,7 @@ export default function OrdersScreen() {
               <Pressable
                 style={[
                   styles.primaryButton,
+                  styles.buttonFlex,
                   isAgreementComplete ? styles.primaryButtonEnabled : styles.primaryButtonDisabled,
                 ]}
                 onPress={goToNextStep}
@@ -353,7 +354,7 @@ export default function OrdersScreen() {
                   Next
                 </Text>
               </Pressable>
-              <Pressable style={styles.secondaryButton} onPress={resetFlow}>
+              <Pressable style={[styles.secondaryButton, styles.buttonFlex]} onPress={resetFlow}>
                 <Text style={styles.secondaryButtonText}>Cancel</Text>
               </Pressable>
             </View>
@@ -933,12 +934,13 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   primaryButton: {
-    flex: 1,
     backgroundColor: '#111111',
     borderRadius: 14,
-    paddingVertical: 14,
+    minHeight: 52,
+    paddingHorizontal: 16,
     alignItems: 'center',
     justifyContent: 'center',
+    alignSelf: 'stretch',
   },
   primaryButtonEnabled: {
     opacity: 1,
@@ -955,13 +957,17 @@ const styles = StyleSheet.create({
     color: '#9ca3af',
   },
   secondaryButton: {
-    flex: 1,
     borderRadius: 14,
-    paddingVertical: 14,
+    minHeight: 52,
+    paddingHorizontal: 16,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#d1d5db',
+    alignSelf: 'stretch',
+  },
+  buttonFlex: {
+    flex: 1,
   },
   secondaryButtonText: {
     fontSize: 15,
