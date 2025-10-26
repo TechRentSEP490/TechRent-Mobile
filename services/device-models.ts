@@ -1,5 +1,6 @@
 import type { ProductDetail, ProductSpecsPayload } from '@/constants/products';
 import { products as fallbackProducts } from '@/constants/products';
+import { buildApiUrl } from './api';
 
 type DeviceModelResponse = {
   status: string;
@@ -32,8 +33,6 @@ const CACHE_TTL = 60 * 1000;
 
 let cachedDeviceModels: ProductDetail[] | null = null;
 let cacheTimestamp = 0;
-
-const normalizeBaseUrl = (value: string) => value.replace(/\/$/, '');
 
 const parseSpecifications = (value: string | null): ProductSpecsPayload => {
   if (!value) {
@@ -70,17 +69,10 @@ const mapDeviceModelToProductDetail = (payload: DeviceModelPayload): ProductDeta
   pricePerDay: payload.pricePerDay,
   depositPercent: payload.depositPercent,
   deviceValue: payload.deviceValue,
+  deviceCategoryId: payload.deviceCategoryId,
   currency: 'VND',
   source: 'api',
 });
-
-const ensureApiUrl = () => {
-  const url = process.env.EXPO_PUBLIC_API_URL;
-  if (!url) {
-    throw new Error('API URL is not configured. Please set EXPO_PUBLIC_API_URL.');
-  }
-  return normalizeBaseUrl(url);
-};
 
 export async function fetchDeviceModels(forceRefresh = false): Promise<ProductDetail[]> {
   const now = Date.now();
@@ -89,8 +81,7 @@ export async function fetchDeviceModels(forceRefresh = false): Promise<ProductDe
     return cachedDeviceModels;
   }
 
-  const apiUrl = ensureApiUrl();
-  const response = await fetch(`${apiUrl}/device-models`);
+  const response = await fetch(buildApiUrl('device-models'));
 
   if (!response.ok) {
     throw new Error(`Failed to load device models (status ${response.status}).`);

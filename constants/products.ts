@@ -50,6 +50,7 @@ export type ProductDetail = ProductSummary & {
   pricePerDay?: number;
   depositPercent?: number;
   deviceValue?: number;
+  deviceCategoryId?: number;
   currency?: 'USD' | 'VND';
   source?: 'static' | 'api';
 };

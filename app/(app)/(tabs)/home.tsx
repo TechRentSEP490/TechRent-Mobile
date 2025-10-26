@@ -1,5 +1,5 @@
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -16,14 +16,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 
 import type { ProductDetail } from '@/constants/products';
+import { useDeviceCategories } from '@/hooks/use-device-categories';
 import { useDeviceModels } from '@/hooks/use-device-models';
-
-const categories = [
-  { id: 'mobile', title: 'Mobile Phones', icon: 'phone-portrait-outline' },
-  { id: 'laptop', title: 'Laptops', icon: 'laptop-outline' },
-  { id: 'desktop', title: 'Desktops', icon: 'desktop-outline' },
-  { id: 'gaming', title: 'Gaming Consoles', icon: 'game-controller-outline' },
-];
+import { fetchDeviceCategoryById, type DeviceCategory } from '@/services/device-categories';
 
 const reviews = [
   {
@@ -46,7 +41,31 @@ const reviews = [
 export default function HomeScreen() {
   const router = useRouter();
   const { data: deviceModels, loading, error, refetch } = useDeviceModels();
+  const {
+    data: categories,
+    loading: categoriesLoading,
+    error: categoriesError,
+    refetch: refetchCategories,
+  } = useDeviceCategories();
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [selectedCategoryId, setSelectedCategoryId] = useState<'all' | string>('all');
+  const [selectedCategory, setSelectedCategory] = useState<DeviceCategory | null>(null);
+  const [categoryDetailLoading, setCategoryDetailLoading] = useState(false);
+  const [categoryDetailError, setCategoryDetailError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (selectedCategoryId === 'all') {
+      return;
+    }
+
+    const stillExists = categories.some((category) => category.id === selectedCategoryId);
+
+    if (!stillExists) {
+      setSelectedCategoryId('all');
+      setSelectedCategory(null);
+      setCategoryDetailError(null);
+    }
+  }, [categories, selectedCategoryId]);
 
   const quickActions = useMemo(
     () => [
@@ -55,10 +74,40 @@ export default function HomeScreen() {
         icon: 'notifications-outline',
         onPress: () => router.push('/(app)/notifications'),
       },
-      { key: 'cart', icon: 'cart-outline' },
+      { key: 'cart', icon: 'cart-outline', onPress: () => router.push('/(app)/cart') },
     ],
     [router]
   );
+
+  const categoryOptions = useMemo(
+    () => [
+      { id: 'all' as const, name: 'All' },
+      ...categories.map((category) => ({ id: category.id, name: category.name })),
+    ],
+    [categories]
+  );
+
+  const selectedCategoryName = useMemo(() => {
+    if (selectedCategoryId === 'all') {
+      return null;
+    }
+
+    if (selectedCategory?.name) {
+      return selectedCategory.name;
+    }
+
+    return categories.find((category) => category.id === selectedCategoryId)?.name ?? null;
+  }, [categories, selectedCategory, selectedCategoryId]);
+
+  const filteredProducts = useMemo(() => {
+    if (selectedCategoryId === 'all') {
+      return deviceModels;
+    }
+
+    return deviceModels.filter((item) =>
+      item.deviceCategoryId ? String(item.deviceCategoryId) === selectedCategoryId : false
+    );
+  }, [deviceModels, selectedCategoryId]);
 
   const handleProductPress = useCallback(
     (item: ProductDetail) => {
@@ -73,11 +122,44 @@ export default function HomeScreen() {
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
     try {
-      await refetch();
+      await Promise.all([refetch(), refetchCategories()]);
     } finally {
       setIsRefreshing(false);
     }
-  }, [refetch]);
+  }, [refetch, refetchCategories]);
+
+  const handleCategoryPress = useCallback(
+    async (categoryId: string) => {
+      if (categoryId === selectedCategoryId) {
+        return;
+      }
+
+      setSelectedCategoryId(categoryId);
+
+      if (categoryId === 'all') {
+        setSelectedCategory(null);
+        setCategoryDetailError(null);
+        setCategoryDetailLoading(false);
+        return;
+      }
+
+      const optimisticCategory = categories.find((category) => category.id === categoryId) ?? null;
+      setSelectedCategory(optimisticCategory);
+      setCategoryDetailError(null);
+      setCategoryDetailLoading(true);
+
+      try {
+        const detail = await fetchDeviceCategoryById(categoryId);
+        setSelectedCategory(detail);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Unable to load category details.';
+        setCategoryDetailError(message);
+      } finally {
+        setCategoryDetailLoading(false);
+      }
+    },
+    [categories, selectedCategoryId]
+  );
 
   const helperText = error
     ? 'Unable to fetch the latest catalog. Showing saved devices.'
@@ -109,17 +191,66 @@ export default function HomeScreen() {
             </View>
           </View>
 
-          <Text style={styles.sectionTitle}>Categories</Text>
-          <View style={styles.categoriesGrid}>
-            {categories.map((item) => (
-              <View key={item.id} style={styles.categoryCard}>
-                <View style={styles.categoryIconWrapper}>
-                  <Ionicons name={item.icon as any} size={28} color="#111" />
-                </View>
-                <Text style={styles.categoryTitle}>{item.title}</Text>
-              </View>
-            ))}
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.sectionTitle}>Categories</Text>
+            {(categoriesLoading || categoryDetailLoading) && (
+              <ActivityIndicator size="small" color="#111111" />
+            )}
           </View>
+
+          {categoriesError ? (
+            <TouchableOpacity
+              style={styles.retryButton}
+              onPress={() => {
+                void refetchCategories();
+              }}
+            >
+              <Text style={styles.retryButtonText}>Reload categories</Text>
+            </TouchableOpacity>
+          ) : (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.categoryChips}
+            >
+              {categoryOptions.map((category) => {
+                const isActive = category.id === selectedCategoryId;
+
+                return (
+                  <TouchableOpacity
+                    key={category.id}
+                    style={[styles.categoryChip, isActive && styles.categoryChipActive]}
+                    activeOpacity={0.85}
+                    onPress={() => void handleCategoryPress(category.id)}
+                  >
+                    <Text
+                      style={[styles.categoryChipText, isActive && styles.categoryChipTextActive]}
+                    >
+                      {category.name}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          )}
+
+          {selectedCategoryId !== 'all' && !categoriesError && (
+            <View style={styles.categoryDetails}>
+              <Text style={styles.categoryDetailsTitle}>{selectedCategoryName}</Text>
+              {selectedCategory?.description ? (
+                <Text style={styles.categoryDetailsDescription}>{selectedCategory.description}</Text>
+              ) : categoryDetailLoading ? (
+                <Text style={styles.categoryDetailsDescriptionMuted}>Loading details...</Text>
+              ) : (
+                <Text style={styles.categoryDetailsDescriptionMuted}>
+                  No description available for this category.
+                </Text>
+              )}
+              {categoryDetailError && (
+                <Text style={styles.categoryDetailsError}>{categoryDetailError}</Text>
+              )}
+            </View>
+          )}
 
           <View style={styles.searchBar}>
             <TextInput
@@ -144,7 +275,7 @@ export default function HomeScreen() {
           </View>
 
           <FlatList<ProductDetail>
-            data={deviceModels}
+            data={filteredProducts}
             keyExtractor={(item) => item.id}
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -174,7 +305,11 @@ export default function HomeScreen() {
             ListEmptyComponent={
               !loading ? (
                 <View style={styles.emptyState}>
-                  <Text style={styles.emptyStateText}>No devices available right now.</Text>
+                  <Text style={styles.emptyStateText}>
+                    {selectedCategoryId === 'all'
+                      ? 'No devices available right now.'
+                      : 'No devices found in this category.'}
+                  </Text>
                 </View>
               ) : null
             }
@@ -248,36 +383,57 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  categoriesGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+  categoryChips: {
     gap: 12,
-    marginBottom: 24,
+    paddingRight: 8,
+    marginBottom: 16,
   },
-  categoryCard: {
-    width: '48%',
-    borderRadius: 12,
+  categoryChip: {
     borderWidth: 1,
-    borderColor: '#e6e6e6',
-    paddingVertical: 16,
-    alignItems: 'center',
+    borderColor: '#d5d5d5',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
     backgroundColor: '#ffffff',
   },
-  categoryIconWrapper: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: '#f5f5f5',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 10,
+  categoryChipActive: {
+    backgroundColor: '#111111',
+    borderColor: '#111111',
   },
-  categoryTitle: {
+  categoryChipText: {
     fontSize: 14,
     fontWeight: '600',
     color: '#111111',
-    textAlign: 'center',
-    paddingHorizontal: 4,
+  },
+  categoryChipTextActive: {
+    color: '#ffffff',
+  },
+  categoryDetails: {
+    borderWidth: 1,
+    borderColor: '#e6e6e6',
+    borderRadius: 12,
+    padding: 16,
+    backgroundColor: '#f9f9f9',
+    marginBottom: 24,
+  },
+  categoryDetailsTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#111111',
+    marginBottom: 8,
+  },
+  categoryDetailsDescription: {
+    fontSize: 14,
+    color: '#444444',
+  },
+  categoryDetailsDescriptionMuted: {
+    fontSize: 14,
+    color: '#888888',
+  },
+  categoryDetailsError: {
+    marginTop: 12,
+    fontSize: 13,
+    color: '#c53030',
   },
   searchBar: {
     flexDirection: 'row',
