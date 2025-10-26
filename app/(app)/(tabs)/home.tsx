@@ -2,7 +2,6 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  FlatList,
   Image,
   RefreshControl,
   ScrollView,
@@ -274,62 +273,52 @@ export default function HomeScreen() {
             {loading && <ActivityIndicator size="small" color="#111111" />}
           </View>
 
-          <FlatList<ProductDetail>
-            data={filteredProducts}
-            keyExtractor={(item) => item.id}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.horizontalList}
-            renderItem={({ item }) => (
-              <TouchableOpacity
-                style={styles.productCard}
-                activeOpacity={0.85}
-                onPress={() => handleProductPress(item)}
-              >
-                <View style={styles.productThumbnail}>
-                  {item.imageURL ? (
-                    <Image
-                      source={{ uri: item.imageURL }}
-                      style={styles.productImage}
-                      resizeMode="cover"
-                    />
-                  ) : (
-                    <MaterialCommunityIcons name="image-off-outline" size={32} color="#111" />
-                  )}
-                </View>
-                <Text style={styles.productName}>{item.name}</Text>
-                <Text style={styles.productBrand}>{item.brand}</Text>
-                <Text style={styles.productPrice}>{item.price}</Text>
-              </TouchableOpacity>
-            )}
-            ListEmptyComponent={
-              !loading ? (
-                <View style={styles.emptyState}>
-                  <Text style={styles.emptyStateText}>
-                    {selectedCategoryId === 'all'
-                      ? 'No devices available right now.'
-                      : 'No devices found in this category.'}
-                  </Text>
-                </View>
-              ) : null
-            }
-          />
+          {filteredProducts.length > 0 ? (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.horizontalList}
+            >
+              {filteredProducts.map((item) => (
+                <TouchableOpacity
+                  key={item.id}
+                  style={styles.productCard}
+                  activeOpacity={0.85}
+                  onPress={() => handleProductPress(item)}
+                >
+                  <View style={styles.productThumbnail}>
+                    {item.imageURL ? (
+                      <Image source={{ uri: item.imageURL }} style={styles.productImage} resizeMode="cover" />
+                    ) : (
+                      <MaterialCommunityIcons name="image-off-outline" size={32} color="#111" />
+                    )}
+                  </View>
+                  <Text style={styles.productName}>{item.name}</Text>
+                  <Text style={styles.productBrand}>{item.brand}</Text>
+                  <Text style={styles.productPrice}>{item.price}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          ) : !loading ? (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyStateText}>
+                {selectedCategoryId === 'all'
+                  ? 'No devices available right now.'
+                  : 'No devices found in this category.'}
+              </Text>
+            </View>
+          ) : null}
 
           <Text style={styles.sectionTitle}>Customer Ratings</Text>
-          <FlatList
-            data={reviews}
-            keyExtractor={(item) => item.id}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.horizontalList}
-            renderItem={({ item }) => (
-              <View style={styles.reviewCard}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.horizontalList}>
+            {reviews.map((item) => (
+              <View key={item.id} style={styles.reviewCard}>
                 <Ionicons name="chatbubbles-outline" size={28} color="#111" style={styles.reviewIcon} />
                 <Text style={styles.reviewTitle}>{item.title}</Text>
                 <Text style={styles.reviewContent}>{item.content}</Text>
               </View>
-            )}
-          />
+            ))}
+          </ScrollView>
         </ScrollView>
       </View>
     </SafeAreaView>
