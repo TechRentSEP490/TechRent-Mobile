@@ -1,7 +1,9 @@
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   FlatList,
+  Image,
   Modal,
   ScrollView,
   StyleSheet,
@@ -13,11 +15,15 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { products, type ProductDetail } from '../../constants/products';
+import { useAuth } from '@/contexts/AuthContext';
+import { useDeviceModel } from '@/hooks/use-device-model';
 
 type NormalizedSpecEntry = {
   label: string;
   value: string;
 };
+
+type AuthRoute = '/(auth)/sign-in' | '/(auth)/sign-up';
 
 const formatSpecKey = (key: string) =>
   key
@@ -205,23 +211,44 @@ export default function ProductDetailsScreen() {
   const [quantity, setQuantity] = useState(1);
   const [startDate, setStartDate] = useState(() => formatDate(new Date()));
   const [endDate, setEndDate] = useState(() => formatDate(addDays(new Date(), 7)));
+  const [isAuthPromptOpen, setIsAuthPromptOpen] = useState(false);
+  const [authPromptMode, setAuthPromptMode] = useState<'rent' | 'cart' | null>(null);
   const router = useRouter();
-  const { productId } = useLocalSearchParams<{ productId?: string }>();
+  const { isSignedIn } = useAuth();
+  const { productId: productIdParam, deviceModelId } = useLocalSearchParams<{
+    productId?: string;
+    deviceModelId?: string;
+  }>();
+  const resolvedProductId = typeof deviceModelId === 'string' ? deviceModelId : productIdParam;
+  const {
+    data: fetchedProduct,
+    loading: isProductLoading,
+    error: productError,
+  } = useDeviceModel(resolvedProductId);
 
   const product = useMemo(() => {
-    if (typeof productId === 'string') {
-      const match = products.find((item) => item.id === productId);
+    if (fetchedProduct) {
+      return fetchedProduct;
+    }
+
+    if (typeof resolvedProductId === 'string') {
+      const match = products.find((item) => item.id === resolvedProductId);
       if (match) {
         return match;
       }
     }
-    return products[0];
-  }, [productId]);
 
-  const { name, model, brand, status, specs, accessories, relatedProducts, reviews, price, stock } = product;
+    return products[0] ?? null;
+  }, [fetchedProduct, resolvedProductId]);
+
+  const specsSource = product?.specs;
 
   const normalizedSpecs = useMemo(() => {
-    const entries = normalizeSpecsData(specs);
+    if (!specsSource) {
+      return [];
+    }
+
+    const entries = normalizeSpecsData(specsSource);
     const seen = new Set<string>();
 
     return entries.filter((entry) => {
@@ -232,11 +259,7 @@ export default function ProductDetailsScreen() {
       seen.add(key);
       return true;
     });
-  }, [specs]);
-
-  const isOutOfStock = stock <= 0;
-  const maxQuantity = Math.max(stock, 1);
-  const stockLabel = stock > 0 ? `${stock} in stock` : 'Out of stock';
+  }, [specsSource]);
 
   const rentalDuration = useMemo(() => {
     const parsedStart = new Date(startDate);
@@ -248,9 +271,36 @@ export default function ProductDetailsScreen() {
     return diff > 0 ? diff : 0;
   }, [startDate, endDate]);
 
+  if (!product) {
+    return (
+      <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
+        <View style={styles.loadingState}>
+          {isProductLoading ? (
+            <ActivityIndicator size="large" color="#111111" />
+          ) : (
+            <Text style={styles.errorBannerText}>Device not found.</Text>
+          )}
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const { name, model, brand, status, accessories, relatedProducts, reviews, price, stock } = product;
+  const productImage = product.imageURL;
+
+  const isOutOfStock = stock <= 0;
+  const maxQuantity = Math.max(stock, 1);
+  const stockLabel = stock > 0 ? `${stock} in stock` : 'Out of stock';
+
   const rentalDurationLabel = rentalDuration === 1 ? '1 day' : `${rentalDuration} days`;
 
   const openRentModal = (mode: 'rent' | 'cart') => {
+    if (!isSignedIn) {
+      setAuthPromptMode(mode);
+      setIsAuthPromptOpen(true);
+      return;
+    }
+
     const today = new Date();
     setQuantity(1);
     setStartDate(formatDate(today));
@@ -262,6 +312,16 @@ export default function ProductDetailsScreen() {
   const closeRentModal = () => {
     setIsRentOpen(false);
     setRentMode(null);
+  };
+
+  const closeAuthPrompt = () => {
+    setIsAuthPromptOpen(false);
+    setAuthPromptMode(null);
+  };
+
+  const handleAuthNavigation = (path: AuthRoute) => {
+    closeAuthPrompt();
+    router.push(path);
   };
 
   const isPrimaryDisabled = isOutOfStock || rentalDuration <= 0 || rentMode === null;
@@ -310,8 +370,21 @@ export default function ProductDetailsScreen() {
           </View>
         </View>
 
+        {productError && (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorBannerText}>{productError}</Text>
+          </View>
+        )}
+
         <View style={styles.imagePreview}>
-          <Text style={styles.imageText}>Explore images of the product.</Text>
+          {productImage ? (
+            <Image source={{ uri: productImage }} style={styles.heroImage} resizeMode="cover" />
+          ) : (
+            <View style={styles.heroPlaceholder}>
+              <MaterialCommunityIcons name="image-off-outline" size={48} color="#6f6f6f" />
+              <Text style={styles.heroPlaceholderText}>Images coming soon</Text>
+            </View>
+          )}
         </View>
 
         <View style={styles.paginationDots}>
@@ -517,6 +590,36 @@ export default function ProductDetailsScreen() {
         </View>
       </Modal>
 
+      <Modal visible={isAuthPromptOpen} transparent animationType="fade" onRequestClose={closeAuthPrompt}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.authModalContent}>
+            <Text style={styles.authModalTitle}>Sign in required</Text>
+            <Text style={styles.authModalDescription}>
+              {authPromptMode === 'cart'
+                ? 'Sign in or create an account to add this device to your cart.'
+                : 'Sign in or create an account to rent this device.'}
+            </Text>
+            <View style={styles.authModalActions}>
+              <TouchableOpacity style={styles.authModalSecondary} onPress={closeAuthPrompt}>
+                <Text style={styles.authModalSecondaryText}>Maybe later</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.authModalPrimary}
+                onPress={() => handleAuthNavigation('/(auth)/sign-in')}
+              >
+                <Text style={styles.authModalPrimaryText}>Sign In</Text>
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity
+              style={styles.authModalLink}
+              onPress={() => handleAuthNavigation('/(auth)/sign-up')}
+            >
+              <Text style={styles.authModalLinkText}>New here? Create an account</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
       <Modal visible={isSpecsOpen} transparent animationType="fade">
         <View style={styles.modalBackdrop}>
           <View style={styles.modalContent}>
@@ -570,6 +673,13 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#ffffff',
   },
+  loadingState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+    backgroundColor: '#ffffff',
+  },
   container: {
     paddingBottom: 32,
     paddingHorizontal: 20,
@@ -593,18 +703,44 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 12,
   },
+  errorBanner: {
+    marginBottom: 16,
+    borderRadius: 12,
+    backgroundColor: '#fff5f5',
+    borderWidth: 1,
+    borderColor: '#f5c2c2',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  errorBannerText: {
+    color: '#c53030',
+    fontSize: 14,
+  },
   imagePreview: {
     height: 220,
     borderRadius: 20,
     borderWidth: 1,
     borderColor: '#e5e5e5',
+    backgroundColor: '#fafafa',
+    overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#fafafa',
   },
-  imageText: {
+  heroImage: {
+    width: '100%',
+    height: '100%',
+  },
+  heroPlaceholder: {
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  heroPlaceholderText: {
     color: '#6c6c6c',
-    fontSize: 15,
+    fontSize: 14,
+    marginTop: 12,
   },
   paginationDots: {
     flexDirection: 'row',
@@ -807,6 +943,60 @@ const styles = StyleSheet.create({
   modalCloseText: {
     color: '#ffffff',
     fontWeight: '600',
+  },
+  authModalContent: {
+    width: '100%',
+    borderRadius: 16,
+    backgroundColor: '#ffffff',
+    padding: 24,
+  },
+  authModalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111111',
+    marginBottom: 12,
+  },
+  authModalDescription: {
+    fontSize: 14,
+    color: '#444444',
+    marginBottom: 20,
+    lineHeight: 20,
+  },
+  authModalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 12,
+  },
+  authModalSecondary: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#d9d9d9',
+    backgroundColor: '#ffffff',
+  },
+  authModalSecondaryText: {
+    color: '#444444',
+    fontWeight: '600',
+  },
+  authModalPrimary: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    backgroundColor: '#111111',
+  },
+  authModalPrimaryText: {
+    color: '#ffffff',
+    fontWeight: '600',
+  },
+  authModalLink: {
+    marginTop: 16,
+    alignItems: 'center',
+  },
+  authModalLinkText: {
+    color: '#111111',
+    fontWeight: '600',
+    textDecorationLine: 'underline',
   },
   rentModalContent: {
     width: '100%',

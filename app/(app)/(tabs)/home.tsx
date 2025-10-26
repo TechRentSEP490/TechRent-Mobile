@@ -1,7 +1,10 @@
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   FlatList,
+  Image,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -11,7 +14,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { productSummaries } from '../../../constants/products';
+
+import type { ProductDetail } from '@/constants/products';
+import { useDeviceModels } from '@/hooks/use-device-models';
 
 const categories = [
   { id: 'mobile', title: 'Mobile Phones', icon: 'phone-portrait-outline' },
@@ -40,6 +45,9 @@ const reviews = [
 
 export default function HomeScreen() {
   const router = useRouter();
+  const { data: deviceModels, loading, error, refetch } = useDeviceModels();
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
   const quickActions = useMemo(
     () => [
       {
@@ -52,10 +60,39 @@ export default function HomeScreen() {
     [router]
   );
 
+  const handleProductPress = useCallback(
+    (item: ProductDetail) => {
+      router.push({
+        pathname: '/(app)/product-details',
+        params: { productId: item.id },
+      });
+    },
+    [router]
+  );
+
+  const handleRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      await refetch();
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [refetch]);
+
+  const helperText = error
+    ? 'Unable to fetch the latest catalog. Showing saved devices.'
+    : 'Find what you need easily!';
+
   return (
     <SafeAreaView style={styles.safeArea} edges={["top"]}>
       <View style={styles.container}>
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.contentContainer}>
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.contentContainer}
+          refreshControl={
+            <RefreshControl refreshing={isRefreshing} onRefresh={() => void handleRefresh()} />
+          }
+        >
           <View style={styles.header}>
             <Text style={styles.brand}>TechRent</Text>
             <View style={styles.headerIcons}>
@@ -94,11 +131,20 @@ export default function HomeScreen() {
               <Ionicons name="search" size={20} color="#fff" />
             </TouchableOpacity>
           </View>
-          <Text style={styles.helperText}>Find what you need easily!</Text>
+          <Text style={[styles.helperText, error && styles.helperTextError]}>{helperText}</Text>
+          {error && (
+            <TouchableOpacity style={styles.retryButton} onPress={() => void handleRefresh()}>
+              <Text style={styles.retryButtonText}>Try Again</Text>
+            </TouchableOpacity>
+          )}
 
-          <Text style={styles.sectionTitle}>Our Products</Text>
-          <FlatList
-            data={productSummaries}
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.sectionTitle}>Our Products</Text>
+            {loading && <ActivityIndicator size="small" color="#111111" />}
+          </View>
+
+          <FlatList<ProductDetail>
+            data={deviceModels}
             keyExtractor={(item) => item.id}
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -107,19 +153,31 @@ export default function HomeScreen() {
               <TouchableOpacity
                 style={styles.productCard}
                 activeOpacity={0.85}
-                onPress={() =>
-                  router.push({
-                    pathname: '/(app)/product-details',
-                    params: { productId: item.id },
-                  })
-                }
+                onPress={() => handleProductPress(item)}
               >
-                <MaterialCommunityIcons name="laptop" size={36} color="#111" style={styles.productIcon} />
+                <View style={styles.productThumbnail}>
+                  {item.imageURL ? (
+                    <Image
+                      source={{ uri: item.imageURL }}
+                      style={styles.productImage}
+                      resizeMode="cover"
+                    />
+                  ) : (
+                    <MaterialCommunityIcons name="image-off-outline" size={32} color="#111" />
+                  )}
+                </View>
                 <Text style={styles.productName}>{item.name}</Text>
-                <Text style={styles.productModel}>{item.model}</Text>
+                <Text style={styles.productBrand}>{item.brand}</Text>
                 <Text style={styles.productPrice}>{item.price}</Text>
               </TouchableOpacity>
             )}
+            ListEmptyComponent={
+              !loading ? (
+                <View style={styles.emptyState}>
+                  <Text style={styles.emptyStateText}>No devices available right now.</Text>
+                </View>
+              ) : null
+            }
           />
 
           <Text style={styles.sectionTitle}>Customer Ratings</Text>
@@ -185,6 +243,11 @@ const styles = StyleSheet.create({
     color: '#111111',
     marginBottom: 16,
   },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
   categoriesGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -238,36 +301,72 @@ const styles = StyleSheet.create({
   },
   helperText: {
     color: '#777777',
-    marginBottom: 24,
+    marginBottom: 12,
     fontSize: 14,
+  },
+  helperTextError: {
+    color: '#c53030',
+  },
+  retryButton: {
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: '#111111',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    marginBottom: 24,
+  },
+  retryButtonText: {
+    color: '#111111',
+    fontWeight: '600',
   },
   horizontalList: {
     gap: 16,
     paddingBottom: 12,
   },
   productCard: {
-    width: 180,
+    width: 200,
     borderRadius: 16,
     backgroundColor: '#f6f6f6',
     padding: 16,
   },
-  productIcon: {
-    marginBottom: 16,
+  productThumbnail: {
+    width: '100%',
+    height: 120,
+    borderRadius: 12,
+    backgroundColor: '#ffffff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+    overflow: 'hidden',
+  },
+  productImage: {
+    width: '100%',
+    height: '100%',
   },
   productName: {
     fontSize: 16,
     fontWeight: '700',
     color: '#111111',
   },
-  productModel: {
+  productBrand: {
     fontSize: 14,
     color: '#555555',
-    marginVertical: 6,
+    marginVertical: 4,
   },
   productPrice: {
     fontSize: 16,
     fontWeight: '700',
     color: '#111111',
+  },
+  emptyState: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 24,
+  },
+  emptyStateText: {
+    color: '#777777',
+    fontSize: 14,
   },
   reviewCard: {
     width: 200,
