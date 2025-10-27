@@ -350,9 +350,6 @@ export default function ProductDetailsScreen() {
   const maxQuantity = Math.max(stock, 1);
   const stockLabel = stock > 0 ? `${stock} in stock` : 'Out of stock';
 
-  const rentalDurationLabel =
-    rentalDuration <= 0 ? 'Select a valid range' : rentalDuration === 1 ? '1 day' : `${rentalDuration} days`;
-
   const openRentModal = (mode: 'rent' | 'cart') => {
     if (isHydrating) {
       return;
@@ -609,13 +606,6 @@ export default function ProductDetailsScreen() {
                   </Text>
                 </View>
               </View>
-
-            <View style={styles.rentFieldGroup}>
-              <Text style={styles.rentFieldLabel}>Rental Duration</Text>
-              <View style={styles.rentDurationRow}>
-                <Text style={styles.rentDurationValue}>{rentalDurationLabel}</Text>
-              </View>
-            </View>
 
             <View style={styles.rentFooter}>
               <TouchableOpacity
@@ -1310,19 +1300,6 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderBottomWidth: 1,
     borderColor: '#d4d4d4',
-  },
-  rentDurationRow: {
-    borderWidth: 1,
-    borderColor: '#e5e5e5',
-    borderRadius: 14,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    backgroundColor: '#fafafa',
-  },
-  rentDurationValue: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111111',
   },
   rentFooter: {
     marginTop: 8,
