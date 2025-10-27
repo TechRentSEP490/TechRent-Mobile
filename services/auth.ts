@@ -32,6 +32,25 @@ type LoginResponse = {
   tokenType: string;
 };
 
+export type AuthenticatedUser = {
+  accountId: number;
+  username: string;
+  email: string;
+  role: string;
+  phoneNumber: string | null;
+  isActive: boolean;
+};
+
+type CurrentUserResponse = {
+  status: string;
+  message: string;
+  details: string;
+  code: number;
+  data: AuthenticatedUser | null;
+};
+
+type ApiErrorWithStatus = Error & { status?: number };
+
 const jsonHeaders = {
   'Content-Type': 'application/json',
   Accept: 'application/json',
@@ -120,4 +139,43 @@ export async function loginUser(payload: LoginPayload) {
   }
 
   return json;
+}
+
+export async function getCurrentUser({
+  accessToken,
+  tokenType,
+}: {
+  accessToken: string;
+  tokenType?: string | null;
+}) {
+  if (!accessToken) {
+    throw new Error('Access token is required to load the current user.');
+  }
+
+  const response = await fetch(buildApiUrl('auth', 'me'), {
+    method: 'GET',
+    headers: {
+      Accept: 'application/json',
+      Authorization: `${tokenType && tokenType.length > 0 ? tokenType : 'Bearer'} ${accessToken}`,
+    },
+  });
+
+  if (!response.ok) {
+    const apiMessage = await parseErrorMessage(response);
+    const error = new Error(apiMessage ?? `Failed to load profile (status ${response.status}).`) as ApiErrorWithStatus;
+    error.status = response.status;
+    throw error;
+  }
+
+  const json = (await response.json()) as CurrentUserResponse | null;
+
+  if (!json || json.status !== 'SUCCESS' || !json.data) {
+    const error = new Error(json?.message ?? 'Failed to load profile. Please try again.') as ApiErrorWithStatus;
+    if (typeof json?.code === 'number') {
+      error.status = json.code;
+    }
+    throw error;
+  }
+
+  return json.data;
 }
