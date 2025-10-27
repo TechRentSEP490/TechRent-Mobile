@@ -1,66 +1,48 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { products } from '../../constants/products';
+import type { ProductDetail } from '@/constants/products';
+import { useDeviceModel } from '@/hooks/use-device-model';
 
-const currencyFormatter = new Intl.NumberFormat('en-US', {
-  style: 'currency',
-  currency: 'USD',
-});
+const formatCurrencyValue = (value: number, currency: 'USD' | 'VND') =>
+  new Intl.NumberFormat(currency === 'USD' ? 'en-US' : 'vi-VN', {
+    style: 'currency',
+    currency,
+    maximumFractionDigits: currency === 'USD' ? 2 : 0,
+  }).format(value);
 
-const calculateDuration = (start: string, end: string) => {
-  const startDate = new Date(start);
-  const endDate = new Date(end);
-  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
-    return 1;
+const determineCurrency = (product: ProductDetail): 'USD' | 'VND' => {
+  if (product.currency) {
+    return product.currency;
   }
-  const diff = Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
-  return diff > 0 ? diff : 1;
+
+  return product.price.includes('$') ? 'USD' : 'VND';
 };
 
-const parseDailyRate = (price: string) => {
-  const match = price.match(/\$([0-9]+(?:\.[0-9]+)?)/);
-  if (!match) {
-    return 0;
+const getDailyRate = (product: ProductDetail) => {
+  if (typeof product.pricePerDay === 'number' && product.pricePerDay > 0) {
+    return product.pricePerDay;
   }
-  return Number.parseFloat(match[1]);
+
+  const sanitized = product.price.replace(/[^0-9.,]/g, '').replace(/,/g, '');
+  const parsed = Number.parseFloat(sanitized);
+  return Number.isNaN(parsed) ? 0 : parsed;
 };
 
 export default function CheckoutScreen() {
   const router = useRouter();
-  const { productId, quantity: quantityParam, startDate: startParam, endDate: endParam } =
-    useLocalSearchParams<{
-      productId?: string;
-      quantity?: string;
-      startDate?: string;
-      endDate?: string;
-    }>();
-
-  const product = useMemo(() => {
-    if (typeof productId === 'string') {
-      const match = products.find((item) => item.id === productId);
-      if (match) {
-        return match;
-      }
-    }
-    return products[0];
-  }, [productId]);
+  const { productId, quantity: quantityParam } = useLocalSearchParams<{
+    productId?: string;
+    quantity?: string;
+  }>();
+  const { data: product, loading, error } = useDeviceModel(productId);
 
   const quantity = useMemo(() => {
     const parsed = Number.parseInt(typeof quantityParam === 'string' ? quantityParam : '1', 10);
     return Number.isNaN(parsed) || parsed <= 0 ? 1 : parsed;
   }, [quantityParam]);
-
-  const startDate = typeof startParam === 'string' ? startParam : new Date().toISOString().split('T')[0];
-  const endDate = typeof endParam === 'string' ? endParam : startDate;
-
-  const rentalDuration = calculateDuration(startDate, endDate);
-  const dailyRate = parseDailyRate(product.price);
-  const totalAmount = dailyRate * quantity * rentalDuration;
-  const formattedTotal = currencyFormatter.format(totalAmount);
-  const depositHeld = currencyFormatter.format(Math.max(totalAmount * 0.12, 25));
 
   const [customerName, setCustomerName] = useState('');
   const [customerEmail, setCustomerEmail] = useState('');
@@ -68,6 +50,28 @@ export default function CheckoutScreen() {
   const [shippingAddress, setShippingAddress] = useState('');
   const [shippingEmail, setShippingEmail] = useState('');
   const [sameAsBilling, setSameAsBilling] = useState(true);
+
+  if (!product) {
+    return (
+      <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
+        <View style={styles.loadingState}>
+          {loading ? (
+            <ActivityIndicator size="large" color="#111111" />
+          ) : (
+            <Text style={styles.loadingStateText}>Device not found.</Text>
+          )}
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const currency = determineCurrency(product);
+  const dailyRate = getDailyRate(product);
+  const totalAmount = dailyRate * quantity;
+  const formattedTotal = formatCurrencyValue(totalAmount, currency);
+  const depositPercent = typeof product.depositPercent === 'number' ? product.depositPercent : 0.12;
+  const depositHeldValue = totalAmount * depositPercent;
+  const depositHeld = formatCurrencyValue(depositHeldValue, currency);
 
   const handleOrder = () => {
     router.replace({
@@ -87,6 +91,18 @@ export default function CheckoutScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        {error && (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorBannerText}>{error}</Text>
+          </View>
+        )}
+
+        {loading && (
+          <View style={styles.loaderRow}>
+            <ActivityIndicator size="small" color="#111111" />
+          </View>
+        )}
+
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Customer Information</Text>
           <View style={styles.inputRow}>
@@ -150,11 +166,11 @@ export default function CheckoutScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Billing Summary</Text>
           <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>Total Rental Amount</Text>
+            <Text style={styles.summaryLabel}>Daily Rental Amount</Text>
             <Text style={styles.summaryValue}>{formattedTotal}</Text>
           </View>
           <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>Deposit Held</Text>
+            <Text style={styles.summaryLabel}>Deposit Held (Daily)</Text>
             <Text style={styles.summaryValue}>{depositHeld}</Text>
           </View>
         </View>
@@ -176,6 +192,17 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: '#ffffff',
+  },
+  loadingState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+    backgroundColor: '#ffffff',
+  },
+  loadingStateText: {
+    color: '#6f6f6f',
+    fontSize: 16,
   },
   header: {
     flexDirection: 'row',
@@ -207,6 +234,22 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     paddingBottom: 32,
     gap: 20,
+  },
+  errorBanner: {
+    borderRadius: 12,
+    backgroundColor: '#fff5f5',
+    borderWidth: 1,
+    borderColor: '#f5c2c2',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  errorBannerText: {
+    color: '#c53030',
+    fontSize: 14,
+  },
+  loaderRow: {
+    paddingVertical: 4,
+    alignItems: 'flex-start',
   },
   section: {
     borderRadius: 20,

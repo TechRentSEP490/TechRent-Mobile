@@ -1,8 +1,13 @@
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
+  Alert,
   FlatList,
+  Image,
   Modal,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
   ScrollView,
   StyleSheet,
   Text,
@@ -13,11 +18,16 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { products, type ProductDetail } from '../../constants/products';
+import { useAuth } from '@/contexts/AuthContext';
+import { useDeviceModel } from '@/hooks/use-device-model';
+import { createRentalOrder } from '@/services/rental-orders';
 
 type NormalizedSpecEntry = {
   label: string;
   value: string;
 };
+
+type AuthRoute = '/(auth)/sign-in' | '/(auth)/sign-up';
 
 const formatSpecKey = (key: string) =>
   key
@@ -190,12 +200,40 @@ const normalizeSpecsData = (data: ProductDetail['specs']): NormalizedSpecEntry[]
     : [];
 };
 
-const formatDate = (date: Date) => date.toISOString().split('T')[0];
-const addDays = (date: Date, days: number) => {
-  const nextDate = new Date(date);
-  nextDate.setDate(nextDate.getDate() + days);
-  return nextDate;
+const clampToStartOfDay = (date: Date) => {
+  const normalized = new Date(date);
+  normalized.setHours(0, 0, 0, 0);
+  return normalized;
 };
+
+const formatDate = (date: Date) => clampToStartOfDay(date).toISOString().split('T')[0];
+
+const addDays = (date: Date, days: number) => {
+  const base = clampToStartOfDay(date);
+  const nextDate = new Date(base);
+  nextDate.setDate(base.getDate() + days);
+  return clampToStartOfDay(nextDate);
+};
+
+const DATE_SCROLL_ITEM_HEIGHT = 48;
+const DATE_SCROLL_RANGE_DAYS = 365;
+const DATE_SCROLL_VISIBLE_ROWS = 5;
+
+const formatDisplayDate = (date: Date) =>
+  clampToStartOfDay(date).toLocaleDateString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  });
+
+const createDateSequence = (start: Date, totalDays: number) => {
+  const normalizedStart = clampToStartOfDay(start);
+  const length = Math.max(totalDays, 1);
+  return Array.from({ length }, (_, index) => addDays(normalizedStart, index));
+};
+
+const findDateIndex = (dates: Date[], target: Date) =>
+  dates.findIndex((item) => item.getTime() === target.getTime());
 
 export default function ProductDetailsScreen() {
   const [isSpecsOpen, setIsSpecsOpen] = useState(false);
@@ -203,25 +241,49 @@ export default function ProductDetailsScreen() {
   const [isRentOpen, setIsRentOpen] = useState(false);
   const [rentMode, setRentMode] = useState<'rent' | 'cart' | null>(null);
   const [quantity, setQuantity] = useState(1);
-  const [startDate, setStartDate] = useState(() => formatDate(new Date()));
-  const [endDate, setEndDate] = useState(() => formatDate(addDays(new Date(), 7)));
+  const [startDate, setStartDate] = useState<Date>(() => clampToStartOfDay(new Date()));
+  const [endDate, setEndDate] = useState<Date>(() => addDays(new Date(), 7));
+  const [shippingAddress, setShippingAddress] = useState('');
+  const [rentError, setRentError] = useState<string | null>(null);
+  const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
+  const [isAuthPromptOpen, setIsAuthPromptOpen] = useState(false);
+  const [authPromptMode, setAuthPromptMode] = useState<'rent' | 'cart' | null>(null);
   const router = useRouter();
-  const { productId } = useLocalSearchParams<{ productId?: string }>();
+  const { isSignedIn, isHydrating, session, user } = useAuth();
+  const { productId: productIdParam, deviceModelId } = useLocalSearchParams<{
+    productId?: string;
+    deviceModelId?: string;
+  }>();
+  const resolvedProductId = typeof deviceModelId === 'string' ? deviceModelId : productIdParam;
+  const {
+    data: fetchedProduct,
+    loading: isProductLoading,
+    error: productError,
+  } = useDeviceModel(resolvedProductId);
 
   const product = useMemo(() => {
-    if (typeof productId === 'string') {
-      const match = products.find((item) => item.id === productId);
+    if (fetchedProduct) {
+      return fetchedProduct;
+    }
+
+    if (typeof resolvedProductId === 'string') {
+      const match = products.find((item) => item.id === resolvedProductId);
       if (match) {
         return match;
       }
     }
-    return products[0];
-  }, [productId]);
 
-  const { name, model, brand, status, specs, accessories, relatedProducts, reviews, price, stock } = product;
+    return products[0] ?? null;
+  }, [fetchedProduct, resolvedProductId]);
+
+  const specsSource = product?.specs;
 
   const normalizedSpecs = useMemo(() => {
-    const entries = normalizeSpecsData(specs);
+    if (!specsSource) {
+      return [];
+    }
+
+    const entries = normalizeSpecsData(specsSource);
     const seen = new Set<string>();
 
     return entries.filter((entry) => {
@@ -232,29 +294,84 @@ export default function ProductDetailsScreen() {
       seen.add(key);
       return true;
     });
-  }, [specs]);
+  }, [specsSource]);
+
+  const formattedStartDate = useMemo(() => formatDate(startDate), [startDate]);
+  const formattedEndDate = useMemo(() => formatDate(endDate), [endDate]);
+  const startDateDisplayLabel = useMemo(() => formatDisplayDate(startDate), [startDate]);
+  const endDateDisplayLabel = useMemo(() => formatDisplayDate(endDate), [endDate]);
+  const minimumStartDate = clampToStartOfDay(new Date());
+  const minimumEndDate = useMemo(() => addDays(startDate, 1), [startDate]);
+  const isRangeInvalid = useMemo(
+    () => endDate.getTime() <= startDate.getTime(),
+    [endDate, startDate]
+  );
+
+  const handleStartDateChange = useCallback((selectedDate: Date) => {
+    const normalized = clampToStartOfDay(selectedDate);
+    setStartDate(normalized);
+    setEndDate((currentEnd) => {
+      if (currentEnd.getTime() <= normalized.getTime()) {
+        return addDays(normalized, 1);
+      }
+
+      return currentEnd;
+    });
+  }, []);
+
+  const handleEndDateChange = useCallback(
+    (selectedDate: Date) => {
+      const normalized = clampToStartOfDay(selectedDate);
+      if (normalized.getTime() <= startDate.getTime()) {
+        setEndDate(addDays(startDate, 1));
+        return;
+      }
+
+      setEndDate(normalized);
+    },
+    [startDate]
+  );
+
+  if (!product) {
+    return (
+      <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
+        <View style={styles.loadingState}>
+          {isProductLoading ? (
+            <ActivityIndicator size="large" color="#111111" />
+          ) : (
+            <Text style={styles.errorBannerText}>Device not found.</Text>
+          )}
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const { name, model, brand, status, accessories, relatedProducts, reviews, price, stock } = product;
+  const productImage = product.imageURL;
 
   const isOutOfStock = stock <= 0;
   const maxQuantity = Math.max(stock, 1);
   const stockLabel = stock > 0 ? `${stock} in stock` : 'Out of stock';
-
-  const rentalDuration = useMemo(() => {
-    const parsedStart = new Date(startDate);
-    const parsedEnd = new Date(endDate);
-    if (Number.isNaN(parsedStart.getTime()) || Number.isNaN(parsedEnd.getTime())) {
-      return 0;
-    }
-    const diff = Math.round((parsedEnd.getTime() - parsedStart.getTime()) / (1000 * 60 * 60 * 24));
-    return diff > 0 ? diff : 0;
-  }, [startDate, endDate]);
-
-  const rentalDurationLabel = rentalDuration === 1 ? '1 day' : `${rentalDuration} days`;
+  const isRestoringSession = isHydrating && Boolean(session?.accessToken);
 
   const openRentModal = (mode: 'rent' | 'cart') => {
-    const today = new Date();
+    if (isRestoringSession) {
+      return;
+    }
+
+    if (!isSignedIn) {
+      setAuthPromptMode(mode);
+      setIsAuthPromptOpen(true);
+      return;
+    }
+
+    const today = clampToStartOfDay(new Date());
     setQuantity(1);
-    setStartDate(formatDate(today));
-    setEndDate(formatDate(addDays(today, 7)));
+    setStartDate(today);
+    setEndDate(addDays(today, 7));
+    setShippingAddress('');
+    setRentError(null);
+    setIsSubmittingOrder(false);
     setRentMode(mode);
     setIsRentOpen(true);
   };
@@ -262,11 +379,29 @@ export default function ProductDetailsScreen() {
   const closeRentModal = () => {
     setIsRentOpen(false);
     setRentMode(null);
+    setRentError(null);
+    setIsSubmittingOrder(false);
+    setShippingAddress('');
   };
 
-  const isPrimaryDisabled = isOutOfStock || rentalDuration <= 0 || rentMode === null;
+  const closeAuthPrompt = () => {
+    setIsAuthPromptOpen(false);
+    setAuthPromptMode(null);
+  };
 
-  const handlePrimaryAction = () => {
+  const handleAuthNavigation = (path: AuthRoute) => {
+    closeAuthPrompt();
+    router.push(path);
+  };
+
+  const isPrimaryDisabled =
+    isOutOfStock ||
+    isRangeInvalid ||
+    rentMode === null ||
+    (rentMode === 'rent' && shippingAddress.trim().length === 0) ||
+    (rentMode === 'rent' && isSubmittingOrder);
+
+  const handlePrimaryAction = async () => {
     if (isPrimaryDisabled || rentMode === null) {
       return;
     }
@@ -275,19 +410,66 @@ export default function ProductDetailsScreen() {
 
     if (rentMode === 'cart') {
       closeRentModal();
+      router.push({
+        pathname: '/(app)/cart',
+        params: {
+          productId: destinationProductId,
+          quantity: String(quantity),
+          startDate: formattedStartDate,
+          endDate: formattedEndDate,
+        },
+      });
       return;
     }
 
-    closeRentModal();
-    router.push({
-      pathname: '/(app)/cart',
-      params: {
-        productId: destinationProductId,
-        quantity: String(quantity),
-        startDate,
-        endDate,
-      },
-    });
+    if (!session?.accessToken || !user?.accountId) {
+      Alert.alert('Authentication required', 'Please sign in again to continue with your rental.');
+      closeRentModal();
+      return;
+    }
+
+    const deviceModelId = Number.parseInt(destinationProductId, 10);
+
+    if (!Number.isFinite(deviceModelId)) {
+      setRentError('Unable to determine the selected device. Please try again.');
+      return;
+    }
+
+    setIsSubmittingOrder(true);
+    setRentError(null);
+
+    try {
+      await createRentalOrder(
+        {
+          startDate: startDate.toISOString(),
+          endDate: endDate.toISOString(),
+          shippingAddress: shippingAddress.trim(),
+          customerId: user.accountId,
+          orderDetails: [
+            {
+              quantity,
+              deviceModelId,
+            },
+          ],
+        },
+        {
+          accessToken: session.accessToken,
+          tokenType: session.tokenType,
+        }
+      );
+
+      closeRentModal();
+      Alert.alert(
+        'Rental order created',
+        "Your rental order was submitted successfully. We'll keep you posted with updates."
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unable to submit the rental order. Please try again.';
+      setRentError(message);
+    } finally {
+      setIsSubmittingOrder(false);
+    }
   };
 
   const decreaseQuantity = () => setQuantity((prev) => Math.max(prev - 1, 1));
@@ -310,8 +492,21 @@ export default function ProductDetailsScreen() {
           </View>
         </View>
 
+        {productError && (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorBannerText}>{productError}</Text>
+          </View>
+        )}
+
         <View style={styles.imagePreview}>
-          <Text style={styles.imageText}>Explore images of the product.</Text>
+          {productImage ? (
+            <Image source={{ uri: productImage }} style={styles.heroImage} resizeMode="cover" />
+          ) : (
+            <View style={styles.heroPlaceholder}>
+              <MaterialCommunityIcons name="image-off-outline" size={48} color="#6f6f6f" />
+              <Text style={styles.heroPlaceholderText}>Images coming soon</Text>
+            </View>
+          )}
         </View>
 
         <View style={styles.paginationDots}>
@@ -443,76 +638,112 @@ export default function ProductDetailsScreen() {
               <Text style={styles.rentStockLabel}>{stockLabel}</Text>
             </View>
 
-            <View style={styles.rentFieldRow}>
-              <View style={styles.rentFieldHalf}>
-                <Text style={styles.rentFieldLabel}>Start Date</Text>
-                <View style={styles.rentDateControl}>
-                  <TextInput
-                    style={styles.rentDateInput}
-                    value={startDate}
-                    onChangeText={setStartDate}
-                    placeholder="YYYY-MM-DD"
-                    placeholderTextColor="#9c9c9c"
-                  />
-                  <TouchableOpacity
-                    style={styles.rentCalendarButton}
-                    onPress={() => setStartDate(formatDate(new Date()))}
-                  >
-                    <Ionicons name="calendar-outline" size={18} color="#111111" />
-                  </TouchableOpacity>
+              <View style={styles.rentFieldRow}>
+                <View style={styles.rentFieldHalf}>
+                  <Text style={styles.rentFieldLabel}>Start Date</Text>
+                  <View style={styles.rentDateControl}>
+                    <DateScrollPicker
+                      value={startDate}
+                      minimumDate={minimumStartDate}
+                      onChange={handleStartDateChange}
+                      rangeInDays={DATE_SCROLL_RANGE_DAYS}
+                    />
+                  </View>
+                  <Text style={styles.rentDateCaption}>
+                    Selected: {startDateDisplayLabel} • {formattedStartDate}
+                  </Text>
+                </View>
+                <View style={styles.rentFieldHalf}>
+                  <Text style={styles.rentFieldLabel}>End Date</Text>
+                  <View style={styles.rentDateControl}>
+                    <DateScrollPicker
+                      value={endDate}
+                      minimumDate={minimumEndDate}
+                      onChange={handleEndDateChange}
+                      rangeInDays={DATE_SCROLL_RANGE_DAYS}
+                    />
+                  </View>
+                  <Text style={styles.rentDateCaption}>
+                    Selected: {endDateDisplayLabel} • {formattedEndDate}
+                  </Text>
                 </View>
               </View>
-              <View style={styles.rentFieldHalf}>
-                <Text style={styles.rentFieldLabel}>End Date</Text>
-                <View style={styles.rentDateControl}>
+
+              {rentMode === 'rent' && (
+                <View style={styles.rentFieldGroup}>
+                  <Text style={styles.rentFieldLabel}>Shipping Address</Text>
                   <TextInput
-                    style={styles.rentDateInput}
-                    value={endDate}
-                    onChangeText={setEndDate}
-                    placeholder="YYYY-MM-DD"
+                    style={styles.rentTextInput}
+                    placeholder="Enter your shipping address"
                     placeholderTextColor="#9c9c9c"
+                    value={shippingAddress}
+                    onChangeText={setShippingAddress}
+                    editable={!isSubmittingOrder}
                   />
-                  <TouchableOpacity
-                    style={styles.rentCalendarButton}
-                    onPress={() => {
-                      const base = new Date();
-                      setEndDate(formatDate(addDays(base, 7)));
-                    }}
-                  >
-                    <Ionicons name="calendar-outline" size={18} color="#111111" />
-                  </TouchableOpacity>
                 </View>
-              </View>
-            </View>
+              )}
 
-            <View style={styles.rentFieldGroup}>
-              <Text style={styles.rentFieldLabel}>Rental Duration</Text>
-              <View style={styles.rentDurationRow}>
-                <Text style={styles.rentDurationValue}>{rentalDurationLabel}</Text>
-              </View>
-            </View>
+              {rentError && (
+                <View style={styles.rentErrorContainer}>
+                  <Text style={styles.rentErrorText}>{rentError}</Text>
+                </View>
+              )}
 
-            <View style={styles.rentFooter}>
-              <TouchableOpacity
-                style={[
-                  styles.rentPrimaryAction,
-                  rentMode === 'cart' && styles.cartModeButton,
-                  isPrimaryDisabled && styles.disabledButton,
-                ]}
-                disabled={isPrimaryDisabled}
-                onPress={handlePrimaryAction}
-              >
-                <Text
+              <View style={styles.rentFooter}>
+                <TouchableOpacity
                   style={[
-                    styles.rentPrimaryActionText,
-                    rentMode === 'cart' && styles.cartModeButtonText,
-                    isPrimaryDisabled && styles.disabledButtonText,
+                    styles.rentPrimaryAction,
+                    rentMode === 'cart' && styles.cartModeButton,
+                    isPrimaryDisabled && styles.disabledButton,
                   ]}
+                  disabled={isPrimaryDisabled}
+                  onPress={handlePrimaryAction}
                 >
-                  {rentMode === 'cart' ? 'Add to Cart' : 'Rent Now'}
-                </Text>
+                  {isSubmittingOrder && rentMode === 'rent' ? (
+                    <ActivityIndicator color="#ffffff" />
+                  ) : (
+                    <Text
+                      style={[
+                        styles.rentPrimaryActionText,
+                        rentMode === 'cart' && styles.cartModeButtonText,
+                        isPrimaryDisabled && styles.disabledButtonText,
+                      ]}
+                    >
+                      {rentMode === 'cart' ? 'Add to Cart' : 'Rent Now'}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={isAuthPromptOpen} transparent animationType="fade" onRequestClose={closeAuthPrompt}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.authModalContent}>
+            <Text style={styles.authModalTitle}>Sign in required</Text>
+            <Text style={styles.authModalDescription}>
+              {authPromptMode === 'cart'
+                ? 'Sign in or create an account to add this device to your cart.'
+                : 'Sign in or create an account to rent this device.'}
+            </Text>
+            <View style={styles.authModalActions}>
+              <TouchableOpacity style={styles.authModalSecondary} onPress={closeAuthPrompt}>
+                <Text style={styles.authModalSecondaryText}>Maybe later</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.authModalPrimary}
+                onPress={() => handleAuthNavigation('/(auth)/sign-in')}
+              >
+                <Text style={styles.authModalPrimaryText}>Sign In</Text>
               </TouchableOpacity>
             </View>
+            <TouchableOpacity
+              style={styles.authModalLink}
+              onPress={() => handleAuthNavigation('/(auth)/sign-up')}
+            >
+              <Text style={styles.authModalLinkText}>New here? Create an account</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -565,9 +796,121 @@ export default function ProductDetailsScreen() {
   );
 }
 
+type DateScrollPickerProps = {
+  value: Date;
+  minimumDate: Date;
+  onChange: (date: Date) => void;
+  rangeInDays?: number;
+};
+
+function DateScrollPicker({
+  value,
+  minimumDate,
+  onChange,
+  rangeInDays = DATE_SCROLL_RANGE_DAYS,
+}: DateScrollPickerProps) {
+  const scrollRef = useRef<ScrollView>(null);
+  const isInteractingRef = useRef(false);
+
+  const normalizedMinimum = useMemo(() => clampToStartOfDay(minimumDate), [minimumDate]);
+  const options = useMemo(
+    () => createDateSequence(normalizedMinimum, rangeInDays + 1),
+    [normalizedMinimum, rangeInDays]
+  );
+
+  const selectedIndex = useMemo(() => {
+    const index = findDateIndex(options, value);
+    if (index >= 0) {
+      return index;
+    }
+
+    if (options.length === 0) {
+      return 0;
+    }
+
+    if (value.getTime() < options[0].getTime()) {
+      return 0;
+    }
+
+    return options.length - 1;
+  }, [options, value]);
+
+  useEffect(() => {
+    if (!scrollRef.current) {
+      return;
+    }
+
+    const targetOffset = selectedIndex * DATE_SCROLL_ITEM_HEIGHT;
+    scrollRef.current.scrollTo({ y: targetOffset, animated: !isInteractingRef.current });
+  }, [selectedIndex]);
+
+  const handleMomentumEnd = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const offsetY = event.nativeEvent.contentOffset.y;
+      const rawIndex = Math.round(offsetY / DATE_SCROLL_ITEM_HEIGHT);
+      const clampedIndex = Math.min(Math.max(rawIndex, 0), Math.max(options.length - 1, 0));
+      const nextDate = options[clampedIndex];
+
+      if (nextDate && nextDate.getTime() !== value.getTime()) {
+        onChange(nextDate);
+      }
+
+      isInteractingRef.current = false;
+    },
+    [onChange, options, value]
+  );
+
+  const handleScrollBegin = useCallback(() => {
+    isInteractingRef.current = true;
+  }, []);
+
+  const handleScrollEndDrag = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      handleMomentumEnd(event);
+    },
+    [handleMomentumEnd]
+  );
+
+  return (
+    <View style={styles.dateScrollPickerContainer}>
+      <ScrollView
+        ref={scrollRef}
+        showsVerticalScrollIndicator={false}
+        snapToInterval={DATE_SCROLL_ITEM_HEIGHT}
+        decelerationRate="fast"
+        onMomentumScrollEnd={handleMomentumEnd}
+        onScrollBeginDrag={handleScrollBegin}
+        onScrollEndDrag={handleScrollEndDrag}
+        contentContainerStyle={styles.dateScrollContent}
+      >
+        {options.map((option) => {
+          const key = option.getTime();
+          const isSelected = option.getTime() === value.getTime();
+
+          return (
+            <View key={key} style={[styles.dateScrollItem, isSelected && styles.dateScrollItemSelected]}>
+              <Text style={[styles.dateScrollText, isSelected && styles.dateScrollTextSelected]}>
+                {formatDisplayDate(option)}
+              </Text>
+            </View>
+          );
+        })}
+      </ScrollView>
+      <View pointerEvents="none" style={styles.dateScrollHighlight} />
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
+    backgroundColor: '#ffffff',
+  },
+  loadingState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
     backgroundColor: '#ffffff',
   },
   container: {
@@ -593,18 +936,44 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 12,
   },
+  errorBanner: {
+    marginBottom: 16,
+    borderRadius: 12,
+    backgroundColor: '#fff5f5',
+    borderWidth: 1,
+    borderColor: '#f5c2c2',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  errorBannerText: {
+    color: '#c53030',
+    fontSize: 14,
+  },
   imagePreview: {
     height: 220,
     borderRadius: 20,
     borderWidth: 1,
     borderColor: '#e5e5e5',
+    backgroundColor: '#fafafa',
+    overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#fafafa',
   },
-  imageText: {
+  heroImage: {
+    width: '100%',
+    height: '100%',
+  },
+  heroPlaceholder: {
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  heroPlaceholderText: {
     color: '#6c6c6c',
-    fontSize: 15,
+    fontSize: 14,
+    marginTop: 12,
   },
   paginationDots: {
     flexDirection: 'row',
@@ -808,6 +1177,60 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontWeight: '600',
   },
+  authModalContent: {
+    width: '100%',
+    borderRadius: 16,
+    backgroundColor: '#ffffff',
+    padding: 24,
+  },
+  authModalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111111',
+    marginBottom: 12,
+  },
+  authModalDescription: {
+    fontSize: 14,
+    color: '#444444',
+    marginBottom: 20,
+    lineHeight: 20,
+  },
+  authModalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 12,
+  },
+  authModalSecondary: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#d9d9d9',
+    backgroundColor: '#ffffff',
+  },
+  authModalSecondaryText: {
+    color: '#444444',
+    fontWeight: '600',
+  },
+  authModalPrimary: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    backgroundColor: '#111111',
+  },
+  authModalPrimaryText: {
+    color: '#ffffff',
+    fontWeight: '600',
+  },
+  authModalLink: {
+    marginTop: 16,
+    alignItems: 'center',
+  },
+  authModalLinkText: {
+    color: '#111111',
+    fontWeight: '600',
+    textDecorationLine: 'underline',
+  },
   rentModalContent: {
     width: '100%',
     borderRadius: 20,
@@ -873,6 +1296,29 @@ const styles = StyleSheet.create({
     color: '#111111',
     marginBottom: 8,
   },
+  rentTextInput: {
+    borderWidth: 1,
+    borderColor: '#d9d9d9',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 14,
+    color: '#111111',
+    backgroundColor: '#ffffff',
+  },
+  rentErrorContainer: {
+    marginBottom: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#f5c2c2',
+    backgroundColor: '#fff5f5',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  rentErrorText: {
+    color: '#c53030',
+    fontSize: 14,
+  },
   rentQuantityControl: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -914,43 +1360,55 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   rentDateControl: {
-    flexDirection: 'row',
-    alignItems: 'center',
     borderWidth: 1,
     borderColor: '#e5e5e5',
     borderRadius: 14,
-    paddingHorizontal: 16,
     backgroundColor: '#fafafa',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+    paddingHorizontal: 4,
+    paddingVertical: 8,
   },
-  rentDateInput: {
-    flex: 1,
-    fontSize: 15,
-    color: '#111111',
-    paddingVertical: 12,
-    marginRight: 12,
+  rentDateCaption: {
+    marginTop: 8,
+    fontSize: 13,
+    color: '#6f6f6f',
+    textAlign: 'center',
   },
-  rentCalendarButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#e1e1e1',
-    backgroundColor: '#ffffff',
+  dateScrollPickerContainer: {
+    width: '100%',
+    height: DATE_SCROLL_ITEM_HEIGHT * DATE_SCROLL_VISIBLE_ROWS,
+  },
+  dateScrollContent: {
+    paddingVertical: (DATE_SCROLL_ITEM_HEIGHT * DATE_SCROLL_VISIBLE_ROWS - DATE_SCROLL_ITEM_HEIGHT) / 2,
+  },
+  dateScrollItem: {
+    height: DATE_SCROLL_ITEM_HEIGHT,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  rentDurationRow: {
-    borderWidth: 1,
-    borderColor: '#e5e5e5',
-    borderRadius: 14,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    backgroundColor: '#fafafa',
+  dateScrollItemSelected: {
+    backgroundColor: '#ffffff',
   },
-  rentDurationValue: {
+  dateScrollText: {
+    fontSize: 15,
+    color: '#6f6f6f',
+  },
+  dateScrollTextSelected: {
     fontSize: 16,
     fontWeight: '600',
     color: '#111111',
+  },
+  dateScrollHighlight: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: (DATE_SCROLL_ITEM_HEIGHT * DATE_SCROLL_VISIBLE_ROWS - DATE_SCROLL_ITEM_HEIGHT) / 2,
+    height: DATE_SCROLL_ITEM_HEIGHT,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: '#d4d4d4',
   },
   rentFooter: {
     marginTop: 8,
