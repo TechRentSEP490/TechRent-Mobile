@@ -1,6 +1,6 @@
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/contexts/AuthContext';
@@ -34,12 +34,48 @@ const contactItems = [
 
 export default function ProfileScreen() {
   const router = useRouter();
-  const { signOut } = useAuth();
+  const { isSignedIn, isHydrating, signOut } = useAuth();
 
   const handleLogout = () => {
     signOut();
     router.replace('/(auth)/sign-in');
   };
+
+  if (isHydrating) {
+    return (
+      <SafeAreaView style={styles.safeArea} edges={["top"]}>
+        <View style={styles.loadingState}>
+          <ActivityIndicator size="large" color="#111111" />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (!isSignedIn) {
+    return (
+      <SafeAreaView style={styles.safeArea} edges={["top"]}>
+        <View style={styles.unauthContainer}>
+          <Ionicons name="person-circle-outline" size={72} color="#111111" />
+          <Text style={styles.unauthTitle}>Sign in to view your profile</Text>
+          <Text style={styles.unauthSubtitle}>
+            Access your orders, manage rentals, and update account information after signing in.
+          </Text>
+          <TouchableOpacity
+            style={[styles.authButton, styles.authPrimaryButton]}
+            onPress={() => router.push('/(auth)/sign-in')}
+          >
+            <Text style={[styles.authButtonText, styles.authPrimaryButtonText]}>Sign In</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.authButton, styles.authSecondaryButton]}
+            onPress={() => router.push('/(auth)/sign-up')}
+          >
+            <Text style={[styles.authButtonText, styles.authSecondaryButtonText]}>Create Account</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top"]}>
@@ -111,6 +147,59 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: '#ffffff',
+  },
+  loadingState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ffffff',
+  },
+  unauthContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+    backgroundColor: '#ffffff',
+    gap: 16,
+  },
+  unauthTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#111111',
+    textAlign: 'center',
+  },
+  unauthSubtitle: {
+    fontSize: 15,
+    color: '#555555',
+    textAlign: 'center',
+    lineHeight: 22,
+  },
+  authButton: {
+    width: '100%',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  authButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  authPrimaryButton: {
+    backgroundColor: '#111111',
+  },
+  authPrimaryButtonText: {
+    color: '#ffffff',
+    fontWeight: '700',
+    fontSize: 16,
+  },
+  authSecondaryButton: {
+    borderWidth: 1,
+    borderColor: '#111111',
+  },
+  authSecondaryButtonText: {
+    color: '#111111',
+    fontWeight: '700',
+    fontSize: 16,
   },
   contentContainer: {
     padding: 20,

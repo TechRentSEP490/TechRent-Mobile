@@ -7,6 +7,11 @@ export type RegisterPayload = {
   phoneNumber: string;
 };
 
+export type LoginPayload = {
+  usernameOrEmail: string;
+  password: string;
+};
+
 type RegisterResponse = {
   status: string;
   message: string;
@@ -20,6 +25,11 @@ type VerifyEmailResponse = {
   details: string;
   code: number;
   data: unknown;
+};
+
+type LoginResponse = {
+  accessToken: string;
+  tokenType: string;
 };
 
 const jsonHeaders = {
@@ -86,6 +96,27 @@ export async function verifyEmail({ email, code }: { email: string; code: string
 
   if (!json || json.status !== 'SUCCESS') {
     throw new Error(json?.message ?? 'Verification failed. Please try again.');
+  }
+
+  return json;
+}
+
+export async function loginUser(payload: LoginPayload) {
+  const response = await fetch(buildApiUrl('auth', 'login'), {
+    method: 'POST',
+    headers: jsonHeaders,
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const apiMessage = await parseErrorMessage(response);
+    throw new Error(apiMessage ?? `Sign in failed (status ${response.status}).`);
+  }
+
+  const json = (await response.json()) as LoginResponse | null;
+
+  if (!json?.accessToken) {
+    throw new Error('Sign in failed. Please verify your credentials and try again.');
   }
 
   return json;

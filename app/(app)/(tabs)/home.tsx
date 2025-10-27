@@ -15,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 
 import type { ProductDetail } from '@/constants/products';
+import { useAuth } from '@/contexts/AuthContext';
 import { useDeviceCategories } from '@/hooks/use-device-categories';
 import { useDeviceModels } from '@/hooks/use-device-models';
 import { fetchDeviceCategoryById, type DeviceCategory } from '@/services/device-categories';
@@ -39,6 +40,7 @@ const reviews = [
 
 export default function HomeScreen() {
   const router = useRouter();
+  const { isSignedIn, isHydrating } = useAuth();
   const { data: deviceModels, loading, error, refetch } = useDeviceModels();
   const {
     data: categories,
@@ -73,9 +75,24 @@ export default function HomeScreen() {
         icon: 'notifications-outline',
         onPress: () => router.push('/(app)/notifications'),
       },
-      { key: 'cart', icon: 'cart-outline', onPress: () => router.push('/(app)/cart') },
+      {
+        key: 'cart',
+        icon: 'cart-outline',
+        onPress: () => {
+          if (isHydrating) {
+            return;
+          }
+
+          if (!isSignedIn) {
+            router.push('/(auth)/sign-in');
+            return;
+          }
+
+          router.push('/(app)/cart');
+        },
+      },
     ],
-    [router]
+    [isHydrating, isSignedIn, router]
   );
 
   const categoryOptions = useMemo(
@@ -189,6 +206,24 @@ export default function HomeScreen() {
               ))}
             </View>
           </View>
+
+          {!isHydrating && !isSignedIn && (
+            <View style={styles.authNoticeCard}>
+              <View style={styles.authNoticeTextGroup}>
+                <Text style={styles.authNoticeTitle}>Sign in to rent devices</Text>
+                <Text style={styles.authNoticeSubtitle}>
+                  Create an account or sign in to add items to your cart and complete rentals.
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.authNoticeButton}
+                activeOpacity={0.85}
+                onPress={() => router.push('/(auth)/sign-in')}
+              >
+                <Text style={styles.authNoticeButtonText}>Sign In</Text>
+              </TouchableOpacity>
+            </View>
+          )}
 
           <View style={styles.sectionHeaderRow}>
             <Text style={styles.sectionTitle}>Categories</Text>
@@ -360,6 +395,40 @@ const styles = StyleSheet.create({
     backgroundColor: '#f3f3f3',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  authNoticeCard: {
+    borderRadius: 16,
+    backgroundColor: '#111111',
+    padding: 20,
+    marginBottom: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  authNoticeTextGroup: {
+    flex: 1,
+    gap: 6,
+  },
+  authNoticeTitle: {
+    color: '#ffffff',
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  authNoticeSubtitle: {
+    color: '#f5f5f5',
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  authNoticeButton: {
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 24,
+  },
+  authNoticeButtonText: {
+    color: '#111111',
+    fontWeight: '700',
+    fontSize: 14,
   },
   sectionTitle: {
     fontSize: 20,

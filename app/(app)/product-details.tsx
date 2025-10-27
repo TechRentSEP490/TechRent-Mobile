@@ -214,7 +214,7 @@ export default function ProductDetailsScreen() {
   const [isAuthPromptOpen, setIsAuthPromptOpen] = useState(false);
   const [authPromptMode, setAuthPromptMode] = useState<'rent' | 'cart' | null>(null);
   const router = useRouter();
-  const { isSignedIn } = useAuth();
+  const { isSignedIn, isHydrating } = useAuth();
   const { productId: productIdParam, deviceModelId } = useLocalSearchParams<{
     productId?: string;
     deviceModelId?: string;
@@ -295,6 +295,10 @@ export default function ProductDetailsScreen() {
   const rentalDurationLabel = rentalDuration === 1 ? '1 day' : `${rentalDuration} days`;
 
   const openRentModal = (mode: 'rent' | 'cart') => {
+    if (isHydrating) {
+      return;
+    }
+
     if (!isSignedIn) {
       setAuthPromptMode(mode);
       setIsAuthPromptOpen(true);
