@@ -34,6 +34,40 @@ const CACHE_TTL = 60 * 1000;
 let cachedDeviceModels: ProductDetail[] | null = null;
 let cacheTimestamp = 0;
 
+const stripWrappingQuotes = (input: string) => input.replace(/^['"]+|['"]+$/g, '');
+
+const parseLooseSpecificationString = (raw: string): ProductSpecsPayload => {
+  const segments = raw
+    .split(/\r?\n|,|;|\u2022|\|/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+  if (segments.length === 0) {
+    return raw;
+  }
+
+  const entries = segments.map((segment, index) => {
+    const delimiterIndex = segment.indexOf(':');
+
+    if (delimiterIndex === -1) {
+      return {
+        label: `Spec ${index + 1}`,
+        value: stripWrappingQuotes(segment),
+      };
+    }
+
+    const label = stripWrappingQuotes(segment.slice(0, delimiterIndex).trim());
+    const value = stripWrappingQuotes(segment.slice(delimiterIndex + 1).trim());
+
+    return {
+      label: label || `Spec ${index + 1}`,
+      value: value || '—',
+    };
+  });
+
+  return entries;
+};
+
 const parseSpecifications = (value: string | null): ProductSpecsPayload => {
   if (!value) {
     return null;
@@ -45,12 +79,17 @@ const parseSpecifications = (value: string | null): ProductSpecsPayload => {
     return null;
   }
 
-  try {
-    return JSON.parse(trimmed) as ProductSpecsPayload;
-  } catch (error) {
-    console.warn('Failed to parse specifications payload', error);
-    return trimmed;
+  const looksLikeJson = /^[{\[]/.test(trimmed);
+
+  if (looksLikeJson) {
+    try {
+      return JSON.parse(trimmed) as ProductSpecsPayload;
+    } catch {
+      // Fall through to loose parsing below when the payload is not valid JSON.
+    }
   }
+
+  return parseLooseSpecificationString(trimmed);
 };
 
 const mapDeviceModelToProductDetail = (payload: DeviceModelPayload): ProductDetail => ({
