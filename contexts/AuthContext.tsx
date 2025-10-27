@@ -124,6 +124,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let isActive = true;
 
+    const finishHydration = () => {
+      if (isActive && isMountedRef.current) {
+        setIsHydrating(false);
+      }
+    };
+
     const hydrate = async () => {
       try {
         const storageAvailable =
@@ -163,14 +169,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       } catch (error) {
         console.warn('Failed to restore auth session', error);
-      } finally {
-        if (isActive && isMountedRef.current) {
-          setIsHydrating(false);
-        }
       }
     };
 
-    void hydrate();
+    Promise.resolve(hydrate()).finally(finishHydration);
 
     return () => {
       isActive = false;

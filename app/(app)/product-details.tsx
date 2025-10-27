@@ -352,9 +352,10 @@ export default function ProductDetailsScreen() {
   const isOutOfStock = stock <= 0;
   const maxQuantity = Math.max(stock, 1);
   const stockLabel = stock > 0 ? `${stock} in stock` : 'Out of stock';
+  const isRestoringSession = isHydrating && Boolean(session?.accessToken);
 
   const openRentModal = (mode: 'rent' | 'cart') => {
-    if (isHydrating) {
+    if (isRestoringSession) {
       return;
     }
 
