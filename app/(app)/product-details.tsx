@@ -2,6 +2,7 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Image,
   Modal,
@@ -10,6 +11,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -18,6 +20,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { products, type ProductDetail } from '../../constants/products';
 import { useAuth } from '@/contexts/AuthContext';
 import { useDeviceModel } from '@/hooks/use-device-model';
+import { createRentalOrder } from '@/services/rental-orders';
 
 type NormalizedSpecEntry = {
   label: string;
@@ -197,8 +200,6 @@ const normalizeSpecsData = (data: ProductDetail['specs']): NormalizedSpecEntry[]
     : [];
 };
 
-const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
-
 const clampToStartOfDay = (date: Date) => {
   const normalized = new Date(date);
   normalized.setHours(0, 0, 0, 0);
@@ -242,10 +243,13 @@ export default function ProductDetailsScreen() {
   const [quantity, setQuantity] = useState(1);
   const [startDate, setStartDate] = useState<Date>(() => clampToStartOfDay(new Date()));
   const [endDate, setEndDate] = useState<Date>(() => addDays(new Date(), 7));
+  const [shippingAddress, setShippingAddress] = useState('');
+  const [rentError, setRentError] = useState<string | null>(null);
+  const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
   const [isAuthPromptOpen, setIsAuthPromptOpen] = useState(false);
   const [authPromptMode, setAuthPromptMode] = useState<'rent' | 'cart' | null>(null);
   const router = useRouter();
-  const { isSignedIn, isHydrating } = useAuth();
+  const { isSignedIn, isHydrating, session, user } = useAuth();
   const { productId: productIdParam, deviceModelId } = useLocalSearchParams<{
     productId?: string;
     deviceModelId?: string;
@@ -292,17 +296,16 @@ export default function ProductDetailsScreen() {
     });
   }, [specsSource]);
 
-  const rentalDuration = useMemo(() => {
-    const diff = Math.round((endDate.getTime() - startDate.getTime()) / MILLISECONDS_PER_DAY);
-    return diff > 0 ? diff : 0;
-  }, [startDate, endDate]);
-
   const formattedStartDate = useMemo(() => formatDate(startDate), [startDate]);
   const formattedEndDate = useMemo(() => formatDate(endDate), [endDate]);
   const startDateDisplayLabel = useMemo(() => formatDisplayDate(startDate), [startDate]);
   const endDateDisplayLabel = useMemo(() => formatDisplayDate(endDate), [endDate]);
   const minimumStartDate = clampToStartOfDay(new Date());
   const minimumEndDate = useMemo(() => addDays(startDate, 1), [startDate]);
+  const isRangeInvalid = useMemo(
+    () => endDate.getTime() <= startDate.getTime(),
+    [endDate, startDate]
+  );
 
   const handleStartDateChange = useCallback((selectedDate: Date) => {
     const normalized = clampToStartOfDay(selectedDate);
@@ -365,6 +368,9 @@ export default function ProductDetailsScreen() {
     setQuantity(1);
     setStartDate(today);
     setEndDate(addDays(today, 7));
+    setShippingAddress('');
+    setRentError(null);
+    setIsSubmittingOrder(false);
     setRentMode(mode);
     setIsRentOpen(true);
   };
@@ -372,6 +378,9 @@ export default function ProductDetailsScreen() {
   const closeRentModal = () => {
     setIsRentOpen(false);
     setRentMode(null);
+    setRentError(null);
+    setIsSubmittingOrder(false);
+    setShippingAddress('');
   };
 
   const closeAuthPrompt = () => {
@@ -384,9 +393,14 @@ export default function ProductDetailsScreen() {
     router.push(path);
   };
 
-  const isPrimaryDisabled = isOutOfStock || rentalDuration <= 0 || rentMode === null;
+  const isPrimaryDisabled =
+    isOutOfStock ||
+    isRangeInvalid ||
+    rentMode === null ||
+    (rentMode === 'rent' && shippingAddress.trim().length === 0) ||
+    (rentMode === 'rent' && isSubmittingOrder);
 
-  const handlePrimaryAction = () => {
+  const handlePrimaryAction = async () => {
     if (isPrimaryDisabled || rentMode === null) {
       return;
     }
@@ -395,19 +409,66 @@ export default function ProductDetailsScreen() {
 
     if (rentMode === 'cart') {
       closeRentModal();
+      router.push({
+        pathname: '/(app)/cart',
+        params: {
+          productId: destinationProductId,
+          quantity: String(quantity),
+          startDate: formattedStartDate,
+          endDate: formattedEndDate,
+        },
+      });
       return;
     }
 
-    closeRentModal();
-    router.push({
-      pathname: '/(app)/cart',
-      params: {
-        productId: destinationProductId,
-        quantity: String(quantity),
-        startDate: formattedStartDate,
-        endDate: formattedEndDate,
-      },
-    });
+    if (!session?.accessToken || !user?.accountId) {
+      Alert.alert('Authentication required', 'Please sign in again to continue with your rental.');
+      closeRentModal();
+      return;
+    }
+
+    const deviceModelId = Number.parseInt(destinationProductId, 10);
+
+    if (!Number.isFinite(deviceModelId)) {
+      setRentError('Unable to determine the selected device. Please try again.');
+      return;
+    }
+
+    setIsSubmittingOrder(true);
+    setRentError(null);
+
+    try {
+      await createRentalOrder(
+        {
+          startDate: startDate.toISOString(),
+          endDate: endDate.toISOString(),
+          shippingAddress: shippingAddress.trim(),
+          customerId: user.accountId,
+          orderDetails: [
+            {
+              quantity,
+              deviceModelId,
+            },
+          ],
+        },
+        {
+          accessToken: session.accessToken,
+          tokenType: session.tokenType,
+        }
+      );
+
+      closeRentModal();
+      Alert.alert(
+        'Rental order created',
+        "Your rental order was submitted successfully. We'll keep you posted with updates."
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unable to submit the rental order. Please try again.';
+      setRentError(message);
+    } finally {
+      setIsSubmittingOrder(false);
+    }
   };
 
   const decreaseQuantity = () => setQuantity((prev) => Math.max(prev - 1, 1));
@@ -607,27 +668,51 @@ export default function ProductDetailsScreen() {
                 </View>
               </View>
 
-            <View style={styles.rentFooter}>
-              <TouchableOpacity
-                style={[
-                  styles.rentPrimaryAction,
-                  rentMode === 'cart' && styles.cartModeButton,
-                  isPrimaryDisabled && styles.disabledButton,
-                ]}
-                disabled={isPrimaryDisabled}
-                onPress={handlePrimaryAction}
-              >
-                <Text
+              {rentMode === 'rent' && (
+                <View style={styles.rentFieldGroup}>
+                  <Text style={styles.rentFieldLabel}>Shipping Address</Text>
+                  <TextInput
+                    style={styles.rentTextInput}
+                    placeholder="Enter your shipping address"
+                    placeholderTextColor="#9c9c9c"
+                    value={shippingAddress}
+                    onChangeText={setShippingAddress}
+                    editable={!isSubmittingOrder}
+                  />
+                </View>
+              )}
+
+              {rentError && (
+                <View style={styles.rentErrorContainer}>
+                  <Text style={styles.rentErrorText}>{rentError}</Text>
+                </View>
+              )}
+
+              <View style={styles.rentFooter}>
+                <TouchableOpacity
                   style={[
-                    styles.rentPrimaryActionText,
-                    rentMode === 'cart' && styles.cartModeButtonText,
-                    isPrimaryDisabled && styles.disabledButtonText,
+                    styles.rentPrimaryAction,
+                    rentMode === 'cart' && styles.cartModeButton,
+                    isPrimaryDisabled && styles.disabledButton,
                   ]}
+                  disabled={isPrimaryDisabled}
+                  onPress={handlePrimaryAction}
                 >
-                  {rentMode === 'cart' ? 'Add to Cart' : 'Rent Now'}
-                </Text>
-              </TouchableOpacity>
-            </View>
+                  {isSubmittingOrder && rentMode === 'rent' ? (
+                    <ActivityIndicator color="#ffffff" />
+                  ) : (
+                    <Text
+                      style={[
+                        styles.rentPrimaryActionText,
+                        rentMode === 'cart' && styles.cartModeButtonText,
+                        isPrimaryDisabled && styles.disabledButtonText,
+                      ]}
+                    >
+                      {rentMode === 'cart' ? 'Add to Cart' : 'Rent Now'}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              </View>
           </View>
         </View>
       </Modal>
@@ -1209,6 +1294,29 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#111111',
     marginBottom: 8,
+  },
+  rentTextInput: {
+    borderWidth: 1,
+    borderColor: '#d9d9d9',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 14,
+    color: '#111111',
+    backgroundColor: '#ffffff',
+  },
+  rentErrorContainer: {
+    marginBottom: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#f5c2c2',
+    backgroundColor: '#fff5f5',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  rentErrorText: {
+    color: '#c53030',
+    fontSize: 14,
   },
   rentQuantityControl: {
     flexDirection: 'row',

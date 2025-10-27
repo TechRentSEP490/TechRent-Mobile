@@ -6,16 +6,6 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import type { ProductDetail } from '@/constants/products';
 import { useDeviceModel } from '@/hooks/use-device-model';
 
-const calculateDuration = (start: string, end: string) => {
-  const startDate = new Date(start);
-  const endDate = new Date(end);
-  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
-    return 1;
-  }
-  const diff = Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
-  return diff > 0 ? diff : 1;
-};
-
 const formatCurrencyValue = (value: number, currency: 'USD' | 'VND') =>
   new Intl.NumberFormat(currency === 'USD' ? 'en-US' : 'vi-VN', {
     style: 'currency',
@@ -43,13 +33,10 @@ const getDailyRate = (product: ProductDetail) => {
 
 export default function CheckoutScreen() {
   const router = useRouter();
-  const { productId, quantity: quantityParam, startDate: startParam, endDate: endParam } =
-    useLocalSearchParams<{
-      productId?: string;
-      quantity?: string;
-      startDate?: string;
-      endDate?: string;
-    }>();
+  const { productId, quantity: quantityParam } = useLocalSearchParams<{
+    productId?: string;
+    quantity?: string;
+  }>();
   const { data: product, loading, error } = useDeviceModel(productId);
 
   const quantity = useMemo(() => {
@@ -57,10 +44,6 @@ export default function CheckoutScreen() {
     return Number.isNaN(parsed) || parsed <= 0 ? 1 : parsed;
   }, [quantityParam]);
 
-  const startDate = typeof startParam === 'string' ? startParam : new Date().toISOString().split('T')[0];
-  const endDate = typeof endParam === 'string' ? endParam : startDate;
-
-  const rentalDuration = calculateDuration(startDate, endDate);
   const [customerName, setCustomerName] = useState('');
   const [customerEmail, setCustomerEmail] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
@@ -84,7 +67,7 @@ export default function CheckoutScreen() {
 
   const currency = determineCurrency(product);
   const dailyRate = getDailyRate(product);
-  const totalAmount = dailyRate * quantity * rentalDuration;
+  const totalAmount = dailyRate * quantity;
   const formattedTotal = formatCurrencyValue(totalAmount, currency);
   const depositPercent = typeof product.depositPercent === 'number' ? product.depositPercent : 0.12;
   const depositHeldValue = totalAmount * depositPercent;
@@ -183,11 +166,11 @@ export default function CheckoutScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Billing Summary</Text>
           <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>Total Rental Amount</Text>
+            <Text style={styles.summaryLabel}>Daily Rental Amount</Text>
             <Text style={styles.summaryValue}>{formattedTotal}</Text>
           </View>
           <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>Deposit Held</Text>
+            <Text style={styles.summaryLabel}>Deposit Held (Daily)</Text>
             <Text style={styles.summaryValue}>{depositHeld}</Text>
           </View>
         </View>

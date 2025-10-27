@@ -18,16 +18,6 @@ const formatDisplayDate = (value: string) => {
   });
 };
 
-const calculateDuration = (start: string, end: string) => {
-  const startDate = new Date(start);
-  const endDate = new Date(end);
-  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
-    return 1;
-  }
-  const diff = Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
-  return diff > 0 ? diff : 1;
-};
-
 const formatCurrencyValue = (value: number, currency: 'USD' | 'VND') =>
   new Intl.NumberFormat(currency === 'USD' ? 'en-US' : 'vi-VN', {
     style: 'currency',
@@ -72,9 +62,6 @@ export default function CartScreen() {
   const startDate = typeof startParam === 'string' ? startParam : new Date().toISOString().split('T')[0];
   const endDate = typeof endParam === 'string' ? endParam : startDate;
 
-  const rentalDuration = calculateDuration(startDate, endDate);
-  const durationLabel = `${rentalDuration} ${rentalDuration === 1 ? 'day' : 'days'}`;
-
   if (!product) {
     return (
       <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
@@ -91,13 +78,15 @@ export default function CartScreen() {
 
   const currency = determineCurrency(product);
   const dailyRate = getDailyRate(product);
-  const totalAmount = dailyRate * quantity * rentalDuration;
+  const totalAmount = dailyRate * quantity;
   const formattedTotal = formatCurrencyValue(totalAmount, currency);
 
   const productLabel = product.model || product.name;
   const deviceLabel = `${quantity} ${quantity === 1 ? 'device' : 'devices'}`;
-
-  const rentalRangeLabel = `${formatDisplayDate(startDate)} - ${formatDisplayDate(endDate)} (${durationLabel})`;
+  const rentalRangeLabel =
+    startDate === endDate
+      ? formatDisplayDate(startDate)
+      : `${formatDisplayDate(startDate)} - ${formatDisplayDate(endDate)}`;
 
   const handleCheckout = () => {
     router.push({
@@ -105,8 +94,6 @@ export default function CartScreen() {
       params: {
         productId: product.id,
         quantity: String(quantity),
-        startDate,
-        endDate,
       },
     });
   };
@@ -140,7 +127,7 @@ export default function CartScreen() {
             <Text style={styles.summaryValue}>{deviceLabel}</Text>
           </View>
           <View style={styles.summaryRight}>
-            <Text style={styles.summaryLabel}>Total Amount</Text>
+            <Text style={styles.summaryLabel}>Daily Total</Text>
             <Text style={styles.summaryAmount}>{formattedTotal}</Text>
           </View>
         </View>
