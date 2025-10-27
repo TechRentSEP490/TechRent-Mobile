@@ -1,14 +1,15 @@
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
   Image,
   Modal,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -196,12 +197,42 @@ const normalizeSpecsData = (data: ProductDetail['specs']): NormalizedSpecEntry[]
     : [];
 };
 
-const formatDate = (date: Date) => date.toISOString().split('T')[0];
-const addDays = (date: Date, days: number) => {
-  const nextDate = new Date(date);
-  nextDate.setDate(nextDate.getDate() + days);
-  return nextDate;
+const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
+
+const clampToStartOfDay = (date: Date) => {
+  const normalized = new Date(date);
+  normalized.setHours(0, 0, 0, 0);
+  return normalized;
 };
+
+const formatDate = (date: Date) => clampToStartOfDay(date).toISOString().split('T')[0];
+
+const addDays = (date: Date, days: number) => {
+  const base = clampToStartOfDay(date);
+  const nextDate = new Date(base);
+  nextDate.setDate(base.getDate() + days);
+  return clampToStartOfDay(nextDate);
+};
+
+const DATE_SCROLL_ITEM_HEIGHT = 48;
+const DATE_SCROLL_RANGE_DAYS = 365;
+const DATE_SCROLL_VISIBLE_ROWS = 5;
+
+const formatDisplayDate = (date: Date) =>
+  clampToStartOfDay(date).toLocaleDateString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  });
+
+const createDateSequence = (start: Date, totalDays: number) => {
+  const normalizedStart = clampToStartOfDay(start);
+  const length = Math.max(totalDays, 1);
+  return Array.from({ length }, (_, index) => addDays(normalizedStart, index));
+};
+
+const findDateIndex = (dates: Date[], target: Date) =>
+  dates.findIndex((item) => item.getTime() === target.getTime());
 
 export default function ProductDetailsScreen() {
   const [isSpecsOpen, setIsSpecsOpen] = useState(false);
@@ -209,8 +240,8 @@ export default function ProductDetailsScreen() {
   const [isRentOpen, setIsRentOpen] = useState(false);
   const [rentMode, setRentMode] = useState<'rent' | 'cart' | null>(null);
   const [quantity, setQuantity] = useState(1);
-  const [startDate, setStartDate] = useState(() => formatDate(new Date()));
-  const [endDate, setEndDate] = useState(() => formatDate(addDays(new Date(), 7)));
+  const [startDate, setStartDate] = useState<Date>(() => clampToStartOfDay(new Date()));
+  const [endDate, setEndDate] = useState<Date>(() => addDays(new Date(), 7));
   const [isAuthPromptOpen, setIsAuthPromptOpen] = useState(false);
   const [authPromptMode, setAuthPromptMode] = useState<'rent' | 'cart' | null>(null);
   const router = useRouter();
@@ -262,14 +293,41 @@ export default function ProductDetailsScreen() {
   }, [specsSource]);
 
   const rentalDuration = useMemo(() => {
-    const parsedStart = new Date(startDate);
-    const parsedEnd = new Date(endDate);
-    if (Number.isNaN(parsedStart.getTime()) || Number.isNaN(parsedEnd.getTime())) {
-      return 0;
-    }
-    const diff = Math.round((parsedEnd.getTime() - parsedStart.getTime()) / (1000 * 60 * 60 * 24));
+    const diff = Math.round((endDate.getTime() - startDate.getTime()) / MILLISECONDS_PER_DAY);
     return diff > 0 ? diff : 0;
   }, [startDate, endDate]);
+
+  const formattedStartDate = useMemo(() => formatDate(startDate), [startDate]);
+  const formattedEndDate = useMemo(() => formatDate(endDate), [endDate]);
+  const startDateDisplayLabel = useMemo(() => formatDisplayDate(startDate), [startDate]);
+  const endDateDisplayLabel = useMemo(() => formatDisplayDate(endDate), [endDate]);
+  const minimumStartDate = clampToStartOfDay(new Date());
+  const minimumEndDate = useMemo(() => addDays(startDate, 1), [startDate]);
+
+  const handleStartDateChange = useCallback((selectedDate: Date) => {
+    const normalized = clampToStartOfDay(selectedDate);
+    setStartDate(normalized);
+    setEndDate((currentEnd) => {
+      if (currentEnd.getTime() <= normalized.getTime()) {
+        return addDays(normalized, 1);
+      }
+
+      return currentEnd;
+    });
+  }, []);
+
+  const handleEndDateChange = useCallback(
+    (selectedDate: Date) => {
+      const normalized = clampToStartOfDay(selectedDate);
+      if (normalized.getTime() <= startDate.getTime()) {
+        setEndDate(addDays(startDate, 1));
+        return;
+      }
+
+      setEndDate(normalized);
+    },
+    [startDate]
+  );
 
   if (!product) {
     return (
@@ -292,7 +350,8 @@ export default function ProductDetailsScreen() {
   const maxQuantity = Math.max(stock, 1);
   const stockLabel = stock > 0 ? `${stock} in stock` : 'Out of stock';
 
-  const rentalDurationLabel = rentalDuration === 1 ? '1 day' : `${rentalDuration} days`;
+  const rentalDurationLabel =
+    rentalDuration <= 0 ? 'Select a valid range' : rentalDuration === 1 ? '1 day' : `${rentalDuration} days`;
 
   const openRentModal = (mode: 'rent' | 'cart') => {
     if (isHydrating) {
@@ -305,10 +364,10 @@ export default function ProductDetailsScreen() {
       return;
     }
 
-    const today = new Date();
+    const today = clampToStartOfDay(new Date());
     setQuantity(1);
-    setStartDate(formatDate(today));
-    setEndDate(formatDate(addDays(today, 7)));
+    setStartDate(today);
+    setEndDate(addDays(today, 7));
     setRentMode(mode);
     setIsRentOpen(true);
   };
@@ -348,8 +407,8 @@ export default function ProductDetailsScreen() {
       params: {
         productId: destinationProductId,
         quantity: String(quantity),
-        startDate,
-        endDate,
+        startDate: formattedStartDate,
+        endDate: formattedEndDate,
       },
     });
   };
@@ -520,47 +579,36 @@ export default function ProductDetailsScreen() {
               <Text style={styles.rentStockLabel}>{stockLabel}</Text>
             </View>
 
-            <View style={styles.rentFieldRow}>
-              <View style={styles.rentFieldHalf}>
-                <Text style={styles.rentFieldLabel}>Start Date</Text>
-                <View style={styles.rentDateControl}>
-                  <TextInput
-                    style={styles.rentDateInput}
-                    value={startDate}
-                    onChangeText={setStartDate}
-                    placeholder="YYYY-MM-DD"
-                    placeholderTextColor="#9c9c9c"
-                  />
-                  <TouchableOpacity
-                    style={styles.rentCalendarButton}
-                    onPress={() => setStartDate(formatDate(new Date()))}
-                  >
-                    <Ionicons name="calendar-outline" size={18} color="#111111" />
-                  </TouchableOpacity>
+              <View style={styles.rentFieldRow}>
+                <View style={styles.rentFieldHalf}>
+                  <Text style={styles.rentFieldLabel}>Start Date</Text>
+                  <View style={styles.rentDateControl}>
+                    <DateScrollPicker
+                      value={startDate}
+                      minimumDate={minimumStartDate}
+                      onChange={handleStartDateChange}
+                      rangeInDays={DATE_SCROLL_RANGE_DAYS}
+                    />
+                  </View>
+                  <Text style={styles.rentDateCaption}>
+                    Selected: {startDateDisplayLabel} • {formattedStartDate}
+                  </Text>
+                </View>
+                <View style={styles.rentFieldHalf}>
+                  <Text style={styles.rentFieldLabel}>End Date</Text>
+                  <View style={styles.rentDateControl}>
+                    <DateScrollPicker
+                      value={endDate}
+                      minimumDate={minimumEndDate}
+                      onChange={handleEndDateChange}
+                      rangeInDays={DATE_SCROLL_RANGE_DAYS}
+                    />
+                  </View>
+                  <Text style={styles.rentDateCaption}>
+                    Selected: {endDateDisplayLabel} • {formattedEndDate}
+                  </Text>
                 </View>
               </View>
-              <View style={styles.rentFieldHalf}>
-                <Text style={styles.rentFieldLabel}>End Date</Text>
-                <View style={styles.rentDateControl}>
-                  <TextInput
-                    style={styles.rentDateInput}
-                    value={endDate}
-                    onChangeText={setEndDate}
-                    placeholder="YYYY-MM-DD"
-                    placeholderTextColor="#9c9c9c"
-                  />
-                  <TouchableOpacity
-                    style={styles.rentCalendarButton}
-                    onPress={() => {
-                      const base = new Date();
-                      setEndDate(formatDate(addDays(base, 7)));
-                    }}
-                  >
-                    <Ionicons name="calendar-outline" size={18} color="#111111" />
-                  </TouchableOpacity>
-                </View>
-              </View>
-            </View>
 
             <View style={styles.rentFieldGroup}>
               <Text style={styles.rentFieldLabel}>Rental Duration</Text>
@@ -669,6 +717,111 @@ export default function ProductDetailsScreen() {
         </View>
       </Modal>
     </SafeAreaView>
+  );
+}
+
+type DateScrollPickerProps = {
+  value: Date;
+  minimumDate: Date;
+  onChange: (date: Date) => void;
+  rangeInDays?: number;
+};
+
+function DateScrollPicker({
+  value,
+  minimumDate,
+  onChange,
+  rangeInDays = DATE_SCROLL_RANGE_DAYS,
+}: DateScrollPickerProps) {
+  const scrollRef = useRef<ScrollView>(null);
+  const isInteractingRef = useRef(false);
+
+  const normalizedMinimum = useMemo(() => clampToStartOfDay(minimumDate), [minimumDate]);
+  const options = useMemo(
+    () => createDateSequence(normalizedMinimum, rangeInDays + 1),
+    [normalizedMinimum, rangeInDays]
+  );
+
+  const selectedIndex = useMemo(() => {
+    const index = findDateIndex(options, value);
+    if (index >= 0) {
+      return index;
+    }
+
+    if (options.length === 0) {
+      return 0;
+    }
+
+    if (value.getTime() < options[0].getTime()) {
+      return 0;
+    }
+
+    return options.length - 1;
+  }, [options, value]);
+
+  useEffect(() => {
+    if (!scrollRef.current) {
+      return;
+    }
+
+    const targetOffset = selectedIndex * DATE_SCROLL_ITEM_HEIGHT;
+    scrollRef.current.scrollTo({ y: targetOffset, animated: !isInteractingRef.current });
+  }, [selectedIndex]);
+
+  const handleMomentumEnd = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const offsetY = event.nativeEvent.contentOffset.y;
+      const rawIndex = Math.round(offsetY / DATE_SCROLL_ITEM_HEIGHT);
+      const clampedIndex = Math.min(Math.max(rawIndex, 0), Math.max(options.length - 1, 0));
+      const nextDate = options[clampedIndex];
+
+      if (nextDate && nextDate.getTime() !== value.getTime()) {
+        onChange(nextDate);
+      }
+
+      isInteractingRef.current = false;
+    },
+    [onChange, options, value]
+  );
+
+  const handleScrollBegin = useCallback(() => {
+    isInteractingRef.current = true;
+  }, []);
+
+  const handleScrollEndDrag = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      handleMomentumEnd(event);
+    },
+    [handleMomentumEnd]
+  );
+
+  return (
+    <View style={styles.dateScrollPickerContainer}>
+      <ScrollView
+        ref={scrollRef}
+        showsVerticalScrollIndicator={false}
+        snapToInterval={DATE_SCROLL_ITEM_HEIGHT}
+        decelerationRate="fast"
+        onMomentumScrollEnd={handleMomentumEnd}
+        onScrollBeginDrag={handleScrollBegin}
+        onScrollEndDrag={handleScrollEndDrag}
+        contentContainerStyle={styles.dateScrollContent}
+      >
+        {options.map((option) => {
+          const key = option.getTime();
+          const isSelected = option.getTime() === value.getTime();
+
+          return (
+            <View key={key} style={[styles.dateScrollItem, isSelected && styles.dateScrollItemSelected]}>
+              <Text style={[styles.dateScrollText, isSelected && styles.dateScrollTextSelected]}>
+                {formatDisplayDate(option)}
+              </Text>
+            </View>
+          );
+        })}
+      </ScrollView>
+      <View pointerEvents="none" style={styles.dateScrollHighlight} />
+    </View>
   );
 }
 
@@ -1108,30 +1261,55 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   rentDateControl: {
-    flexDirection: 'row',
-    alignItems: 'center',
     borderWidth: 1,
     borderColor: '#e5e5e5',
     borderRadius: 14,
-    paddingHorizontal: 16,
     backgroundColor: '#fafafa',
-  },
-  rentDateInput: {
-    flex: 1,
-    fontSize: 15,
-    color: '#111111',
-    paddingVertical: 12,
-    marginRight: 12,
-  },
-  rentCalendarButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#e1e1e1',
-    backgroundColor: '#ffffff',
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
+    paddingHorizontal: 4,
+    paddingVertical: 8,
+  },
+  rentDateCaption: {
+    marginTop: 8,
+    fontSize: 13,
+    color: '#6f6f6f',
+    textAlign: 'center',
+  },
+  dateScrollPickerContainer: {
+    width: '100%',
+    height: DATE_SCROLL_ITEM_HEIGHT * DATE_SCROLL_VISIBLE_ROWS,
+  },
+  dateScrollContent: {
+    paddingVertical: (DATE_SCROLL_ITEM_HEIGHT * DATE_SCROLL_VISIBLE_ROWS - DATE_SCROLL_ITEM_HEIGHT) / 2,
+  },
+  dateScrollItem: {
+    height: DATE_SCROLL_ITEM_HEIGHT,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dateScrollItemSelected: {
+    backgroundColor: '#ffffff',
+  },
+  dateScrollText: {
+    fontSize: 15,
+    color: '#6f6f6f',
+  },
+  dateScrollTextSelected: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#111111',
+  },
+  dateScrollHighlight: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: (DATE_SCROLL_ITEM_HEIGHT * DATE_SCROLL_VISIBLE_ROWS - DATE_SCROLL_ITEM_HEIGHT) / 2,
+    height: DATE_SCROLL_ITEM_HEIGHT,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: '#d4d4d4',
   },
   rentDurationRow: {
     borderWidth: 1,
