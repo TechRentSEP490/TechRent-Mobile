@@ -33,20 +33,44 @@ type LoginResponse = {
 };
 
 export type AuthenticatedUser = {
+  customerId: number;
   accountId: number;
   username: string;
-  email: string;
-  role: string;
+  email: string | null;
   phoneNumber: string | null;
+  fullName: string | null;
+  kycStatus: string | null;
+  status: string | null;
   isActive: boolean;
+  shippingAddresses: Array<Record<string, unknown>>;
+  bankInformation: Array<Record<string, unknown>>;
+  createdAt: string | null;
+  updatedAt: string | null;
+  role: string | null;
 };
 
-type CurrentUserResponse = {
+type CustomerProfileResponse = {
   status: string;
   message: string;
   details: string;
   code: number;
-  data: AuthenticatedUser | null;
+  data: CustomerProfileDto | null;
+};
+
+type CustomerProfileDto = {
+  customerId: number;
+  accountId: number;
+  username: string;
+  email?: string | null;
+  phoneNumber?: string | null;
+  fullName?: string | null;
+  kycStatus?: string | null;
+  status?: string | null;
+  shippingAddressDtos?: Array<Record<string, unknown>> | null;
+  bankInformationDtos?: Array<Record<string, unknown>> | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  role?: string | null;
 };
 
 type ApiErrorWithStatus = Error & { status?: number };
@@ -141,6 +165,29 @@ export async function loginUser(payload: LoginPayload) {
   return json;
 }
 
+const normalizeCustomerProfile = (data: CustomerProfileDto): AuthenticatedUser => {
+  const status = typeof data.status === 'string' ? data.status : null;
+
+  return {
+    customerId: data.customerId,
+    accountId: data.accountId,
+    username: data.username,
+    email: data.email ?? null,
+    phoneNumber: data.phoneNumber ?? null,
+    fullName: data.fullName ?? null,
+    kycStatus: data.kycStatus ?? null,
+    status,
+    isActive: status?.toUpperCase() === 'ACTIVE',
+    shippingAddresses: Array.isArray(data.shippingAddressDtos)
+      ? data.shippingAddressDtos
+      : [],
+    bankInformation: Array.isArray(data.bankInformationDtos) ? data.bankInformationDtos : [],
+    createdAt: data.createdAt ?? null,
+    updatedAt: data.updatedAt ?? null,
+    role: data.role ?? null,
+  };
+};
+
 export async function getCurrentUser({
   accessToken,
   tokenType,
@@ -152,7 +199,7 @@ export async function getCurrentUser({
     throw new Error('Access token is required to load the current user.');
   }
 
-  const response = await fetch(buildApiUrl('auth', 'me'), {
+  const response = await fetch(buildApiUrl('customer', 'profile'), {
     method: 'GET',
     headers: {
       Accept: 'application/json',
@@ -167,7 +214,7 @@ export async function getCurrentUser({
     throw error;
   }
 
-  const json = (await response.json()) as CurrentUserResponse | null;
+  const json = (await response.json()) as CustomerProfileResponse | null;
 
   if (!json || json.status !== 'SUCCESS' || !json.data) {
     const error = new Error(json?.message ?? 'Failed to load profile. Please try again.') as ApiErrorWithStatus;
@@ -177,5 +224,5 @@ export async function getCurrentUser({
     throw error;
   }
 
-  return json.data;
+  return normalizeCustomerProfile(json.data);
 }

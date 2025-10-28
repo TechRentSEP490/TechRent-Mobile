@@ -15,8 +15,8 @@ import { useRouter } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
 
 const formatRole = (role?: string | null) => {
-  if (!role) {
-    return 'Unknown Role';
+  if (!role || role.trim().length === 0) {
+    return 'Customer';
   }
 
   return role
@@ -24,6 +24,28 @@ const formatRole = (role?: string | null) => {
     .filter((segment) => segment.length > 0)
     .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1).toLowerCase())
     .join(' ');
+};
+
+const formatStatus = (status?: string | null) => {
+  if (!status) {
+    return 'Unknown';
+  }
+
+  return status
+    .split(/[_\s]+/)
+    .filter((segment) => segment.length > 0)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1).toLowerCase())
+    .join(' ');
+};
+
+const formatKycStatus = (status?: string | null) => {
+  const formatted = formatStatus(status);
+
+  if (formatted === 'Unknown') {
+    return 'Not Started';
+  }
+
+  return formatted;
 };
 
 export default function ProfileScreen() {
@@ -65,7 +87,18 @@ export default function ProfileScreen() {
       return [];
     }
 
+    const normalizedFullName =
+      user.fullName && user.fullName.trim().length > 0 && user.fullName.trim().toLowerCase() !== 'chưa cập nhật'
+        ? user.fullName
+        : 'Not provided';
+
     return [
+      {
+        id: 'fullName',
+        label: 'Full Name',
+        value: normalizedFullName,
+        icon: 'reader-outline' as const,
+      },
       {
         id: 'email',
         label: 'Email',
@@ -85,12 +118,12 @@ export default function ProfileScreen() {
         id: 'role',
         label: 'Role',
         value: formatRole(user.role),
-        icon: 'person-outline' as const,
+        icon: 'briefcase-outline' as const,
       },
       {
-        id: 'status',
-        label: 'Account Status',
-        value: user.isActive ? 'Active' : 'Inactive',
+        id: 'kycStatus',
+        label: 'KYC Status',
+        value: formatKycStatus(user.kycStatus),
         icon: 'shield-checkmark-outline' as const,
       },
     ];
@@ -223,7 +256,7 @@ export default function ProfileScreen() {
           <Text style={styles.selfieTitle}>Account Status</Text>
           <Text style={styles.selfieSubtitle}>
             {user.isActive
-              ? 'Your account is active and ready for rentals.'
+              ? `Your account is ${formatStatus(user.status)} and ready for rentals.`
               : 'Your account is currently inactive. Please contact support for assistance.'}
           </Text>
         </View>
