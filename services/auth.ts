@@ -58,8 +58,8 @@ type CustomerProfileResponse = {
 };
 
 type CustomerProfileDto = {
-  customerId: number | string;
-  accountId: number | string;
+  customerId?: number | string | null;
+  accountId?: number | string | null;
   username: string;
   email?: string | null;
   phoneNumber?: string | null;
@@ -71,6 +71,7 @@ type CustomerProfileDto = {
   createdAt?: string | null;
   updatedAt?: string | null;
   role?: string | null;
+  [key: string]: unknown;
 };
 
 type ApiErrorWithStatus = Error & { status?: number };
@@ -165,24 +166,87 @@ export async function loginUser(payload: LoginPayload) {
   return json;
 }
 
-const parseNumericIdentifier = (value: unknown, field: 'customerId' | 'accountId'): number => {
-  if (typeof value === 'number' && Number.isFinite(value)) {
+const parseNumericIdentifier = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isInteger(value)) {
     return value;
   }
 
   if (typeof value === 'string') {
     const trimmed = value.trim();
 
-    if (trimmed.length > 0) {
-      const parsed = Number.parseInt(trimmed, 10);
+    if (trimmed.length === 0) {
+      return null;
+    }
 
-      if (!Number.isNaN(parsed)) {
-        return parsed;
-      }
+    const numeric = Number(trimmed);
+
+    if (Number.isInteger(numeric)) {
+      return numeric;
     }
   }
 
-  console.warn(`Received invalid ${field} in customer profile response:`, value);
+  return null;
+};
+
+const ensureNumericIdentifier = (
+  data: CustomerProfileDto,
+  field: 'customerId' | 'accountId'
+): number => {
+  const record = data as Record<string, unknown>;
+
+  const directKeys =
+    field === 'customerId'
+      ? ['customerId', 'customerID', 'customer_id']
+      : ['accountId', 'accountID', 'account_id'];
+
+  const nestedKeys =
+    field === 'customerId'
+      ? ['customer', 'customerDto', 'customerProfile', 'customerProfileDto']
+      : ['account', 'accountDto', 'accountProfile', 'accountProfileDto'];
+
+  const candidates: unknown[] = [];
+
+  for (const key of directKeys) {
+    if (key in record && record[key] != null) {
+      candidates.push(record[key]);
+    }
+  }
+
+  if (field === 'customerId' && record.id != null) {
+    candidates.push(record.id);
+  }
+
+  for (const nestedKey of nestedKeys) {
+    const nestedValue = record[nestedKey];
+
+    if (!nestedValue || typeof nestedValue !== 'object') {
+      continue;
+    }
+
+    const nestedRecord = nestedValue as Record<string, unknown>;
+
+    if (nestedRecord[field] != null) {
+      candidates.push(nestedRecord[field]);
+    }
+
+    if (nestedRecord.id != null) {
+      candidates.push(nestedRecord.id);
+    }
+  }
+
+  for (const candidate of candidates) {
+    const parsed = parseNumericIdentifier(candidate);
+
+    if (parsed !== null) {
+      return parsed;
+    }
+  }
+
+  console.warn(`Received invalid ${field} in customer profile response:`, {
+    field,
+    data,
+    candidates,
+  });
   throw new Error(`Profile is missing a valid ${field}. Please try signing in again.`);
 };
 
@@ -190,8 +254,8 @@ const normalizeCustomerProfile = (data: CustomerProfileDto): AuthenticatedUser =
   const status = typeof data.status === 'string' ? data.status : null;
 
   return {
-    customerId: parseNumericIdentifier(data.customerId, 'customerId'),
-    accountId: parseNumericIdentifier(data.accountId, 'accountId'),
+    customerId: ensureNumericIdentifier(data, 'customerId'),
+    accountId: ensureNumericIdentifier(data, 'accountId'),
     username: data.username,
     email: data.email ?? null,
     phoneNumber: data.phoneNumber ?? null,
