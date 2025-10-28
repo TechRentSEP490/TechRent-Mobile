@@ -64,7 +64,7 @@ const getKycReminderContent = (status?: string | null): KycReminderContent => {
         title: 'KYC Under Review',
         description: 'We received your documents and are currently reviewing them. You can review what you sent while you wait.',
         primaryAction: {
-          label: 'View KYC Information',
+          label: 'Show My Documents',
           route: '/(app)/kyc-details',
           variant: 'dark',
         },
