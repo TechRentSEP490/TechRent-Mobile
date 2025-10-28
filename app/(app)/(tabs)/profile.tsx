@@ -1,80 +1,246 @@
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  ActivityIndicator,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 
 import { useAuth } from '@/contexts/AuthContext';
 
-const contactItems = [
-  {
-    id: 'email',
-    label: 'Email',
-    value: 'john.doe@example.com',
-    icon: 'mail-outline',
-  },
-  {
-    id: 'phone',
-    label: 'Phone',
-    value: '+123456789',
-    icon: 'call-outline',
-  },
-  {
-    id: 'billing',
-    label: 'Billing Address',
-    value: '123 Main St, Anytown, USA',
-    icon: 'home-outline',
-  },
-  {
-    id: 'shipping',
-    label: 'Shipping Address',
-    value: '456 Elm St, Anytown, USA',
-    icon: 'location-outline',
-  },
-];
+const formatRole = (role?: string | null) => {
+  if (!role) {
+    return 'Unknown Role';
+  }
+
+  return role
+    .split(/[_\s]+/)
+    .filter((segment) => segment.length > 0)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1).toLowerCase())
+    .join(' ');
+};
 
 export default function ProfileScreen() {
   const router = useRouter();
-  const { signOut } = useAuth();
+  const { isSignedIn, isHydrating, user, isFetchingProfile, refreshProfile, signOut } = useAuth();
+  const [profileError, setProfileError] = useState<string | null>(null);
 
-  const handleLogout = () => {
-    signOut();
+  useEffect(() => {
+    if (user && profileError) {
+      setProfileError(null);
+    }
+  }, [user, profileError]);
+
+  const handleLogout = useCallback(async () => {
+    await signOut();
     router.replace('/(auth)/sign-in');
-  };
+  }, [router, signOut]);
+
+  const handleRefreshProfile = useCallback(async () => {
+    if (isFetchingProfile) {
+      return;
+    }
+
+    setProfileError(null);
+
+    try {
+      await refreshProfile();
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Unable to refresh your profile. Please try again.';
+      setProfileError(message);
+    }
+  }, [isFetchingProfile, refreshProfile]);
+
+  const contactItems = useMemo(() => {
+    if (!user) {
+      return [];
+    }
+
+    return [
+      {
+        id: 'email',
+        label: 'Email',
+        value: user.email ?? 'Not provided',
+        icon: 'mail-outline' as const,
+      },
+      {
+        id: 'phone',
+        label: 'Phone Number',
+        value:
+          user.phoneNumber && user.phoneNumber.trim().length > 0
+            ? user.phoneNumber
+            : 'Not provided',
+        icon: 'call-outline' as const,
+      },
+      {
+        id: 'role',
+        label: 'Role',
+        value: formatRole(user.role),
+        icon: 'person-outline' as const,
+      },
+      {
+        id: 'status',
+        label: 'Account Status',
+        value: user.isActive ? 'Active' : 'Inactive',
+        icon: 'shield-checkmark-outline' as const,
+      },
+    ];
+  }, [user]);
+
+  const isInitialLoading = isHydrating || (!user && isFetchingProfile);
+
+  if (isInitialLoading) {
+    return (
+      <SafeAreaView style={styles.safeArea} edges={["top"]}>
+        <View style={styles.loadingState}>
+          <ActivityIndicator size="large" color="#111111" />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (!isSignedIn) {
+    return (
+      <SafeAreaView style={styles.safeArea} edges={["top"]}>
+        <View style={styles.unauthContainer}>
+          <Ionicons name="person-circle-outline" size={72} color="#111111" />
+          <Text style={styles.unauthTitle}>Sign in to view your profile</Text>
+          <Text style={styles.unauthSubtitle}>
+            Access your orders, manage rentals, and update account information after signing in.
+          </Text>
+          <TouchableOpacity
+            style={[styles.authButton, styles.authPrimaryButton]}
+            onPress={() => router.push('/(auth)/sign-in')}
+          >
+            <Text style={[styles.authButtonText, styles.authPrimaryButtonText]}>Sign In</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.authButton, styles.authSecondaryButton]}
+            onPress={() => router.push('/(auth)/sign-up')}
+          >
+            <Text style={[styles.authButtonText, styles.authSecondaryButtonText]}>Create Account</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (!user) {
+    return (
+      <SafeAreaView style={styles.safeArea} edges={["top"]}>
+        <View style={styles.profileErrorContainer}>
+          <Ionicons name="cloud-offline-outline" size={64} color="#111111" />
+          <Text style={styles.profileErrorTitle}>Unable to load your profile</Text>
+          <Text style={styles.profileErrorSubtitle}>
+            {profileError ?? 'We couldn’t fetch your account details. Please try again.'}
+          </Text>
+          <TouchableOpacity
+            style={[styles.authButton, styles.authPrimaryButton]}
+            onPress={() => void handleRefreshProfile()}
+            disabled={isFetchingProfile}
+          >
+            <Text style={[styles.authButtonText, styles.authPrimaryButtonText]}>
+              {isFetchingProfile ? 'Refreshing…' : 'Try Again'}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.authButton, styles.authSecondaryButton]}
+            onPress={() => void handleLogout()}
+            disabled={isFetchingProfile}
+          >
+            <Text style={[styles.authButtonText, styles.authSecondaryButtonText]}>Sign Out</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top"]}>
-      <ScrollView contentContainerStyle={styles.contentContainer} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={styles.contentContainer}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={Boolean(isFetchingProfile)}
+            onRefresh={() => void handleRefreshProfile()}
+            tintColor="#111111"
+            colors={["#111111"]}
+          />
+        }
+      >
         <View style={styles.header}>
           <Ionicons name="person-circle-outline" size={32} color="#111" />
           <Text style={styles.headerTitle}>User Profile</Text>
           <View style={styles.headerActions}>
-            <TouchableOpacity style={styles.headerActionButton}>
-              <Ionicons name="notifications-outline" size={22} color="#111" />
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.headerActionButton}>
-              <Ionicons name="pencil-outline" size={22} color="#111" />
+            <TouchableOpacity
+              style={[
+                styles.headerActionButton,
+                isFetchingProfile && styles.headerActionButtonDisabled,
+              ]}
+              onPress={() => void handleRefreshProfile()}
+              disabled={isFetchingProfile}
+            >
+              {isFetchingProfile ? (
+                <ActivityIndicator size="small" color="#111111" />
+              ) : (
+                <Ionicons name="refresh-outline" size={22} color="#111" />
+              )}
             </TouchableOpacity>
           </View>
         </View>
 
+        {profileError && (
+          <View style={styles.errorBanner}>
+            <Ionicons name="alert-circle-outline" size={20} color="#7f1d1d" />
+            <Text style={styles.errorBannerText}>{profileError}</Text>
+          </View>
+        )}
+
         <View style={styles.profileCard}>
-          <Text style={styles.profileName}>John Doe</Text>
-          <Text style={styles.profileEmail}>john.doe@example.com</Text>
+          <Text style={styles.profileName}>{user.username}</Text>
+          <Text style={styles.profileEmail}>{user.email ?? 'Email unavailable'}</Text>
+          <View style={styles.profileBadge}>
+            <Text style={styles.profileBadgeText}>{formatRole(user.role)}</Text>
+          </View>
         </View>
 
         <View style={styles.selfieCard}>
-          <MaterialCommunityIcons name="camera" size={28} color="#999" />
-          <Text style={styles.selfieTitle}>Your Selfies</Text>
-          <Text style={styles.selfieSubtitle}>Upload a selfie to personalize your profile.</Text>
+          <MaterialCommunityIcons
+            name={user.isActive ? 'shield-check' : 'shield-alert'}
+            size={28}
+            color={user.isActive ? '#16a34a' : '#dc2626'}
+          />
+          <Text style={styles.selfieTitle}>Account Status</Text>
+          <Text style={styles.selfieSubtitle}>
+            {user.isActive
+              ? 'Your account is active and ready for rentals.'
+              : 'Your account is currently inactive. Please contact support for assistance.'}
+          </Text>
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Contact Information</Text>
+          <Text style={styles.sectionTitle}>Account Information</Text>
           <View style={styles.contactList}>
-            {contactItems.map((item) => (
-              <View key={item.id} style={styles.contactItem}>
+            {contactItems.map((item, index) => (
+              <View
+                key={item.id}
+                style={[
+                  styles.contactItem,
+                  index === contactItems.length - 1 && styles.contactItemLast,
+                ]}
+              >
                 <View style={styles.contactIconWrapper}>
-                  <Ionicons name={item.icon as any} size={22} color="#111" />
+                  <Ionicons name={item.icon} size={22} color="#111" />
                 </View>
                 <View style={styles.contactDetails}>
                   <Text style={styles.contactLabel}>{item.label}</Text>
@@ -99,7 +265,7 @@ export default function ProfileScreen() {
           </TouchableOpacity>
         </View>
 
-        <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+        <TouchableOpacity style={styles.logoutButton} onPress={() => void handleLogout()}>
           <Text style={styles.logoutText}>Log Out</Text>
         </TouchableOpacity>
       </ScrollView>
@@ -111,6 +277,59 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: '#ffffff',
+  },
+  loadingState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ffffff',
+  },
+  unauthContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+    backgroundColor: '#ffffff',
+    gap: 16,
+  },
+  unauthTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#111111',
+    textAlign: 'center',
+  },
+  unauthSubtitle: {
+    fontSize: 15,
+    color: '#555555',
+    textAlign: 'center',
+    lineHeight: 22,
+  },
+  authButton: {
+    width: '100%',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  authButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  authPrimaryButton: {
+    backgroundColor: '#111111',
+  },
+  authPrimaryButtonText: {
+    color: '#ffffff',
+    fontWeight: '700',
+    fontSize: 16,
+  },
+  authSecondaryButton: {
+    borderWidth: 1,
+    borderColor: '#111111',
+  },
+  authSecondaryButtonText: {
+    color: '#111111',
+    fontWeight: '700',
+    fontSize: 16,
   },
   contentContainer: {
     padding: 20,
@@ -141,11 +360,28 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  headerActionButtonDisabled: {
+    opacity: 0.6,
+  },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: '#fee2e2',
+  },
+  errorBannerText: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#7f1d1d',
+  },
   profileCard: {
     borderRadius: 16,
     backgroundColor: '#f9f9f9',
     padding: 20,
-    gap: 6,
+    gap: 12,
   },
   profileName: {
     fontSize: 22,
@@ -155,6 +391,19 @@ const styles = StyleSheet.create({
   profileEmail: {
     fontSize: 14,
     color: '#666666',
+  },
+  profileBadge: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: '#111111',
+  },
+  profileBadgeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#ffffff',
+    letterSpacing: 0.3,
   },
   selfieCard: {
     borderRadius: 16,
@@ -198,6 +447,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     borderBottomWidth: 1,
     borderBottomColor: '#f2f2f2',
+  },
+  contactItemLast: {
+    borderBottomWidth: 0,
   },
   contactIconWrapper: {
     width: 40,
@@ -263,5 +515,25 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#111111',
+  },
+  profileErrorContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+    backgroundColor: '#ffffff',
+    gap: 16,
+  },
+  profileErrorTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#111111',
+    textAlign: 'center',
+  },
+  profileErrorSubtitle: {
+    fontSize: 15,
+    color: '#555555',
+    textAlign: 'center',
+    lineHeight: 22,
   },
 });

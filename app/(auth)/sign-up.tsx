@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Platform,
   StyleSheet,
@@ -11,22 +13,56 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 
+import { registerUser } from '@/services/auth';
+
 export default function SignUpScreen() {
   const router = useRouter();
+  const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
+  const [phoneNumber, setPhoneNumber] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const isFormValid = useMemo(() => {
-    return email.trim().length > 0 && password.length >= 6 && password === confirmPassword;
-  }, [confirmPassword, email, password]);
+    const hasRequiredFields =
+      username.trim().length > 0 &&
+      email.trim().length > 0 &&
+      phoneNumber.trim().length > 0 &&
+      password.length >= 6;
 
-  const handleCreateAccount = () => {
+    return hasRequiredFields && password === confirmPassword;
+  }, [confirmPassword, email, password, phoneNumber, username]);
+
+  const handleCreateAccount = async () => {
     if (!isFormValid) {
       return;
     }
 
-    router.push('/(auth)/otp');
+    setSubmitting(true);
+    setErrorMessage(null);
+
+    try {
+      await registerUser({
+        username: username.trim(),
+        email: email.trim(),
+        password,
+        phoneNumber: phoneNumber.trim(),
+      });
+
+      Alert.alert('Registration successful', 'Enter the verification code we emailed to you.');
+
+      router.push({
+        pathname: '/(auth)/otp',
+        params: { email: email.trim() },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to create your account.';
+      setErrorMessage(message);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -35,7 +71,19 @@ export default function SignUpScreen() {
         style={styles.container}
         behavior={Platform.select({ ios: 'padding', android: undefined })}
       >
-        <Text style={styles.title}>Welcome Back!</Text>
+        <Text style={styles.title}>Create your account</Text>
+
+        <View style={styles.fieldGroup}>
+          <Text style={styles.label}>Username</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="Choose a username"
+            placeholderTextColor="#7f7f7f"
+            value={username}
+            onChangeText={setUsername}
+            autoCapitalize="none"
+          />
+        </View>
 
         <View style={styles.fieldGroup}>
           <Text style={styles.label}>Email</Text>
@@ -49,6 +97,18 @@ export default function SignUpScreen() {
             autoCapitalize="none"
           />
           <Text style={styles.helperText}>Find what you need easily!</Text>
+        </View>
+
+        <View style={styles.fieldGroup}>
+          <Text style={styles.label}>Phone Number</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="Enter your phone number"
+            placeholderTextColor="#7f7f7f"
+            keyboardType="phone-pad"
+            value={phoneNumber}
+            onChangeText={setPhoneNumber}
+          />
         </View>
 
         <View style={styles.fieldGroup}>
@@ -75,16 +135,24 @@ export default function SignUpScreen() {
           />
         </View>
 
+        {errorMessage && <Text style={styles.errorText}>{errorMessage}</Text>}
+
         <TouchableOpacity
           style={[
             styles.button,
             styles.primaryButton,
-            !isFormValid && styles.primaryButtonDisabled,
+            (!isFormValid || submitting) && styles.primaryButtonDisabled,
           ]}
-          disabled={!isFormValid}
-          onPress={handleCreateAccount}
+          disabled={!isFormValid || submitting}
+          onPress={() => {
+            void handleCreateAccount();
+          }}
         >
-          <Text style={[styles.buttonText, styles.primaryText]}>Create Account</Text>
+          {submitting ? (
+            <ActivityIndicator color="#ffffff" />
+          ) : (
+            <Text style={[styles.buttonText, styles.primaryText]}>Create Account</Text>
+          )}
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -127,6 +195,12 @@ const styles = StyleSheet.create({
     marginTop: 8,
     color: '#7f7f7f',
     fontSize: 13,
+  },
+  errorText: {
+    color: '#d32f2f',
+    marginBottom: 16,
+    fontSize: 14,
+    fontWeight: '500',
   },
   input: {
     borderWidth: 1,
