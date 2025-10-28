@@ -58,8 +58,8 @@ type CustomerProfileResponse = {
 };
 
 type CustomerProfileDto = {
-  customerId: number;
-  accountId: number;
+  customerId: number | string;
+  accountId: number | string;
   username: string;
   email?: string | null;
   phoneNumber?: string | null;
@@ -165,12 +165,33 @@ export async function loginUser(payload: LoginPayload) {
   return json;
 }
 
+const parseNumericIdentifier = (value: unknown, field: 'customerId' | 'accountId'): number => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+
+    if (trimmed.length > 0) {
+      const parsed = Number.parseInt(trimmed, 10);
+
+      if (!Number.isNaN(parsed)) {
+        return parsed;
+      }
+    }
+  }
+
+  console.warn(`Received invalid ${field} in customer profile response:`, value);
+  throw new Error(`Profile is missing a valid ${field}. Please try signing in again.`);
+};
+
 const normalizeCustomerProfile = (data: CustomerProfileDto): AuthenticatedUser => {
   const status = typeof data.status === 'string' ? data.status : null;
 
   return {
-    customerId: data.customerId,
-    accountId: data.accountId,
+    customerId: parseNumericIdentifier(data.customerId, 'customerId'),
+    accountId: parseNumericIdentifier(data.accountId, 'accountId'),
     username: data.username,
     email: data.email ?? null,
     phoneNumber: data.phoneNumber ?? null,
