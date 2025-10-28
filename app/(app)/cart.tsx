@@ -1,0 +1,298 @@
+import { Ionicons } from '@expo/vector-icons';
+import { useMemo } from 'react';
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { products } from '../../constants/products';
+
+const currencyFormatter = new Intl.NumberFormat('en-US', {
+  style: 'currency',
+  currency: 'USD',
+});
+
+const formatDisplayDate = (value: string) => {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+};
+
+const calculateDuration = (start: string, end: string) => {
+  const startDate = new Date(start);
+  const endDate = new Date(end);
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+    return 1;
+  }
+  const diff = Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+  return diff > 0 ? diff : 1;
+};
+
+const parseDailyRate = (price: string) => {
+  const match = price.match(/\$([0-9]+(?:\.[0-9]+)?)/);
+  if (!match) {
+    return 0;
+  }
+  return Number.parseFloat(match[1]);
+};
+
+export default function CartScreen() {
+  const router = useRouter();
+  const { productId, quantity: quantityParam, startDate: startParam, endDate: endParam } =
+    useLocalSearchParams<{
+      productId?: string;
+      quantity?: string;
+      startDate?: string;
+      endDate?: string;
+    }>();
+
+  const product = useMemo(() => {
+    if (typeof productId === 'string') {
+      const match = products.find((item) => item.id === productId);
+      if (match) {
+        return match;
+      }
+    }
+    return products[0];
+  }, [productId]);
+
+  const quantity = useMemo(() => {
+    const parsed = Number.parseInt(typeof quantityParam === 'string' ? quantityParam : '1', 10);
+    return Number.isNaN(parsed) || parsed <= 0 ? 1 : parsed;
+  }, [quantityParam]);
+
+  const startDate = typeof startParam === 'string' ? startParam : new Date().toISOString().split('T')[0];
+  const endDate = typeof endParam === 'string' ? endParam : startDate;
+
+  const rentalDuration = calculateDuration(startDate, endDate);
+  const durationLabel = `${rentalDuration} ${rentalDuration === 1 ? 'day' : 'days'}`;
+
+  const dailyRate = parseDailyRate(product.price);
+  const totalAmount = dailyRate * quantity * rentalDuration;
+  const formattedTotal = currencyFormatter.format(totalAmount);
+
+  const productLabel = `${product.model}`;
+  const deviceLabel = `${quantity} ${quantity === 1 ? 'device' : 'devices'}`;
+
+  const rentalRangeLabel = `${formatDisplayDate(startDate)} - ${formatDisplayDate(endDate)} (${durationLabel})`;
+
+  const handleCheckout = () => {
+    router.push({
+      pathname: '/(app)/checkout',
+      params: {
+        productId: product.id,
+        quantity: String(quantity),
+        startDate,
+        endDate,
+      },
+    });
+  };
+
+  return (
+    <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
+      <View style={styles.header}>
+        <TouchableOpacity style={styles.headerButton} onPress={() => router.back()}>
+          <Ionicons name="chevron-back" size={22} color="#111111" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Cart</Text>
+        <View style={styles.headerPlaceholder} />
+      </View>
+
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <View style={styles.summaryRow}>
+          <View>
+            <Text style={styles.summaryLabel}>Total Items</Text>
+            <Text style={styles.summaryValue}>{deviceLabel}</Text>
+          </View>
+          <View style={styles.summaryRight}>
+            <Text style={styles.summaryLabel}>Total Amount</Text>
+            <Text style={styles.summaryAmount}>{formattedTotal}</Text>
+          </View>
+        </View>
+
+        <View style={styles.orderCard}>
+          <View style={styles.orderHeader}>
+            <View>
+              <Text style={styles.orderTitle}>Order #001</Text>
+              <Text style={styles.orderSubtitle}>{rentalRangeLabel}</Text>
+            </View>
+            <Ionicons name="trash-outline" size={20} color="#9c9c9c" />
+          </View>
+
+          <View style={styles.orderBody}>
+            <View style={styles.productBadge}>
+              <Ionicons name="phone-portrait-outline" size={24} color="#6f6f6f" />
+            </View>
+            <View style={styles.productDetails}>
+              <Text style={styles.productName}>{productLabel}</Text>
+              <Text style={styles.productMeta}>{`Quantity: ${quantity}`}</Text>
+            </View>
+            <Text style={styles.productPrice}>{formattedTotal}</Text>
+          </View>
+        </View>
+      </ScrollView>
+
+      <View style={styles.footerActions}>
+        <TouchableOpacity style={styles.cancelButton} onPress={() => router.back()}>
+          <Text style={styles.cancelText}>Cancel Order</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.checkoutButton} onPress={handleCheckout}>
+          <Text style={styles.checkoutText}>Checkout</Text>
+        </TouchableOpacity>
+      </View>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: '#ffffff',
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 4,
+  },
+  headerButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#f4f4f4',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#111111',
+  },
+  headerPlaceholder: {
+    width: 40,
+    height: 40,
+  },
+  content: {
+    paddingHorizontal: 20,
+    paddingBottom: 32,
+    paddingTop: 8,
+    gap: 20,
+  },
+  summaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    backgroundColor: '#f8f8f8',
+    padding: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#ededed',
+  },
+  summaryLabel: {
+    color: '#6f6f6f',
+    fontSize: 14,
+  },
+  summaryValue: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#111111',
+    marginTop: 4,
+  },
+  summaryRight: {
+    alignItems: 'flex-end',
+  },
+  summaryAmount: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111111',
+    marginTop: 4,
+  },
+  orderCard: {
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#ededed',
+    padding: 20,
+    backgroundColor: '#ffffff',
+    gap: 20,
+  },
+  orderHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  orderTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111111',
+  },
+  orderSubtitle: {
+    color: '#6f6f6f',
+    marginTop: 4,
+  },
+  orderBody: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  productBadge: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#f4f4f4',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  productDetails: {
+    flex: 1,
+  },
+  productName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#111111',
+  },
+  productMeta: {
+    color: '#6f6f6f',
+    marginTop: 4,
+  },
+  productPrice: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#111111',
+  },
+  footerActions: {
+    flexDirection: 'row',
+    gap: 12,
+    paddingHorizontal: 20,
+    paddingBottom: 24,
+  },
+  cancelButton: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#111111',
+    borderRadius: 14,
+    alignItems: 'center',
+    paddingVertical: 16,
+  },
+  cancelText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#111111',
+  },
+  checkoutButton: {
+    flex: 1,
+    borderRadius: 14,
+    backgroundColor: '#111111',
+    alignItems: 'center',
+    paddingVertical: 16,
+  },
+  checkoutText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#ffffff',
+  },
+});
