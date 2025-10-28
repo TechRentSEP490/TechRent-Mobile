@@ -94,7 +94,7 @@ export async function fetchKycDocuments({
   }
 
   const response = await fetch(
-    buildApiUrl('operator', 'kyc', 'api', 'customers', 'me', 'kyc', 'documents', 'batch'),
+    buildApiUrl('operator', 'kyc', 'api', 'customers', 'me', 'kyc'),
     {
       method: 'GET',
       headers: {
