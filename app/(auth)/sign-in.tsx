@@ -16,12 +16,33 @@ import { useAuth } from '@/contexts/AuthContext';
 export default function SignInScreen() {
   const router = useRouter();
   const { signIn } = useAuth();
-  const [email, setEmail] = useState('');
+  const [usernameOrEmail, setUsernameOrEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const handleSignIn = () => {
-    signIn();
-    router.replace('/(app)/(tabs)/home');
+  const handleSignIn = async () => {
+    if (isSubmitting) {
+      return;
+    }
+
+    if (!usernameOrEmail.trim() || !password.trim()) {
+      setErrorMessage('Please enter your email or username and password.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setErrorMessage(null);
+
+    try {
+      await signIn({ usernameOrEmail: usernameOrEmail.trim(), password: password.trim() });
+      router.replace('/(app)/(tabs)/home');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to sign in. Please try again.';
+      setErrorMessage(message);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -33,14 +54,19 @@ export default function SignInScreen() {
         <Text style={styles.title}>Welcome Back!</Text>
 
         <View style={styles.fieldGroup}>
-          <Text style={styles.label}>Email</Text>
+          <Text style={styles.label}>Email or Username</Text>
           <TextInput
             style={styles.input}
-            placeholder="Enter your email"
+            placeholder="Enter your email or username"
             placeholderTextColor="#7f7f7f"
             keyboardType="email-address"
-            value={email}
-            onChangeText={setEmail}
+            value={usernameOrEmail}
+            onChangeText={(text) => {
+              setUsernameOrEmail(text);
+              if (errorMessage) {
+                setErrorMessage(null);
+              }
+            }}
             autoCapitalize="none"
           />
         </View>
@@ -53,29 +79,43 @@ export default function SignInScreen() {
             placeholderTextColor="#7f7f7f"
             secureTextEntry
             value={password}
-            onChangeText={setPassword}
+            onChangeText={(text) => {
+              setPassword(text);
+              if (errorMessage) {
+                setErrorMessage(null);
+              }
+            }}
           />
         </View>
 
+        {errorMessage && <Text style={styles.errorMessage}>{errorMessage}</Text>}
+
         <View style={styles.inlineButtons}>
-          <TouchableOpacity style={[styles.button, styles.inlineButton, styles.secondaryButton]}>
+          <TouchableOpacity
+            style={[styles.button, styles.inlineButton, styles.secondaryButton]}
+            disabled={isSubmitting}
+          >
             <Text style={[styles.buttonText, styles.secondaryText]}>Forgot Password?</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.button, styles.inlineButton, styles.primaryButton]}
-            onPress={handleSignIn}
+            onPress={() => void handleSignIn()}
+            disabled={isSubmitting}
           >
-            <Text style={[styles.buttonText, styles.primaryText]}>Sign In</Text>
+            <Text style={[styles.buttonText, styles.primaryText]}>
+              {isSubmitting ? 'Signing In...' : 'Sign In'}
+            </Text>
           </TouchableOpacity>
         </View>
 
-        <TouchableOpacity style={[styles.button, styles.outlineButton]}>
+        <TouchableOpacity style={[styles.button, styles.outlineButton]} disabled={isSubmitting}>
           <Text style={[styles.buttonText, styles.outlineText]}>Login with Google</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
           style={[styles.button, styles.primaryButton, styles.fullWidthButton]}
           onPress={() => router.push('/(auth)/sign-up')}
+          disabled={isSubmitting}
         >
           <Text style={[styles.buttonText, styles.primaryText]}>Sign Up</Text>
         </TouchableOpacity>
@@ -167,5 +207,12 @@ const styles = StyleSheet.create({
   },
   buttonText: {
     textAlign: 'center',
+  },
+  errorMessage: {
+    color: '#d93025',
+    marginTop: 4,
+    marginBottom: 4,
+    fontSize: 14,
+    fontWeight: '500',
   },
 });

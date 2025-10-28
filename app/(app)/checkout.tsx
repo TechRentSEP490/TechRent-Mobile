@@ -1,80 +1,232 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { products } from '../../constants/products';
+import type { ProductDetail } from '@/constants/products';
+import { useDeviceModel } from '@/hooks/use-device-model';
+import { useAuth } from '@/contexts/AuthContext';
+import { createRentalOrder } from '@/services/rental-orders';
 
-const currencyFormatter = new Intl.NumberFormat('en-US', {
-  style: 'currency',
-  currency: 'USD',
-});
+const formatCurrencyValue = (value: number, currency: 'USD' | 'VND') =>
+  new Intl.NumberFormat(currency === 'USD' ? 'en-US' : 'vi-VN', {
+    style: 'currency',
+    currency,
+    maximumFractionDigits: currency === 'USD' ? 2 : 0,
+  }).format(value);
 
-const calculateDuration = (start: string, end: string) => {
-  const startDate = new Date(start);
-  const endDate = new Date(end);
-  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
-    return 1;
+const determineCurrency = (product: ProductDetail): 'USD' | 'VND' => {
+  if (product.currency) {
+    return product.currency;
   }
-  const diff = Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
-  return diff > 0 ? diff : 1;
+
+  return product.price.includes('$') ? 'USD' : 'VND';
 };
 
-const parseDailyRate = (price: string) => {
-  const match = price.match(/\$([0-9]+(?:\.[0-9]+)?)/);
-  if (!match) {
-    return 0;
+const getDailyRate = (product: ProductDetail) => {
+  if (typeof product.pricePerDay === 'number' && product.pricePerDay > 0) {
+    return product.pricePerDay;
   }
-  return Number.parseFloat(match[1]);
+
+  const sanitized = product.price.replace(/[^0-9.,]/g, '').replace(/,/g, '');
+  const parsed = Number.parseFloat(sanitized);
+  return Number.isNaN(parsed) ? 0 : parsed;
+};
+
+const formatDisplayDate = (value: string) => {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return parsed.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+};
+
+const parseDateParam = (value: string | string[] | undefined): Date | null => {
+  const raw = Array.isArray(value) ? value[0] : value;
+
+  if (!raw || typeof raw !== 'string') {
+    return null;
+  }
+
+  const trimmed = raw.trim();
+
+  if (!trimmed) {
+    return null;
+  }
+
+  const attemptParse = (input: string) => {
+    const parsed = new Date(input);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  };
+
+  return (
+    attemptParse(trimmed) ??
+    attemptParse(`${trimmed}T00:00:00.000Z`) ??
+    attemptParse(`${trimmed}T00:00:00`)
+  );
 };
 
 export default function CheckoutScreen() {
   const router = useRouter();
-  const { productId, quantity: quantityParam, startDate: startParam, endDate: endParam } =
-    useLocalSearchParams<{
-      productId?: string;
-      quantity?: string;
-      startDate?: string;
-      endDate?: string;
-    }>();
-
-  const product = useMemo(() => {
-    if (typeof productId === 'string') {
-      const match = products.find((item) => item.id === productId);
-      if (match) {
-        return match;
-      }
-    }
-    return products[0];
-  }, [productId]);
+  const { productId: productIdParam, quantity: quantityParam, startDate: startParam, endDate: endParam } =
+    useLocalSearchParams();
+  const productId = Array.isArray(productIdParam) ? productIdParam[0] : productIdParam;
+  const { data: product, loading, error } = useDeviceModel(productId);
+  const { session, user, signOut } = useAuth();
 
   const quantity = useMemo(() => {
-    const parsed = Number.parseInt(typeof quantityParam === 'string' ? quantityParam : '1', 10);
+    const raw = Array.isArray(quantityParam) ? quantityParam[0] : quantityParam;
+    const parsed = Number.parseInt(typeof raw === 'string' ? raw : '1', 10);
     return Number.isNaN(parsed) || parsed <= 0 ? 1 : parsed;
   }, [quantityParam]);
 
-  const startDate = typeof startParam === 'string' ? startParam : new Date().toISOString().split('T')[0];
-  const endDate = typeof endParam === 'string' ? endParam : startDate;
+  const rentalStartDate = useMemo(() => parseDateParam(startParam), [startParam]);
 
-  const rentalDuration = calculateDuration(startDate, endDate);
-  const dailyRate = parseDailyRate(product.price);
-  const totalAmount = dailyRate * quantity * rentalDuration;
-  const formattedTotal = currencyFormatter.format(totalAmount);
-  const depositHeld = currencyFormatter.format(Math.max(totalAmount * 0.12, 25));
+  const rentalEndDate = useMemo(() => {
+    const parsed = parseDateParam(endParam);
 
-  const [customerName, setCustomerName] = useState('');
-  const [customerEmail, setCustomerEmail] = useState('');
-  const [customerPhone, setCustomerPhone] = useState('');
-  const [shippingAddress, setShippingAddress] = useState('');
-  const [shippingEmail, setShippingEmail] = useState('');
-  const [sameAsBilling, setSameAsBilling] = useState(true);
+    if (!parsed || !rentalStartDate) {
+      return parsed;
+    }
 
-  const handleOrder = () => {
-    router.replace({
-      pathname: '/(app)/product-details',
-      params: { productId: product.id },
-    });
+    return parsed.getTime() < rentalStartDate.getTime() ? rentalStartDate : parsed;
+  }, [endParam, rentalStartDate]);
+
+  const rentalStartIso = rentalStartDate?.toISOString();
+  const rentalEndIso = rentalEndDate?.toISOString();
+
+  const rentalRangeLabel = useMemo(() => {
+    if (!rentalStartDate || !rentalStartIso) {
+      return 'Not selected';
+    }
+
+    if (!rentalEndDate || !rentalEndIso || rentalEndDate.getTime() === rentalStartDate.getTime()) {
+      return formatDisplayDate(rentalStartIso);
+    }
+
+    return `${formatDisplayDate(rentalStartIso)} - ${formatDisplayDate(rentalEndIso)}`;
+  }, [rentalEndDate, rentalEndIso, rentalStartDate, rentalStartIso]);
+
+  const [orderError, setOrderError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  if (!product) {
+    return (
+      <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
+        <View style={styles.loadingState}>
+          {loading ? (
+            <ActivityIndicator size="large" color="#111111" />
+          ) : (
+            <Text style={styles.loadingStateText}>Device not found.</Text>
+          )}
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const currency = determineCurrency(product);
+  const dailyRate = getDailyRate(product);
+  const totalAmount = dailyRate * quantity;
+  const formattedTotal = formatCurrencyValue(totalAmount, currency);
+  const depositPercent = typeof product.depositPercent === 'number' ? product.depositPercent : 0.12;
+  const depositHeldValue = totalAmount * depositPercent;
+  const depositHeld = formatCurrencyValue(depositHeldValue, currency);
+
+  const handleOrder = async () => {
+    if (isSubmitting) {
+      return;
+    }
+
+    if (!product) {
+      setOrderError('Device information is unavailable. Please try again.');
+      return;
+    }
+
+    if (!session?.accessToken || customerId === null) {
+      Alert.alert('Authentication required', 'Please sign in again to place your rental order.');
+      router.replace('/(auth)/sign-in');
+      return;
+    }
+
+    const deviceModelId = Number.parseInt(product.id, 10);
+
+    if (Number.isNaN(deviceModelId)) {
+      setOrderError('Unable to determine the selected device. Please try another model.');
+      return;
+    }
+
+    if (!rentalStartDate || !rentalEndDate || !rentalStartIso || !rentalEndIso) {
+      setOrderError('Rental dates are missing. Please return to the product screen and try again.');
+      return;
+    }
+
+    setOrderError(null);
+    setIsSubmitting(true);
+
+    try {
+      await createRentalOrder(
+        {
+          startDate: rentalStartIso,
+          endDate: rentalEndIso,
+          shippingAddress: 'Pending confirmation',
+          customerId,
+          orderDetails: [
+            {
+              quantity,
+              deviceModelId,
+            },
+          ],
+        },
+        session
+      );
+
+      Alert.alert('Rental order created', 'Your rental order has been submitted successfully.', [
+        {
+          text: 'OK',
+          onPress: () =>
+            router.replace({
+              pathname: '/(app)/product-details',
+              params: { productId: product.id },
+            }),
+        },
+      ]);
+    } catch (err) {
+      const apiError = err as { status?: number };
+
+      if (apiError?.status === 401) {
+        await signOut();
+        Alert.alert('Session expired', 'Please sign in again to place your rental order.', [
+          {
+            text: 'OK',
+            onPress: () => router.replace('/(auth)/sign-in'),
+          },
+        ]);
+        return;
+      }
+
+      const message = err instanceof Error ? err.message : 'Failed to create rental order. Please try again.';
+      setOrderError(message);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
+
+  const customerId = typeof user?.customerId === 'number' ? user.customerId : null;
+
+  const isOrderDisabled =
+    isSubmitting ||
+    !product ||
+    !session?.accessToken ||
+    customerId === null ||
+    !rentalStartDate ||
+    !rentalEndDate ||
+    !rentalStartIso ||
+    !rentalEndIso;
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
@@ -87,75 +239,71 @@ export default function CheckoutScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Customer Information</Text>
-          <View style={styles.inputRow}>
-            <TextInput
-              style={[styles.input, styles.inputHalf]}
-              placeholder="Enter your name"
-              placeholderTextColor="#9c9c9c"
-              value={customerName}
-              onChangeText={setCustomerName}
-            />
-            <TextInput
-              style={[styles.input, styles.inputHalf]}
-              placeholder="Enter your email"
-              placeholderTextColor="#9c9c9c"
-              value={customerEmail}
-              onChangeText={setCustomerEmail}
-              keyboardType="email-address"
-            />
+        {(error || orderError) && (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorBannerText}>{orderError ?? error}</Text>
           </View>
-          <TextInput
-            style={styles.input}
-            placeholder="Enter your phone number"
-            placeholderTextColor="#9c9c9c"
-            value={customerPhone}
-            onChangeText={setCustomerPhone}
-            keyboardType="phone-pad"
-          />
-        </View>
+        )}
+
+        {loading && (
+          <View style={styles.loaderRow}>
+            <ActivityIndicator size="small" color="#111111" />
+          </View>
+        )}
 
         <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Shipping Information</Text>
-            <TouchableOpacity
-              style={styles.checkboxRow}
-              onPress={() => setSameAsBilling((prev) => !prev)}
-            >
-              <View style={[styles.checkbox, sameAsBilling && styles.checkboxChecked]}>
-                {sameAsBilling && <Ionicons name="checkmark" size={14} color="#ffffff" />}
-              </View>
-              <Text style={styles.checkboxLabel}>Same as billing</Text>
-            </TouchableOpacity>
+          <Text style={styles.sectionTitle}>Rental Details</Text>
+          <View style={styles.summaryRow}>
+            <Text style={styles.summaryLabel}>Device</Text>
+            <Text style={styles.summaryValue}>{product.name}</Text>
           </View>
-
-          <TextInput
-            style={styles.input}
-            placeholder="Enter your address"
-            placeholderTextColor="#9c9c9c"
-            value={shippingAddress}
-            onChangeText={setShippingAddress}
-          />
-          <TextInput
-            style={styles.input}
-            placeholder="Enter your email"
-            placeholderTextColor="#9c9c9c"
-            value={shippingEmail}
-            onChangeText={setShippingEmail}
-            keyboardType="email-address"
-          />
+          <View style={styles.summaryRow}>
+            <Text style={styles.summaryLabel}>Quantity</Text>
+            <Text style={styles.summaryValue}>{quantity}</Text>
+          </View>
+          <View style={styles.summaryRow}>
+            <Text style={styles.summaryLabel}>Start Date</Text>
+            <Text style={styles.summaryValue}>
+              {rentalStartIso ? formatDisplayDate(rentalStartIso) : 'Not selected'}
+            </Text>
+          </View>
+          <View style={styles.summaryRow}>
+            <Text style={styles.summaryLabel}>End Date</Text>
+            <Text style={styles.summaryValue}>
+              {rentalEndIso ? formatDisplayDate(rentalEndIso) : 'Not selected'}
+            </Text>
+          </View>
         </View>
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Billing Summary</Text>
           <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>Total Rental Amount</Text>
+            <Text style={styles.summaryLabel}>Rental Range</Text>
+            <Text style={styles.summaryValue}>{rentalRangeLabel}</Text>
+          </View>
+          <View style={styles.summaryRow}>
+            <Text style={styles.summaryLabel}>Daily Rental Amount</Text>
             <Text style={styles.summaryValue}>{formattedTotal}</Text>
           </View>
           <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>Deposit Held</Text>
+            <Text style={styles.summaryLabel}>Deposit Held (Daily)</Text>
             <Text style={styles.summaryValue}>{depositHeld}</Text>
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Customer</Text>
+          <View style={styles.summaryRow}>
+            <Text style={styles.summaryLabel}>Username</Text>
+            <Text style={styles.summaryValue}>{user?.username ?? 'Unknown'}</Text>
+          </View>
+          <View style={styles.summaryRow}>
+            <Text style={styles.summaryLabel}>Email</Text>
+            <Text style={styles.summaryValue}>{user?.email ?? 'Not provided'}</Text>
+          </View>
+          <View style={styles.summaryRow}>
+            <Text style={styles.summaryLabel}>Phone</Text>
+            <Text style={styles.summaryValue}>{user?.phoneNumber ?? 'Not provided'}</Text>
           </View>
         </View>
       </ScrollView>
@@ -164,8 +312,12 @@ export default function CheckoutScreen() {
         <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
           <Text style={styles.backText}>Back</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.orderButton} onPress={handleOrder}>
-          <Text style={styles.orderText}>Order</Text>
+        <TouchableOpacity
+          style={[styles.orderButton, isOrderDisabled && styles.disabledButton]}
+          onPress={handleOrder}
+          disabled={isOrderDisabled}
+        >
+          {isSubmitting ? <ActivityIndicator size="small" color="#ffffff" /> : <Text style={styles.orderText}>Order</Text>}
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -176,6 +328,17 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: '#ffffff',
+  },
+  loadingState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+    backgroundColor: '#ffffff',
+  },
+  loadingStateText: {
+    color: '#6f6f6f',
+    fontSize: 16,
   },
   header: {
     flexDirection: 'row',
@@ -208,6 +371,22 @@ const styles = StyleSheet.create({
     paddingBottom: 32,
     gap: 20,
   },
+  errorBanner: {
+    borderRadius: 12,
+    backgroundColor: '#fff5f5',
+    borderWidth: 1,
+    borderColor: '#f5c2c2',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  errorBannerText: {
+    color: '#c53030',
+    fontSize: 14,
+  },
+  loaderRow: {
+    paddingVertical: 4,
+    alignItems: 'flex-start',
+  },
   section: {
     borderRadius: 20,
     borderWidth: 1,
@@ -216,60 +395,15 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     gap: 16,
   },
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
   sectionTitle: {
     fontSize: 18,
     fontWeight: '700',
     color: '#111111',
   },
-  inputRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#e1e1e1',
-    borderRadius: 14,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 15,
-    color: '#111111',
-    backgroundColor: '#fafafa',
-  },
-  inputHalf: {
-    flex: 1,
-  },
-  checkboxRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  checkbox: {
-    width: 20,
-    height: 20,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#d1d1d1',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#ffffff',
-  },
-  checkboxChecked: {
-    backgroundColor: '#111111',
-    borderColor: '#111111',
-  },
-  checkboxLabel: {
-    fontSize: 14,
-    color: '#111111',
-    fontWeight: '500',
-  },
   summaryRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
   },
   summaryLabel: {
     color: '#6f6f6f',
@@ -310,5 +444,8 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#ffffff',
+  },
+  disabledButton: {
+    opacity: 0.6,
   },
 });

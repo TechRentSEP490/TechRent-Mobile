@@ -1,14 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useMemo } from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { products } from '../../constants/products';
-
-const currencyFormatter = new Intl.NumberFormat('en-US', {
-  style: 'currency',
-  currency: 'USD',
-});
+import type { ProductDetail } from '@/constants/products';
+import { useDeviceModel } from '@/hooks/use-device-model';
 
 const formatDisplayDate = (value: string) => {
   const parsed = new Date(value);
@@ -22,63 +18,124 @@ const formatDisplayDate = (value: string) => {
   });
 };
 
-const calculateDuration = (start: string, end: string) => {
-  const startDate = new Date(start);
-  const endDate = new Date(end);
-  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
-    return 1;
+const normalizeDateParam = (value: string | string[] | undefined): string | null => {
+  const raw = Array.isArray(value) ? value[0] : value;
+
+  if (!raw || typeof raw !== 'string') {
+    return null;
   }
-  const diff = Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
-  return diff > 0 ? diff : 1;
+
+  const trimmed = raw.trim();
+
+  if (!trimmed) {
+    return null;
+  }
+
+  const attemptParse = (input: string) => {
+    const parsed = new Date(input);
+    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+  };
+
+  return (
+    attemptParse(trimmed) ??
+    attemptParse(`${trimmed}T00:00:00.000Z`) ??
+    attemptParse(`${trimmed}T00:00:00`)
+  );
 };
 
-const parseDailyRate = (price: string) => {
-  const match = price.match(/\$([0-9]+(?:\.[0-9]+)?)/);
-  if (!match) {
-    return 0;
+const formatCurrencyValue = (value: number, currency: 'USD' | 'VND') =>
+  new Intl.NumberFormat(currency === 'USD' ? 'en-US' : 'vi-VN', {
+    style: 'currency',
+    currency,
+    maximumFractionDigits: currency === 'USD' ? 2 : 0,
+  }).format(value);
+
+const determineCurrency = (product: ProductDetail): 'USD' | 'VND' => {
+  if (product.currency) {
+    return product.currency;
   }
-  return Number.parseFloat(match[1]);
+
+  return product.price.includes('$') ? 'USD' : 'VND';
+};
+
+const getDailyRate = (product: ProductDetail) => {
+  if (typeof product.pricePerDay === 'number' && product.pricePerDay > 0) {
+    return product.pricePerDay;
+  }
+
+  const sanitized = product.price.replace(/[^0-9.,]/g, '').replace(/,/g, '');
+  const parsed = Number.parseFloat(sanitized);
+  return Number.isNaN(parsed) ? 0 : parsed;
 };
 
 export default function CartScreen() {
   const router = useRouter();
-  const { productId, quantity: quantityParam, startDate: startParam, endDate: endParam } =
-    useLocalSearchParams<{
-      productId?: string;
-      quantity?: string;
-      startDate?: string;
-      endDate?: string;
-    }>();
+  const { productId: productIdParam, quantity: quantityParam, startDate: startParam, endDate: endParam } =
+    useLocalSearchParams();
 
-  const product = useMemo(() => {
-    if (typeof productId === 'string') {
-      const match = products.find((item) => item.id === productId);
-      if (match) {
-        return match;
-      }
-    }
-    return products[0];
-  }, [productId]);
+  const productId = Array.isArray(productIdParam) ? productIdParam[0] : productIdParam;
+  const { data: product, loading, error } = useDeviceModel(productId);
 
   const quantity = useMemo(() => {
-    const parsed = Number.parseInt(typeof quantityParam === 'string' ? quantityParam : '1', 10);
+    const raw = Array.isArray(quantityParam) ? quantityParam[0] : quantityParam;
+    const parsed = Number.parseInt(typeof raw === 'string' ? raw : '1', 10);
     return Number.isNaN(parsed) || parsed <= 0 ? 1 : parsed;
   }, [quantityParam]);
 
-  const startDate = typeof startParam === 'string' ? startParam : new Date().toISOString().split('T')[0];
-  const endDate = typeof endParam === 'string' ? endParam : startDate;
+  const fallbackStartIso = useMemo(() => {
+    const initial = new Date();
+    initial.setHours(0, 0, 0, 0);
+    return initial.toISOString();
+  }, []);
 
-  const rentalDuration = calculateDuration(startDate, endDate);
-  const durationLabel = `${rentalDuration} ${rentalDuration === 1 ? 'day' : 'days'}`;
+  const startDateIso = useMemo(
+    () => normalizeDateParam(startParam) ?? fallbackStartIso,
+    [fallbackStartIso, startParam]
+  );
 
-  const dailyRate = parseDailyRate(product.price);
-  const totalAmount = dailyRate * quantity * rentalDuration;
-  const formattedTotal = currencyFormatter.format(totalAmount);
+  const endDateIso = useMemo(() => {
+    const normalized = normalizeDateParam(endParam);
 
-  const productLabel = `${product.model}`;
+    if (!normalized) {
+      return startDateIso;
+    }
+
+    const startTime = new Date(startDateIso).getTime();
+    const endTime = new Date(normalized).getTime();
+
+    if (Number.isNaN(startTime) || Number.isNaN(endTime) || endTime < startTime) {
+      return startDateIso;
+    }
+
+    return normalized;
+  }, [endParam, startDateIso]);
+
+  const isSingleDay = new Date(startDateIso).getTime() === new Date(endDateIso).getTime();
+
+  if (!product) {
+    return (
+      <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
+        <View style={styles.loadingState}>
+          {loading ? (
+            <ActivityIndicator size="large" color="#111111" />
+          ) : (
+            <Text style={styles.loadingStateText}>Device not found.</Text>
+          )}
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const currency = determineCurrency(product);
+  const dailyRate = getDailyRate(product);
+  const totalAmount = dailyRate * quantity;
+  const formattedTotal = formatCurrencyValue(totalAmount, currency);
+
+  const productLabel = product.model || product.name;
   const deviceLabel = `${quantity} ${quantity === 1 ? 'device' : 'devices'}`;
-
-  const rentalRangeLabel = `${formatDisplayDate(startDate)} - ${formatDisplayDate(endDate)} (${durationLabel})`;
+  const rentalRangeLabel = isSingleDay
+    ? formatDisplayDate(startDateIso)
+    : `${formatDisplayDate(startDateIso)} - ${formatDisplayDate(endDateIso)}`;
 
   const handleCheckout = () => {
     router.push({
@@ -86,8 +143,8 @@ export default function CartScreen() {
       params: {
         productId: product.id,
         quantity: String(quantity),
-        startDate,
-        endDate,
+        startDate: startDateIso,
+        endDate: endDateIso,
       },
     });
   };
@@ -103,13 +160,25 @@ export default function CartScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        {error && (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorBannerText}>{error}</Text>
+          </View>
+        )}
+
+        {loading && (
+          <View style={styles.loaderRow}>
+            <ActivityIndicator size="small" color="#111111" />
+          </View>
+        )}
+
         <View style={styles.summaryRow}>
           <View>
             <Text style={styles.summaryLabel}>Total Items</Text>
             <Text style={styles.summaryValue}>{deviceLabel}</Text>
           </View>
           <View style={styles.summaryRight}>
-            <Text style={styles.summaryLabel}>Total Amount</Text>
+            <Text style={styles.summaryLabel}>Daily Total</Text>
             <Text style={styles.summaryAmount}>{formattedTotal}</Text>
           </View>
         </View>
@@ -153,6 +222,17 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#ffffff',
   },
+  loadingState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+    backgroundColor: '#ffffff',
+  },
+  loadingStateText: {
+    color: '#6f6f6f',
+    fontSize: 16,
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -183,6 +263,22 @@ const styles = StyleSheet.create({
     paddingBottom: 32,
     paddingTop: 8,
     gap: 20,
+  },
+  errorBanner: {
+    borderRadius: 12,
+    backgroundColor: '#fff5f5',
+    borderWidth: 1,
+    borderColor: '#f5c2c2',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  errorBannerText: {
+    color: '#c53030',
+    fontSize: 14,
+  },
+  loaderRow: {
+    paddingVertical: 4,
+    alignItems: 'flex-start',
   },
   summaryRow: {
     flexDirection: 'row',
