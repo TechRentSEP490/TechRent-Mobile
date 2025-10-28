@@ -89,11 +89,16 @@ export default function CartScreen() {
       : `${formatDisplayDate(startDate)} - ${formatDisplayDate(endDate)}`;
 
   const handleCheckout = () => {
+    const rentalStartDate = startDate;
+    const rentalEndDate = endDate;
+
     router.push({
       pathname: '/(app)/checkout',
       params: {
         productId: product.id,
         quantity: String(quantity),
+        startDate: rentalStartDate,
+        endDate: rentalEndDate,
       },
     });
   };
