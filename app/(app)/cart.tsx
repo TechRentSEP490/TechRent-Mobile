@@ -18,6 +18,31 @@ const formatDisplayDate = (value: string) => {
   });
 };
 
+const normalizeDateParam = (value: string | string[] | undefined): string | null => {
+  const raw = Array.isArray(value) ? value[0] : value;
+
+  if (!raw || typeof raw !== 'string') {
+    return null;
+  }
+
+  const trimmed = raw.trim();
+
+  if (!trimmed) {
+    return null;
+  }
+
+  const attemptParse = (input: string) => {
+    const parsed = new Date(input);
+    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+  };
+
+  return (
+    attemptParse(trimmed) ??
+    attemptParse(`${trimmed}T00:00:00.000Z`) ??
+    attemptParse(`${trimmed}T00:00:00`)
+  );
+};
+
 const formatCurrencyValue = (value: number, currency: 'USD' | 'VND') =>
   new Intl.NumberFormat(currency === 'USD' ? 'en-US' : 'vi-VN', {
     style: 'currency',
@@ -45,22 +70,47 @@ const getDailyRate = (product: ProductDetail) => {
 
 export default function CartScreen() {
   const router = useRouter();
-  const { productId, quantity: quantityParam, startDate: startParam, endDate: endParam } =
-    useLocalSearchParams<{
-      productId?: string;
-      quantity?: string;
-      startDate?: string;
-      endDate?: string;
-    }>();
+  const { productId: productIdParam, quantity: quantityParam, startDate: startParam, endDate: endParam } =
+    useLocalSearchParams();
+
+  const productId = Array.isArray(productIdParam) ? productIdParam[0] : productIdParam;
   const { data: product, loading, error } = useDeviceModel(productId);
 
   const quantity = useMemo(() => {
-    const parsed = Number.parseInt(typeof quantityParam === 'string' ? quantityParam : '1', 10);
+    const raw = Array.isArray(quantityParam) ? quantityParam[0] : quantityParam;
+    const parsed = Number.parseInt(typeof raw === 'string' ? raw : '1', 10);
     return Number.isNaN(parsed) || parsed <= 0 ? 1 : parsed;
   }, [quantityParam]);
 
-  const startDate = typeof startParam === 'string' ? startParam : new Date().toISOString().split('T')[0];
-  const endDate = typeof endParam === 'string' ? endParam : startDate;
+  const fallbackStartIso = useMemo(() => {
+    const initial = new Date();
+    initial.setHours(0, 0, 0, 0);
+    return initial.toISOString();
+  }, []);
+
+  const startDateIso = useMemo(
+    () => normalizeDateParam(startParam) ?? fallbackStartIso,
+    [fallbackStartIso, startParam]
+  );
+
+  const endDateIso = useMemo(() => {
+    const normalized = normalizeDateParam(endParam);
+
+    if (!normalized) {
+      return startDateIso;
+    }
+
+    const startTime = new Date(startDateIso).getTime();
+    const endTime = new Date(normalized).getTime();
+
+    if (Number.isNaN(startTime) || Number.isNaN(endTime) || endTime < startTime) {
+      return startDateIso;
+    }
+
+    return normalized;
+  }, [endParam, startDateIso]);
+
+  const isSingleDay = new Date(startDateIso).getTime() === new Date(endDateIso).getTime();
 
   if (!product) {
     return (
@@ -83,22 +133,18 @@ export default function CartScreen() {
 
   const productLabel = product.model || product.name;
   const deviceLabel = `${quantity} ${quantity === 1 ? 'device' : 'devices'}`;
-  const rentalRangeLabel =
-    startDate === endDate
-      ? formatDisplayDate(startDate)
-      : `${formatDisplayDate(startDate)} - ${formatDisplayDate(endDate)}`;
+  const rentalRangeLabel = isSingleDay
+    ? formatDisplayDate(startDateIso)
+    : `${formatDisplayDate(startDateIso)} - ${formatDisplayDate(endDateIso)}`;
 
   const handleCheckout = () => {
-    const rentalStartDate = startDate;
-    const rentalEndDate = endDate;
-
     router.push({
       pathname: '/(app)/checkout',
       params: {
         productId: product.id,
         quantity: String(quantity),
-        startDate: rentalStartDate,
-        endDate: rentalEndDate,
+        startDate: startDateIso,
+        endDate: endDateIso,
       },
     });
   };

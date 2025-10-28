@@ -293,6 +293,8 @@ export default function ProductDetailsScreen() {
 
   const formattedStartDate = useMemo(() => formatDate(startDate), [startDate]);
   const formattedEndDate = useMemo(() => formatDate(endDate), [endDate]);
+  const isoStartDate = useMemo(() => clampToStartOfDay(startDate).toISOString(), [startDate]);
+  const isoEndDate = useMemo(() => clampToStartOfDay(endDate).toISOString(), [endDate]);
   const startDateDisplayLabel = useMemo(() => formatDisplayDate(startDate), [startDate]);
   const endDateDisplayLabel = useMemo(() => formatDisplayDate(endDate), [endDate]);
   const minimumStartDate = clampToStartOfDay(new Date());
@@ -399,8 +401,8 @@ export default function ProductDetailsScreen() {
         params: {
           productId: destinationProductId,
           quantity: String(quantity),
-          startDate: formattedStartDate,
-          endDate: formattedEndDate,
+          startDate: isoStartDate,
+          endDate: isoEndDate,
         },
       });
       return;
@@ -418,8 +420,8 @@ export default function ProductDetailsScreen() {
       params: {
         productId: destinationProductId,
         quantity: String(quantity),
-        startDate: formattedStartDate,
-        endDate: formattedEndDate,
+        startDate: isoStartDate,
+        endDate: isoEndDate,
       },
     });
   };

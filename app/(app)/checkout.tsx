@@ -46,55 +46,71 @@ const formatDisplayDate = (value: string) => {
   });
 };
 
+const parseDateParam = (value: string | string[] | undefined): Date | null => {
+  const raw = Array.isArray(value) ? value[0] : value;
+
+  if (!raw || typeof raw !== 'string') {
+    return null;
+  }
+
+  const trimmed = raw.trim();
+
+  if (!trimmed) {
+    return null;
+  }
+
+  const attemptParse = (input: string) => {
+    const parsed = new Date(input);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  };
+
+  return (
+    attemptParse(trimmed) ??
+    attemptParse(`${trimmed}T00:00:00.000Z`) ??
+    attemptParse(`${trimmed}T00:00:00`)
+  );
+};
+
 export default function CheckoutScreen() {
   const router = useRouter();
-  const { productId, quantity: quantityParam, startDate: startParam, endDate: endParam } =
-    useLocalSearchParams<{
-      productId?: string;
-      quantity?: string;
-      startDate?: string;
-      endDate?: string;
-    }>();
+  const { productId: productIdParam, quantity: quantityParam, startDate: startParam, endDate: endParam } =
+    useLocalSearchParams();
+  const productId = Array.isArray(productIdParam) ? productIdParam[0] : productIdParam;
   const { data: product, loading, error } = useDeviceModel(productId);
   const { session, user, signOut } = useAuth();
 
   const quantity = useMemo(() => {
-    const parsed = Number.parseInt(typeof quantityParam === 'string' ? quantityParam : '1', 10);
+    const raw = Array.isArray(quantityParam) ? quantityParam[0] : quantityParam;
+    const parsed = Number.parseInt(typeof raw === 'string' ? raw : '1', 10);
     return Number.isNaN(parsed) || parsed <= 0 ? 1 : parsed;
   }, [quantityParam]);
 
-  const rentalStart = typeof startParam === 'string' ? startParam : undefined;
-  const rentalEnd = typeof endParam === 'string' ? endParam : undefined;
-
-  const rentalStartDate = useMemo(() => {
-    if (!rentalStart) {
-      return null;
-    }
-
-    const parsed = new Date(rentalStart);
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
-  }, [rentalStart]);
+  const rentalStartDate = useMemo(() => parseDateParam(startParam), [startParam]);
 
   const rentalEndDate = useMemo(() => {
-    if (!rentalEnd) {
-      return null;
+    const parsed = parseDateParam(endParam);
+
+    if (!parsed || !rentalStartDate) {
+      return parsed;
     }
 
-    const parsed = new Date(rentalEnd);
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
-  }, [rentalEnd]);
+    return parsed.getTime() < rentalStartDate.getTime() ? rentalStartDate : parsed;
+  }, [endParam, rentalStartDate]);
+
+  const rentalStartIso = rentalStartDate?.toISOString();
+  const rentalEndIso = rentalEndDate?.toISOString();
 
   const rentalRangeLabel = useMemo(() => {
-    if (!rentalStartDate) {
+    if (!rentalStartDate || !rentalStartIso) {
       return 'Not selected';
     }
 
-    if (!rentalEndDate || rentalEndDate.getTime() === rentalStartDate.getTime()) {
-      return formatDisplayDate(rentalStartDate.toISOString());
+    if (!rentalEndDate || !rentalEndIso || rentalEndDate.getTime() === rentalStartDate.getTime()) {
+      return formatDisplayDate(rentalStartIso);
     }
 
-    return `${formatDisplayDate(rentalStartDate.toISOString())} - ${formatDisplayDate(rentalEndDate.toISOString())}`;
-  }, [rentalEndDate, rentalStartDate]);
+    return `${formatDisplayDate(rentalStartIso)} - ${formatDisplayDate(rentalEndIso)}`;
+  }, [rentalEndDate, rentalEndIso, rentalStartDate, rentalStartIso]);
 
   const [orderError, setOrderError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -131,7 +147,7 @@ export default function CheckoutScreen() {
       return;
     }
 
-    if (!session?.accessToken || !user?.customerId) {
+    if (!session?.accessToken || customerId === null) {
       Alert.alert('Authentication required', 'Please sign in again to place your rental order.');
       router.replace('/(auth)/sign-in');
       return;
@@ -144,7 +160,7 @@ export default function CheckoutScreen() {
       return;
     }
 
-    if (!rentalStartDate || !rentalEndDate) {
+    if (!rentalStartDate || !rentalEndDate || !rentalStartIso || !rentalEndIso) {
       setOrderError('Rental dates are missing. Please return to the product screen and try again.');
       return;
     }
@@ -155,10 +171,10 @@ export default function CheckoutScreen() {
     try {
       await createRentalOrder(
         {
-          startDate: rentalStartDate.toISOString(),
-          endDate: rentalEndDate.toISOString(),
+          startDate: rentalStartIso,
+          endDate: rentalEndIso,
           shippingAddress: 'Pending confirmation',
-          customerId: user.customerId,
+          customerId,
           orderDetails: [
             {
               quantity,
@@ -200,8 +216,17 @@ export default function CheckoutScreen() {
     }
   };
 
+  const customerId = typeof user?.customerId === 'number' ? user.customerId : null;
+
   const isOrderDisabled =
-    isSubmitting || !product || !session?.accessToken || !user?.customerId || !rentalStartDate || !rentalEndDate;
+    isSubmitting ||
+    !product ||
+    !session?.accessToken ||
+    customerId === null ||
+    !rentalStartDate ||
+    !rentalEndDate ||
+    !rentalStartIso ||
+    !rentalEndIso;
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
@@ -238,15 +263,15 @@ export default function CheckoutScreen() {
           </View>
           <View style={styles.summaryRow}>
             <Text style={styles.summaryLabel}>Start Date</Text>
-            <Text style={styles.summaryValue}>{
-              rentalStartDate ? formatDisplayDate(rentalStartDate.toISOString()) : 'Not selected'
-            }</Text>
+            <Text style={styles.summaryValue}>
+              {rentalStartIso ? formatDisplayDate(rentalStartIso) : 'Not selected'}
+            </Text>
           </View>
           <View style={styles.summaryRow}>
             <Text style={styles.summaryLabel}>End Date</Text>
-            <Text style={styles.summaryValue}>{
-              rentalEndDate ? formatDisplayDate(rentalEndDate.toISOString()) : 'Not selected'
-            }</Text>
+            <Text style={styles.summaryValue}>
+              {rentalEndIso ? formatDisplayDate(rentalEndIso) : 'Not selected'}
+            </Text>
           </View>
         </View>
 
