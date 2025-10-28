@@ -94,6 +94,18 @@ export default function ProfileScreen() {
 
     return [
       {
+        id: 'customerId',
+        label: 'Customer ID',
+        value: String(user.customerId),
+        icon: 'finger-print-outline' as const,
+      },
+      {
+        id: 'accountId',
+        label: 'Account ID',
+        value: String(user.accountId),
+        icon: 'key-outline' as const,
+      },
+      {
         id: 'fullName',
         label: 'Full Name',
         value: normalizedFullName,
@@ -119,6 +131,12 @@ export default function ProfileScreen() {
         label: 'Role',
         value: formatRole(user.role),
         icon: 'briefcase-outline' as const,
+      },
+      {
+        id: 'status',
+        label: 'Account Status',
+        value: formatStatus(user.status),
+        icon: 'information-circle-outline' as const,
       },
       {
         id: 'kycStatus',
