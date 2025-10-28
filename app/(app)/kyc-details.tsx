@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 
 import { useAuth } from '@/contexts/AuthContext';
+import { formatKycStatusLabel, getKycProgressState } from '@/constants/kyc';
 import {
   fetchKycDocuments,
   uploadKycDocuments,
@@ -60,7 +61,7 @@ const documentSections: {
 
 export default function KycDetailsScreen() {
   const router = useRouter();
-  const { session, refreshProfile } = useAuth();
+  const { session, refreshProfile, user } = useAuth();
   const [fullName, setFullName] = useState('');
   const [citizenId, setCitizenId] = useState('');
   const [issuedDate, setIssuedDate] = useState('');
@@ -73,6 +74,34 @@ export default function KycDetailsScreen() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  const kycStatusLabel = useMemo(() => formatKycStatusLabel(user?.kycStatus), [user?.kycStatus]);
+  const kycProgress = useMemo(() => getKycProgressState(user?.kycStatus), [user?.kycStatus]);
+  const kycStatusMessage = useMemo(() => {
+    switch (kycProgress) {
+      case 'pending':
+        return "We're reviewing your documents. We'll notify you once verification is complete.";
+      case 'verified':
+        return 'Everything looks good. You can still update your documents if anything changes.';
+      case 'rejected':
+        return 'We need clearer or updated documents. Submit new photos below to continue.';
+      default:
+        return 'Upload the required documents below to start the verification process.';
+    }
+  }, [kycProgress]);
+
+  const kycStatusIcon = useMemo(() => {
+    switch (kycProgress) {
+      case 'pending':
+        return { name: 'time-outline' as const, color: '#4338ca' };
+      case 'verified':
+        return { name: 'shield-checkmark' as const, color: '#047857' };
+      case 'rejected':
+        return { name: 'alert-circle-outline' as const, color: '#b91c1c' };
+      default:
+        return { name: 'shield-checkmark-outline' as const, color: '#b45309' };
+    }
+  }, [kycProgress]);
 
   useEffect(() => {
     let isActive = true;
@@ -301,6 +330,23 @@ export default function KycDetailsScreen() {
             <Text style={styles.subtitle}>Enter your legal information to continue.</Text>
           </View>
 
+          <View
+            style={[
+              styles.statusBanner,
+              kycProgress === 'pending' && styles.statusBannerPending,
+              kycProgress === 'verified' && styles.statusBannerVerified,
+              kycProgress === 'rejected' && styles.statusBannerRejected,
+            ]}
+          >
+            <View style={styles.statusIconWrapper}>
+              <Ionicons name={kycStatusIcon.name} size={20} color={kycStatusIcon.color} />
+            </View>
+            <View style={styles.statusContent}>
+              <Text style={styles.statusTitle}>{`Status: ${kycStatusLabel}`}</Text>
+              <Text style={styles.statusSubtitle}>{kycStatusMessage}</Text>
+            </View>
+          </View>
+
           <View style={styles.fieldGroup}>
             <Text style={styles.label}>Full Name</Text>
             <TextInput
@@ -466,6 +512,49 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 14,
     color: '#6f6f6f',
+  },
+  statusBanner: {
+    flexDirection: 'row',
+    gap: 12,
+    padding: 16,
+    borderRadius: 16,
+    backgroundColor: '#fff6e5',
+    alignItems: 'flex-start',
+  },
+  statusBannerPending: {
+    backgroundColor: '#eef2ff',
+  },
+  statusBannerVerified: {
+    backgroundColor: '#ecfdf5',
+  },
+  statusBannerRejected: {
+    backgroundColor: '#fef2f2',
+  },
+  statusIconWrapper: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: '#ffffff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000000',
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 1,
+  },
+  statusContent: {
+    flex: 1,
+    gap: 6,
+  },
+  statusTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#111111',
+  },
+  statusSubtitle: {
+    fontSize: 13,
+    color: '#4b5563',
+    lineHeight: 18,
   },
   fieldGroup: {
     gap: 10,
