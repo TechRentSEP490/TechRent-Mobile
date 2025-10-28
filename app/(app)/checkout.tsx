@@ -1,10 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useMemo, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import type { ProductDetail } from '@/constants/products';
 import { useDeviceModel } from '@/hooks/use-device-model';
+import { useAuth } from '@/contexts/AuthContext';
+import { createRentalOrder } from '@/services/rental-orders';
 
 const formatCurrencyValue = (value: number, currency: 'USD' | 'VND') =>
   new Intl.NumberFormat(currency === 'USD' ? 'en-US' : 'vi-VN', {
@@ -54,6 +56,7 @@ export default function CheckoutScreen() {
       endDate?: string;
     }>();
   const { data: product, loading, error } = useDeviceModel(productId);
+  const { session, user, signOut } = useAuth();
 
   const quantity = useMemo(() => {
     const parsed = Number.parseInt(typeof quantityParam === 'string' ? quantityParam : '1', 10);
@@ -62,24 +65,39 @@ export default function CheckoutScreen() {
 
   const rentalStart = typeof startParam === 'string' ? startParam : undefined;
   const rentalEnd = typeof endParam === 'string' ? endParam : undefined;
-  const rentalRangeLabel = useMemo(() => {
+
+  const rentalStartDate = useMemo(() => {
     if (!rentalStart) {
+      return null;
+    }
+
+    const parsed = new Date(rentalStart);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }, [rentalStart]);
+
+  const rentalEndDate = useMemo(() => {
+    if (!rentalEnd) {
+      return null;
+    }
+
+    const parsed = new Date(rentalEnd);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }, [rentalEnd]);
+
+  const rentalRangeLabel = useMemo(() => {
+    if (!rentalStartDate) {
       return 'Not selected';
     }
 
-    if (!rentalEnd || rentalEnd === rentalStart) {
-      return formatDisplayDate(rentalStart);
+    if (!rentalEndDate || rentalEndDate.getTime() === rentalStartDate.getTime()) {
+      return formatDisplayDate(rentalStartDate.toISOString());
     }
 
-    return `${formatDisplayDate(rentalStart)} - ${formatDisplayDate(rentalEnd)}`;
-  }, [rentalEnd, rentalStart]);
+    return `${formatDisplayDate(rentalStartDate.toISOString())} - ${formatDisplayDate(rentalEndDate.toISOString())}`;
+  }, [rentalEndDate, rentalStartDate]);
 
-  const [customerName, setCustomerName] = useState('');
-  const [customerEmail, setCustomerEmail] = useState('');
-  const [customerPhone, setCustomerPhone] = useState('');
-  const [shippingAddress, setShippingAddress] = useState('');
-  const [shippingEmail, setShippingEmail] = useState('');
-  const [sameAsBilling, setSameAsBilling] = useState(true);
+  const [orderError, setOrderError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (!product) {
     return (
@@ -103,12 +121,87 @@ export default function CheckoutScreen() {
   const depositHeldValue = totalAmount * depositPercent;
   const depositHeld = formatCurrencyValue(depositHeldValue, currency);
 
-  const handleOrder = () => {
-    router.replace({
-      pathname: '/(app)/product-details',
-      params: { productId: product.id },
-    });
+  const handleOrder = async () => {
+    if (isSubmitting) {
+      return;
+    }
+
+    if (!product) {
+      setOrderError('Device information is unavailable. Please try again.');
+      return;
+    }
+
+    if (!session?.accessToken || !user?.customerId) {
+      Alert.alert('Authentication required', 'Please sign in again to place your rental order.');
+      router.replace('/(auth)/sign-in');
+      return;
+    }
+
+    const deviceModelId = Number.parseInt(product.id, 10);
+
+    if (Number.isNaN(deviceModelId)) {
+      setOrderError('Unable to determine the selected device. Please try another model.');
+      return;
+    }
+
+    if (!rentalStartDate || !rentalEndDate) {
+      setOrderError('Rental dates are missing. Please return to the product screen and try again.');
+      return;
+    }
+
+    setOrderError(null);
+    setIsSubmitting(true);
+
+    try {
+      await createRentalOrder(
+        {
+          startDate: rentalStartDate.toISOString(),
+          endDate: rentalEndDate.toISOString(),
+          shippingAddress: 'Pending confirmation',
+          customerId: user.customerId,
+          orderDetails: [
+            {
+              quantity,
+              deviceModelId,
+            },
+          ],
+        },
+        session
+      );
+
+      Alert.alert('Rental order created', 'Your rental order has been submitted successfully.', [
+        {
+          text: 'OK',
+          onPress: () =>
+            router.replace({
+              pathname: '/(app)/product-details',
+              params: { productId: product.id },
+            }),
+        },
+      ]);
+    } catch (err) {
+      const apiError = err as { status?: number };
+
+      if (apiError?.status === 401) {
+        await signOut();
+        Alert.alert('Session expired', 'Please sign in again to place your rental order.', [
+          {
+            text: 'OK',
+            onPress: () => router.replace('/(auth)/sign-in'),
+          },
+        ]);
+        return;
+      }
+
+      const message = err instanceof Error ? err.message : 'Failed to create rental order. Please try again.';
+      setOrderError(message);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
+
+  const isOrderDisabled =
+    isSubmitting || !product || !session?.accessToken || !user?.customerId || !rentalStartDate || !rentalEndDate;
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
@@ -121,9 +214,9 @@ export default function CheckoutScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        {error && (
+        {(error || orderError) && (
           <View style={styles.errorBanner}>
-            <Text style={styles.errorBannerText}>{error}</Text>
+            <Text style={styles.errorBannerText}>{orderError ?? error}</Text>
           </View>
         )}
 
@@ -134,63 +227,27 @@ export default function CheckoutScreen() {
         )}
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Customer Information</Text>
-          <View style={styles.inputRow}>
-            <TextInput
-              style={[styles.input, styles.inputHalf]}
-              placeholder="Enter your name"
-              placeholderTextColor="#9c9c9c"
-              value={customerName}
-              onChangeText={setCustomerName}
-            />
-            <TextInput
-              style={[styles.input, styles.inputHalf]}
-              placeholder="Enter your email"
-              placeholderTextColor="#9c9c9c"
-              value={customerEmail}
-              onChangeText={setCustomerEmail}
-              keyboardType="email-address"
-            />
+          <Text style={styles.sectionTitle}>Rental Details</Text>
+          <View style={styles.summaryRow}>
+            <Text style={styles.summaryLabel}>Device</Text>
+            <Text style={styles.summaryValue}>{product.name}</Text>
           </View>
-          <TextInput
-            style={styles.input}
-            placeholder="Enter your phone number"
-            placeholderTextColor="#9c9c9c"
-            value={customerPhone}
-            onChangeText={setCustomerPhone}
-            keyboardType="phone-pad"
-          />
-        </View>
-
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Shipping Information</Text>
-            <TouchableOpacity
-              style={styles.checkboxRow}
-              onPress={() => setSameAsBilling((prev) => !prev)}
-            >
-              <View style={[styles.checkbox, sameAsBilling && styles.checkboxChecked]}>
-                {sameAsBilling && <Ionicons name="checkmark" size={14} color="#ffffff" />}
-              </View>
-              <Text style={styles.checkboxLabel}>Same as billing</Text>
-            </TouchableOpacity>
+          <View style={styles.summaryRow}>
+            <Text style={styles.summaryLabel}>Quantity</Text>
+            <Text style={styles.summaryValue}>{quantity}</Text>
           </View>
-
-          <TextInput
-            style={styles.input}
-            placeholder="Enter your address"
-            placeholderTextColor="#9c9c9c"
-            value={shippingAddress}
-            onChangeText={setShippingAddress}
-          />
-          <TextInput
-            style={styles.input}
-            placeholder="Enter your email"
-            placeholderTextColor="#9c9c9c"
-            value={shippingEmail}
-            onChangeText={setShippingEmail}
-            keyboardType="email-address"
-          />
+          <View style={styles.summaryRow}>
+            <Text style={styles.summaryLabel}>Start Date</Text>
+            <Text style={styles.summaryValue}>{
+              rentalStartDate ? formatDisplayDate(rentalStartDate.toISOString()) : 'Not selected'
+            }</Text>
+          </View>
+          <View style={styles.summaryRow}>
+            <Text style={styles.summaryLabel}>End Date</Text>
+            <Text style={styles.summaryValue}>{
+              rentalEndDate ? formatDisplayDate(rentalEndDate.toISOString()) : 'Not selected'
+            }</Text>
+          </View>
         </View>
 
         <View style={styles.section}>
@@ -208,14 +265,34 @@ export default function CheckoutScreen() {
             <Text style={styles.summaryValue}>{depositHeld}</Text>
           </View>
         </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Customer</Text>
+          <View style={styles.summaryRow}>
+            <Text style={styles.summaryLabel}>Username</Text>
+            <Text style={styles.summaryValue}>{user?.username ?? 'Unknown'}</Text>
+          </View>
+          <View style={styles.summaryRow}>
+            <Text style={styles.summaryLabel}>Email</Text>
+            <Text style={styles.summaryValue}>{user?.email ?? 'Not provided'}</Text>
+          </View>
+          <View style={styles.summaryRow}>
+            <Text style={styles.summaryLabel}>Phone</Text>
+            <Text style={styles.summaryValue}>{user?.phoneNumber ?? 'Not provided'}</Text>
+          </View>
+        </View>
       </ScrollView>
 
       <View style={styles.footerActions}>
         <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
           <Text style={styles.backText}>Back</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.orderButton} onPress={handleOrder}>
-          <Text style={styles.orderText}>Order</Text>
+        <TouchableOpacity
+          style={[styles.orderButton, isOrderDisabled && styles.disabledButton]}
+          onPress={handleOrder}
+          disabled={isOrderDisabled}
+        >
+          {isSubmitting ? <ActivityIndicator size="small" color="#ffffff" /> : <Text style={styles.orderText}>Order</Text>}
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -293,60 +370,15 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     gap: 16,
   },
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
   sectionTitle: {
     fontSize: 18,
     fontWeight: '700',
     color: '#111111',
   },
-  inputRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#e1e1e1',
-    borderRadius: 14,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 15,
-    color: '#111111',
-    backgroundColor: '#fafafa',
-  },
-  inputHalf: {
-    flex: 1,
-  },
-  checkboxRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  checkbox: {
-    width: 20,
-    height: 20,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#d1d1d1',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#ffffff',
-  },
-  checkboxChecked: {
-    backgroundColor: '#111111',
-    borderColor: '#111111',
-  },
-  checkboxLabel: {
-    fontSize: 14,
-    color: '#111111',
-    fontWeight: '500',
-  },
   summaryRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
   },
   summaryLabel: {
     color: '#6f6f6f',
@@ -387,5 +419,8 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#ffffff',
+  },
+  disabledButton: {
+    opacity: 0.6,
   },
 });
