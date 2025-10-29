@@ -3,7 +3,7 @@ import * as SecureStore from 'expo-secure-store';
 
 import { getCurrentUser, loginUser, type AuthenticatedUser, type LoginPayload } from '@/services/auth';
 
-type AuthSession = {
+export type AuthSession = {
   accessToken: string;
   tokenType: string;
 };
@@ -17,6 +17,7 @@ type AuthContextType = {
   isFetchingProfile: boolean;
   signIn: (payload: LoginPayload) => Promise<void>;
   refreshProfile: () => Promise<AuthenticatedUser | null>;
+  ensureSession: () => Promise<AuthSession | null>;
   signOut: () => Promise<void>;
 };
 
@@ -165,6 +166,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             await fetchProfile(nextSession, { silent: true });
           } catch (error) {
             console.warn('Failed to restore user profile', error);
+            await clearSessionState();
           }
         }
       } catch (error) {
@@ -177,7 +179,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       isActive = false;
     };
-  }, [fetchProfile]);
+  }, [fetchProfile, clearSessionState]);
 
   const signIn = useCallback(
     async (payload: LoginPayload) => {
@@ -220,6 +222,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const refreshProfile = useCallback(() => fetchProfile(), [fetchProfile]);
 
+  const ensureSession = useCallback(async () => {
+    if (session?.accessToken) {
+      return session;
+    }
+
+    if (!isStorageAvailable) {
+      return null;
+    }
+
+    try {
+      const storedValue = await SecureStore.getItemAsync(AUTH_SESSION_KEY);
+
+      if (!storedValue) {
+        return null;
+      }
+
+      const parsed = JSON.parse(storedValue) as Partial<AuthSession> | null;
+
+      if (parsed?.accessToken) {
+        const tokenType = parsed.tokenType && parsed.tokenType.length > 0 ? parsed.tokenType : 'Bearer';
+        const restoredSession: AuthSession = { accessToken: parsed.accessToken, tokenType };
+
+        if (isMountedRef.current) {
+          setSession(restoredSession);
+        }
+
+        return restoredSession;
+      }
+    } catch (error) {
+      console.warn('Failed to ensure auth session', error);
+    }
+
+    return null;
+  }, [session, isStorageAvailable]);
+
   const value = useMemo(
     () => ({
       isSignedIn: Boolean(session),
@@ -230,9 +267,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       isFetchingProfile,
       signIn,
       refreshProfile,
+      ensureSession,
       signOut,
     }),
-    [session, isHydrating, user, isFetchingProfile, signIn, refreshProfile, signOut]
+    [session, isHydrating, user, isFetchingProfile, signIn, refreshProfile, ensureSession, signOut]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
