@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -78,6 +78,7 @@ export default function CheckoutScreen() {
   const productId = Array.isArray(productIdParam) ? productIdParam[0] : productIdParam;
   const { data: product, loading, error } = useDeviceModel(productId);
   const { session, user, signOut } = useAuth();
+  const customerId = typeof user?.customerId === 'number' ? user.customerId : null;
 
   const quantity = useMemo(() => {
     const raw = Array.isArray(quantityParam) ? quantityParam[0] : quantityParam;
@@ -114,6 +115,54 @@ export default function CheckoutScreen() {
 
   const [orderError, setOrderError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const orderBlockers = useMemo(() => {
+    const reasons: string[] = [];
+
+    if (isSubmitting) {
+      reasons.push('Submission already in progress');
+    }
+
+    if (!product) {
+      reasons.push('Device information is still loading');
+    }
+
+    if (!session?.accessToken) {
+      reasons.push('Missing access token — user is not authenticated');
+    }
+
+    if (customerId === null) {
+      reasons.push('Authenticated user is missing a customer ID');
+    }
+
+    if (!rentalStartDate || !rentalStartIso) {
+      reasons.push('Rental start date has not been selected or parsed');
+    }
+
+    if (!rentalEndDate || !rentalEndIso) {
+      reasons.push('Rental end date has not been selected or parsed');
+    }
+
+    return reasons;
+  }, [
+    customerId,
+    isSubmitting,
+    product,
+    rentalEndDate,
+    rentalEndIso,
+    rentalStartDate,
+    rentalStartIso,
+    session?.accessToken,
+  ]);
+
+  useEffect(() => {
+    if (orderBlockers.length === 0) {
+      console.log('[Checkout] Order button enabled. All rental requirements satisfied.');
+      return;
+    }
+
+    console.log('[Checkout] Order button disabled. Outstanding requirements:', orderBlockers);
+  }, [orderBlockers]);
 
   if (!product) {
     return (
@@ -216,17 +265,7 @@ export default function CheckoutScreen() {
     }
   };
 
-  const customerId = typeof user?.customerId === 'number' ? user.customerId : null;
-
-  const isOrderDisabled =
-    isSubmitting ||
-    !product ||
-    !session?.accessToken ||
-    customerId === null ||
-    !rentalStartDate ||
-    !rentalEndDate ||
-    !rentalStartIso ||
-    !rentalEndIso;
+  const isOrderDisabled = orderBlockers.length > 0;
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
@@ -242,6 +281,18 @@ export default function CheckoutScreen() {
         {(error || orderError) && (
           <View style={styles.errorBanner}>
             <Text style={styles.errorBannerText}>{orderError ?? error}</Text>
+          </View>
+        )}
+
+        {isOrderDisabled && orderBlockers.length > 0 && (
+          <View style={styles.diagnosticsContainer}>
+            <Text style={styles.diagnosticsTitle}>Order requirements</Text>
+            {orderBlockers.map((reason) => (
+              <View key={reason} style={styles.diagnosticsRow}>
+                <View style={styles.diagnosticsBullet} />
+                <Text style={styles.diagnosticsText}>{reason}</Text>
+              </View>
+            ))}
           </View>
         )}
 
@@ -386,6 +437,37 @@ const styles = StyleSheet.create({
   loaderRow: {
     paddingVertical: 4,
     alignItems: 'flex-start',
+  },
+  diagnosticsContainer: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#dbeafe',
+    backgroundColor: '#eff6ff',
+    padding: 16,
+    gap: 8,
+  },
+  diagnosticsTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1d4ed8',
+  },
+  diagnosticsRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  diagnosticsBullet: {
+    width: 6,
+    height: 6,
+    marginTop: 6,
+    borderRadius: 3,
+    backgroundColor: '#2563eb',
+  },
+  diagnosticsText: {
+    flex: 1,
+    color: '#1e3a8a',
+    fontSize: 13,
+    lineHeight: 18,
   },
   section: {
     borderRadius: 20,
