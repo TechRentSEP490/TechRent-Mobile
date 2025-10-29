@@ -717,7 +717,15 @@ export default function OrdersScreen() {
           typeof activeContract?.depositAmount === 'number'
             ? formatCurrency(activeContract.depositAmount)
             : '—';
+        const contractRentalDays =
+          typeof activeContract?.rentalPeriodDays === 'number'
+            ? `${activeContract.rentalPeriodDays} day${activeContract.rentalPeriodDays === 1 ? '' : 's'}`
+            : '—';
+        const contractStart = formatDateTime(activeContract?.startDate);
+        const contractEnd = formatDateTime(activeContract?.endDate);
         const contractExpires = formatDateTime(activeContract?.expiresAt);
+        const contractCreated = formatDateTime(activeContract?.createdAt);
+        const contractUpdated = formatDateTime(activeContract?.updatedAt);
         const contractDescription = normalizeHtmlContent(activeContract?.description);
         const contractBody = normalizeHtmlContent(activeContract?.contractContent);
         const contractTerms = normalizeHtmlContent(activeContract?.termsAndConditions);
@@ -764,6 +772,18 @@ export default function OrdersScreen() {
                       <Text style={styles.contractMetaValue}>{contractPeriod}</Text>
                     </View>
                     <View style={styles.contractMetaRow}>
+                      <Text style={styles.contractMetaLabel}>Rental Days</Text>
+                      <Text style={styles.contractMetaValue}>{contractRentalDays}</Text>
+                    </View>
+                    <View style={styles.contractMetaRow}>
+                      <Text style={styles.contractMetaLabel}>Start Date</Text>
+                      <Text style={styles.contractMetaValue}>{contractStart}</Text>
+                    </View>
+                    <View style={styles.contractMetaRow}>
+                      <Text style={styles.contractMetaLabel}>End Date</Text>
+                      <Text style={styles.contractMetaValue}>{contractEnd}</Text>
+                    </View>
+                    <View style={styles.contractMetaRow}>
                       <Text style={styles.contractMetaLabel}>Total Amount</Text>
                       <Text style={styles.contractMetaValue}>{contractTotal}</Text>
                     </View>
@@ -775,14 +795,23 @@ export default function OrdersScreen() {
                       <Text style={styles.contractMetaLabel}>Expires</Text>
                       <Text style={styles.contractMetaValue}>{contractExpires}</Text>
                     </View>
+                    <View style={styles.contractMetaRow}>
+                      <Text style={styles.contractMetaLabel}>Created</Text>
+                      <Text style={styles.contractMetaValue}>{contractCreated}</Text>
+                    </View>
+                    <View style={styles.contractMetaRow}>
+                      <Text style={styles.contractMetaLabel}>Updated</Text>
+                      <Text style={styles.contractMetaValue}>{contractUpdated}</Text>
+                    </View>
                   </View>
                   {contractDescription.length > 0 && (
                     <Text style={styles.contractBody}>{contractDescription}</Text>
                   )}
                   {contractBody.length > 0 && (
-                    <Text style={[styles.contractBody, styles.contractBodySpacing]}>
-                      {contractBody}
-                    </Text>
+                    <View style={styles.contractSection}>
+                      <Text style={styles.contractSectionHeading}>Contract Content</Text>
+                      <Text style={styles.contractBody}>{contractBody}</Text>
+                    </View>
                   )}
                   {contractTerms.length > 0 && (
                     <View style={styles.contractTermsSection}>
@@ -1460,8 +1489,14 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     color: '#4b5563',
   },
-  contractBodySpacing: {
-    marginTop: 12,
+  contractSection: {
+    marginTop: 16,
+    gap: 8,
+  },
+  contractSectionHeading: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#111111',
   },
   contractStateWrapper: {
     minHeight: 140,
