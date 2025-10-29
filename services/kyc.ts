@@ -10,6 +10,8 @@ export type KycDocumentAsset = {
 
 export type KycDocumentsPayload = Record<KycDocumentSlot, KycDocumentAsset>;
 
+export const KYC_DOCUMENT_SLOTS: readonly KycDocumentSlot[] = ['front', 'back', 'selfie'];
+
 type KycDocumentsApiResponse = {
   status: string;
   message: string;
@@ -58,6 +60,52 @@ const normalizeKycDocuments = (data: KycDocumentsDto | null | undefined): Normal
     verifiedBy: data.verifiedBy ?? null,
     rejectionReason: data.rejectionReason ?? null,
   };
+};
+
+const coerceDocumentsParamValue = (raw: string | string[] | undefined) =>
+  Array.isArray(raw) ? raw[0] : raw;
+
+export const encodeKycDocumentsParam = (documents: KycDocumentsPayload) =>
+  encodeURIComponent(JSON.stringify(documents));
+
+export const decodeKycDocumentsParam = (
+  raw: string | string[] | undefined
+): KycDocumentsPayload | null => {
+  const value = coerceDocumentsParamValue(raw);
+
+  if (!value || value.length === 0) {
+    return null;
+  }
+
+  try {
+    const decoded = decodeURIComponent(value);
+    const parsed = JSON.parse(decoded) as Partial<Record<KycDocumentSlot, KycDocumentAsset>> | null;
+
+    if (!parsed) {
+      return null;
+    }
+
+    const result: Partial<KycDocumentsPayload> = {};
+
+    for (const slot of KYC_DOCUMENT_SLOTS) {
+      const asset = parsed[slot];
+
+      if (!asset || typeof asset.uri !== 'string' || asset.uri.length === 0) {
+        return null;
+      }
+
+      result[slot] = {
+        uri: asset.uri,
+        name: asset.name ?? null,
+        type: asset.type ?? null,
+      };
+    }
+
+    return result as KycDocumentsPayload;
+  } catch (error) {
+    console.warn('Failed to decode KYC document payload', error);
+    return null;
+  }
 };
 
 const resolveTokenType = (tokenType?: string | null) =>

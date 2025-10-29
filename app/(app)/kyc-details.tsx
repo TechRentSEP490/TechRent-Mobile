@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
-import * as ImagePicker from 'expo-image-picker';
 import { Image } from 'expo-image';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   ActivityIndicator,
@@ -19,6 +18,9 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 import { formatKycStatusLabel, getKycProgressState } from '@/constants/kyc';
 import {
+  KYC_DOCUMENT_SLOTS,
+  decodeKycDocumentsParam,
+  encodeKycDocumentsParam,
   fetchKycDocuments,
   uploadKycDocuments,
   type KycDocumentAsset,
@@ -31,37 +33,41 @@ type DocumentState = {
   existingUrl: string | null;
 };
 
+type DocumentSection = {
+  slot: KycDocumentSlot;
+  title: string;
+  helper: string;
+};
+
+const documentSections: DocumentSection[] = [
+  {
+    slot: 'front',
+    title: 'Front of ID card',
+    helper: 'Confirm the front side is clearly visible and legible.',
+  },
+  {
+    slot: 'back',
+    title: 'Back of ID card',
+    helper: 'Ensure the card details are readable without glare.',
+  },
+  {
+    slot: 'selfie',
+    title: 'Selfie with the ID card',
+    helper: 'Your face and the ID should both be inside the frame.',
+  },
+];
+
 const createInitialDocumentState = (): DocumentState => ({
   previewUri: null,
   asset: null,
   existingUrl: null,
 });
 
-const documentSections: {
-  slot: KycDocumentSlot;
-  title: string;
-  helper: string;
-}[] = [
-  {
-    slot: 'front',
-    title: 'Front of ID card',
-    helper: 'Ensure the text is readable and the photo is sharp.',
-  },
-  {
-    slot: 'back',
-    title: 'Back of ID card',
-    helper: 'Capture the back of your ID card without glare.',
-  },
-  {
-    slot: 'selfie',
-    title: 'Selfie with the ID card',
-    helper: 'Hold the ID next to your face in good lighting.',
-  },
-];
-
 export default function KycDetailsScreen() {
   const router = useRouter();
   const { session, refreshProfile, user } = useAuth();
+  const { docs: docsParam } = useLocalSearchParams<{ docs?: string }>();
+
   const [fullName, setFullName] = useState('');
   const [citizenId, setCitizenId] = useState('');
   const [issuedDate, setIssuedDate] = useState('');
@@ -70,6 +76,8 @@ export default function KycDetailsScreen() {
     back: createInitialDocumentState(),
     selfie: createInitialDocumentState(),
   });
+  const [hasSeededFromParams, setHasSeededFromParams] = useState(false);
+  const [hasFetchedExisting, setHasFetchedExisting] = useState(false);
   const [isLoadingDocuments, setIsLoadingDocuments] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -104,13 +112,57 @@ export default function KycDetailsScreen() {
   }, [kycProgress]);
 
   useEffect(() => {
-    let isActive = true;
+    if (hasSeededFromParams) {
+      return;
+    }
+
+    const parsed = decodeKycDocumentsParam(docsParam);
+
+    if (parsed) {
+      setDocuments({
+        front: {
+          previewUri: parsed.front.uri ?? null,
+          asset: parsed.front,
+          existingUrl: null,
+        },
+        back: {
+          previewUri: parsed.back.uri ?? null,
+          asset: parsed.back,
+          existingUrl: null,
+        },
+        selfie: {
+          previewUri: parsed.selfie.uri ?? null,
+          asset: parsed.selfie,
+          existingUrl: null,
+        },
+      });
+    }
+
+    setHasSeededFromParams(true);
+  }, [docsParam, hasSeededFromParams]);
+
+  const hasProvidedAssets = useMemo(
+    () =>
+      KYC_DOCUMENT_SLOTS.every((slot) => {
+        const asset = documents[slot].asset;
+        return Boolean(asset?.uri && asset.uri.length > 0);
+      }),
+    [documents]
+  );
+
+  useEffect(() => {
+    if (!session?.accessToken || !hasSeededFromParams || hasFetchedExisting) {
+      return;
+    }
+
+    if (hasProvidedAssets) {
+      setHasFetchedExisting(true);
+      return;
+    }
+
+    let isMounted = true;
 
     const loadExistingDocuments = async () => {
-      if (!session?.accessToken) {
-        return;
-      }
-
       setIsLoadingDocuments(true);
 
       try {
@@ -119,7 +171,7 @@ export default function KycDetailsScreen() {
           tokenType: session.tokenType,
         });
 
-        if (response && isActive) {
+        if (response && isMounted) {
           setDocuments({
             front: {
               previewUri: response.frontUrl,
@@ -137,12 +189,17 @@ export default function KycDetailsScreen() {
               existingUrl: response.selfieUrl,
             },
           });
+
+          if (response.fullName && response.fullName.length > 0) {
+            setFullName((prev) => (prev.length > 0 ? prev : response.fullName ?? ''));
+          }
         }
       } catch (error) {
         console.warn('Failed to load existing KYC documents', error);
       } finally {
-        if (isActive) {
+        if (isMounted) {
           setIsLoadingDocuments(false);
+          setHasFetchedExisting(true);
         }
       }
     };
@@ -150,101 +207,11 @@ export default function KycDetailsScreen() {
     loadExistingDocuments();
 
     return () => {
-      isActive = false;
+      isMounted = false;
     };
-  }, [session]);
+  }, [hasFetchedExisting, hasProvidedAssets, hasSeededFromParams, session?.accessToken, session?.tokenType]);
 
-  const canSubmit = useMemo(
-    () =>
-      Boolean(
-        documents.front.asset?.uri &&
-          documents.back.asset?.uri &&
-          documents.selfie.asset?.uri &&
-          !isSubmitting
-      ),
-    [documents, isSubmitting]
-  );
-
-  const isBusy = isSubmitting || isLoadingDocuments;
-
-  const updateDocument = (slot: KycDocumentSlot, updater: (state: DocumentState) => DocumentState) => {
-    setDocuments((prev) => ({
-      ...prev,
-      [slot]: updater(prev[slot] ?? createInitialDocumentState()),
-    }));
-  };
-
-  const requestPermission = async (source: 'camera' | 'library') => {
-    const result =
-      source === 'camera'
-        ? await ImagePicker.requestCameraPermissionsAsync()
-        : await ImagePicker.requestMediaLibraryPermissionsAsync();
-
-    if (!result.granted) {
-      throw new Error(
-        source === 'camera'
-          ? 'Camera access is required to capture your identification.'
-          : 'Photo library access is required to select your identification.'
-      );
-    }
-  };
-
-  const normalizeAsset = (slot: KycDocumentSlot, asset: ImagePicker.ImagePickerAsset): KycDocumentAsset => {
-    const fileName = asset.fileName && asset.fileName.length > 0
-      ? asset.fileName
-      : `${slot}-${Date.now()}.${asset.uri?.split('.').pop() ?? 'jpg'}`;
-
-    const inferredType = asset.mimeType ?? (fileName.endsWith('.png') ? 'image/png' : 'image/jpeg');
-
-    return {
-      uri: asset.uri,
-      name: fileName,
-      type: inferredType,
-    };
-  };
-
-  const handleDocumentSelection = async (slot: KycDocumentSlot, source: 'camera' | 'library') => {
-    setErrorMessage(null);
-    setSuccessMessage(null);
-
-    try {
-      await requestPermission(source);
-
-      const result =
-        source === 'camera'
-          ? await ImagePicker.launchCameraAsync({
-              mediaTypes: ImagePicker.MediaTypeOptions.Images,
-              quality: 0.85,
-              allowsEditing: false,
-            })
-          : await ImagePicker.launchImageLibraryAsync({
-              mediaTypes: ImagePicker.MediaTypeOptions.Images,
-              quality: 0.85,
-              allowsEditing: false,
-            });
-
-      if (result.canceled || !result.assets?.length) {
-        return;
-      }
-
-      const asset = normalizeAsset(slot, result.assets[0]);
-
-      updateDocument(slot, () => ({
-        previewUri: asset.uri,
-        asset,
-        existingUrl: null,
-      }));
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to select image. Please try again.';
-      setErrorMessage(message);
-    }
-  };
-
-  const handleRemoveDocument = (slot: KycDocumentSlot) => {
-    setErrorMessage(null);
-    setSuccessMessage(null);
-    updateDocument(slot, () => createInitialDocumentState());
-  };
+  const canSubmit = useMemo(() => hasProvidedAssets && !isSubmitting, [hasProvidedAssets, isSubmitting]);
 
   const handleSubmit = async () => {
     if (!session?.accessToken) {
@@ -252,8 +219,8 @@ export default function KycDetailsScreen() {
       return;
     }
 
-    if (!canSubmit) {
-      setErrorMessage('Please select all required images before submitting.');
+    if (!hasProvidedAssets) {
+      setErrorMessage('Please add photos for all required documents before submitting.');
       return;
     }
 
@@ -292,6 +259,10 @@ export default function KycDetailsScreen() {
             existingUrl: result.selfieUrl ?? null,
           },
         });
+
+        if (result.fullName && result.fullName.length > 0) {
+          setFullName(result.fullName);
+        }
       } else {
         setDocuments({
           front: createInitialDocumentState(),
@@ -312,6 +283,28 @@ export default function KycDetailsScreen() {
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const handleRetakeDocuments = () => {
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    if (hasProvidedAssets) {
+      const payload = encodeKycDocumentsParam({
+        front: documents.front.asset!,
+        back: documents.back.asset!,
+        selfie: documents.selfie.asset!,
+      });
+
+      router.push({
+        pathname: '/(app)/kyc-documents',
+        params: { docs: payload },
+      });
+
+      return;
+    }
+
+    router.push('/(app)/kyc-documents');
   };
 
   return (
@@ -345,6 +338,99 @@ export default function KycDetailsScreen() {
               <Text style={styles.statusTitle}>{`Status: ${kycStatusLabel}`}</Text>
               <Text style={styles.statusSubtitle}>{kycStatusMessage}</Text>
             </View>
+          </View>
+
+          {errorMessage && (
+            <View style={styles.errorBanner}>
+              <Ionicons name="alert-circle" size={18} color="#b91c1c" />
+              <Text style={styles.errorText}>{errorMessage}</Text>
+            </View>
+          )}
+
+          {successMessage && (
+            <View style={styles.successBanner}>
+              <Ionicons name="checkmark-circle" size={18} color="#047857" />
+              <Text style={styles.successText}>{successMessage}</Text>
+            </View>
+          )}
+
+          {isLoadingDocuments && (
+            <View style={styles.loadingBanner}>
+              <ActivityIndicator color="#111111" size="small" />
+              <Text style={styles.loadingText}>Loading your existing documents…</Text>
+            </View>
+          )}
+
+          <View style={styles.sectionHeader}>
+            <View style={styles.sectionHeaderRow}>
+              <Text style={styles.sectionTitle}>Review your photos</Text>
+              <TouchableOpacity onPress={handleRetakeDocuments} style={styles.retakeButton}>
+                <Ionicons name="refresh" size={16} color="#111111" />
+                <Text style={styles.retakeButtonText}>Retake photos</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.sectionSubtitle}>
+              Double-check that each image is clear. If you need to make changes, retake your photos before
+              submitting.
+            </Text>
+          </View>
+
+          <View style={styles.documentsContainer}>
+            {documentSections.map((section) => {
+              const state = documents[section.slot];
+              const requiresRetake = Boolean(state.existingUrl && !state.asset);
+
+              return (
+                <View key={section.slot} style={styles.documentCard}>
+                  <View style={styles.documentHeader}>
+                    <View>
+                      <Text style={styles.documentTitle}>{section.title}</Text>
+                      <Text style={styles.documentHelper}>{section.helper}</Text>
+                    </View>
+                    {state.previewUri && (
+                      <TouchableOpacity
+                        accessibilityRole="button"
+                        onPress={() => {
+                          setDocuments((prev) => ({
+                            ...prev,
+                            [section.slot]: createInitialDocumentState(),
+                          }));
+                        }}
+                        style={styles.removeButton}
+                      >
+                        <Ionicons name="trash-outline" size={18} color="#d9534f" />
+                        <Text style={styles.removeButtonText}>Clear</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  <View style={styles.previewWrapper}>
+                    {state.previewUri ? (
+                      <Image source={{ uri: state.previewUri }} style={styles.previewImage} contentFit="cover" />
+                    ) : (
+                      <View style={styles.placeholder}>
+                        <Ionicons name="image-outline" size={32} color="#a1a1a1" />
+                        <Text style={styles.placeholderText}>No image provided yet</Text>
+                      </View>
+                    )}
+                  </View>
+
+                  {requiresRetake && (
+                    <View style={styles.noticeBanner}>
+                      <Ionicons name="refresh" size={16} color="#92400e" />
+                      <Text style={styles.noticeText}>Retake this photo on the previous screen before submitting.</Text>
+                    </View>
+                  )}
+
+                  {!state.asset && !state.existingUrl && (
+                    <View style={styles.noticeBannerMuted}>
+                      <Ionicons name="information-circle-outline" size={16} color="#6b7280" />
+                      <Text style={styles.noticeMutedText}>Add this document on the previous screen.</Text>
+                    </View>
+                  )}
+                </View>
+              );
+            })}
           </View>
 
           <View style={styles.fieldGroup}>
@@ -383,105 +469,26 @@ export default function KycDetailsScreen() {
             />
             <Text style={styles.helper}>Enter the date of issuance of your ID</Text>
           </View>
-          {isLoadingDocuments && (
-            <View style={styles.loadingBanner}>
-              <ActivityIndicator color="#111111" size="small" />
-              <Text style={styles.loadingText}>Loading existing documents…</Text>
-            </View>
-          )}
 
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Upload your documents</Text>
-            <Text style={styles.sectionSubtitle}>
-              Capture or select clear photos of your identification. All three images are required.
-            </Text>
-          </View>
-
-          <View style={styles.documentsContainer}>
-            {documentSections.map((section) => {
-              const state = documents[section.slot];
-
-              return (
-                <View key={section.slot} style={styles.documentCard}>
-                  <View style={styles.documentHeader}>
-                    <View>
-                      <Text style={styles.documentTitle}>{section.title}</Text>
-                      <Text style={styles.documentHelper}>{section.helper}</Text>
-                    </View>
-                    {state.previewUri && (
-                      <TouchableOpacity
-                        accessibilityRole="button"
-                        onPress={() => handleRemoveDocument(section.slot)}
-                        style={styles.removeButton}
-                      >
-                        <Ionicons name="trash-outline" size={18} color="#d9534f" />
-                        <Text style={styles.removeButtonText}>Remove</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-
-                  <View style={styles.previewWrapper}>
-                    {state.previewUri ? (
-                      <Image source={{ uri: state.previewUri }} style={styles.previewImage} contentFit="cover" />
-                    ) : (
-                      <View style={styles.placeholder}>
-                        <Ionicons name="image-outline" size={32} color="#a1a1a1" />
-                        <Text style={styles.placeholderText}>No image selected</Text>
-                      </View>
-                    )}
-                  </View>
-
-                  <View style={styles.documentActions}>
-                    <TouchableOpacity
-                      style={[styles.documentActionButton, isBusy && styles.documentActionButtonDisabled]}
-                      onPress={() => handleDocumentSelection(section.slot, 'camera')}
-                      disabled={isBusy}
-                    >
-                      <Ionicons name="camera-outline" size={18} color="#111111" />
-                      <Text style={styles.documentActionText}>Use camera</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.documentActionButton, isBusy && styles.documentActionButtonDisabled]}
-                      onPress={() => handleDocumentSelection(section.slot, 'library')}
-                      disabled={isBusy}
-                    >
-                      <Ionicons name="images-outline" size={18} color="#111111" />
-                      <Text style={styles.documentActionText}>Choose photo</Text>
-                    </TouchableOpacity>
-                  </View>
-
-                  {state.existingUrl && !state.asset && (
-                    <Text style={styles.existingNotice}>Previously uploaded document on file.</Text>
-                  )}
-                </View>
-              );
-            })}
-          </View>
-
-          {errorMessage && <Text style={styles.errorText}>{errorMessage}</Text>}
-          {successMessage && <Text style={styles.successText}>{successMessage}</Text>}
-        </ScrollView>
-
-        <View style={styles.footer}>
-          <TouchableOpacity
-            style={[styles.actionButton, styles.secondaryButton]}
-            onPress={() => router.back()}
-            disabled={isBusy}
-          >
-            <Text style={[styles.buttonText, styles.secondaryText]}>Back</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.actionButton, styles.primaryButton, !canSubmit && styles.primaryButtonDisabled]}
-            onPress={handleSubmit}
-            disabled={!canSubmit}
-          >
-            {isSubmitting ? (
-              <ActivityIndicator color="#ffffff" />
-            ) : (
-              <Text style={[styles.buttonText, styles.primaryText]}>Submit Documents</Text>
+          <View style={styles.submitSection}>
+            <TouchableOpacity
+              style={[styles.submitButton, (!canSubmit || isSubmitting) && styles.submitButtonDisabled]}
+              onPress={handleSubmit}
+              disabled={!canSubmit || isSubmitting}
+            >
+              {isSubmitting ? (
+                <ActivityIndicator color="#ffffff" size="small" />
+              ) : (
+                <Text style={styles.submitButtonText}>Submit documents</Text>
+              )}
+            </TouchableOpacity>
+            {!hasProvidedAssets && (
+              <Text style={styles.submitHelper}>
+                Capture all required photos before completing your verification.
+              </Text>
             )}
-          </TouchableOpacity>
-        </View>
+          </View>
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -502,7 +509,7 @@ const styles = StyleSheet.create({
     gap: 24,
   },
   header: {
-    gap: 8,
+    gap: 12,
   },
   title: {
     fontSize: 24,
@@ -512,13 +519,14 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 14,
     color: '#6f6f6f',
+    lineHeight: 20,
   },
   statusBanner: {
     flexDirection: 'row',
     gap: 12,
     padding: 16,
     borderRadius: 16,
-    backgroundColor: '#fff6e5',
+    backgroundColor: '#fff7ed',
     alignItems: 'flex-start',
   },
   statusBannerPending: {
@@ -556,43 +564,31 @@ const styles = StyleSheet.create({
     color: '#4b5563',
     lineHeight: 18,
   },
-  fieldGroup: {
-    gap: 10,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#1a1a1a',
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 16,
-    color: '#111111',
-    backgroundColor: '#ffffff',
-  },
-  helper: {
-    fontSize: 12,
-    color: '#7a7a7a',
-  },
-  sectionHeader: {
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 8,
-    marginTop: 12,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: '#fee2e2',
   },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#111111',
-  },
-  sectionSubtitle: {
+  errorText: {
     fontSize: 13,
-    color: '#6f6f6f',
+    color: '#b91c1c',
+    flex: 1,
   },
-  documentsContainer: {
-    gap: 16,
+  successBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: '#ecfdf5',
+  },
+  successText: {
+    fontSize: 13,
+    color: '#047857',
+    flex: 1,
   },
   loadingBanner: {
     flexDirection: 'row',
@@ -603,6 +599,43 @@ const styles = StyleSheet.create({
   loadingText: {
     fontSize: 13,
     color: '#6f6f6f',
+  },
+  sectionHeader: {
+    gap: 8,
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 12,
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#111111',
+  },
+  sectionSubtitle: {
+    fontSize: 13,
+    color: '#6f6f6f',
+  },
+  retakeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    backgroundColor: '#ffffff',
+  },
+  retakeButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#111111',
+  },
+  documentsContainer: {
+    gap: 16,
   },
   documentCard: {
     borderWidth: 1,
@@ -639,98 +672,99 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   previewWrapper: {
-    height: 180,
-    borderRadius: 12,
+    width: '100%',
+    borderRadius: 14,
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: '#f0f0f0',
     backgroundColor: '#fafafa',
+    minHeight: 180,
     alignItems: 'center',
     justifyContent: 'center',
   },
   previewImage: {
     width: '100%',
-    height: '100%',
+    height: 220,
   },
   placeholder: {
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
+    paddingVertical: 32,
   },
   placeholderText: {
     fontSize: 13,
-    color: '#a1a1a1',
+    color: '#9ca3af',
   },
-  documentActions: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  documentActionButton: {
-    flex: 1,
+  noticeBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 12,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    backgroundColor: '#f8f8f8',
+    gap: 6,
+    padding: 10,
+    borderRadius: 12,
+    backgroundColor: '#fef3c7',
   },
-  documentActionButtonDisabled: {
-    opacity: 0.5,
+  noticeText: {
+    fontSize: 12,
+    color: '#92400e',
+    flex: 1,
   },
-  documentActionText: {
+  noticeBannerMuted: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    padding: 10,
+    borderRadius: 12,
+    backgroundColor: '#f3f4f6',
+  },
+  noticeMutedText: {
+    fontSize: 12,
+    color: '#6b7280',
+    flex: 1,
+  },
+  fieldGroup: {
+    gap: 10,
+  },
+  label: {
     fontSize: 14,
     fontWeight: '600',
+    color: '#1a1a1a',
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 16,
     color: '#111111',
+    backgroundColor: '#ffffff',
   },
-  existingNotice: {
+  helper: {
     fontSize: 12,
-    color: '#5a5a5a',
+    color: '#7a7a7a',
   },
-  errorText: {
-    fontSize: 13,
-    color: '#d9534f',
-    fontWeight: '600',
+  submitSection: {
+    gap: 10,
   },
-  successText: {
-    fontSize: 13,
-    color: '#2e7d32',
-    fontWeight: '600',
-  },
-  footer: {
-    flexDirection: 'row',
-    gap: 16,
-    paddingHorizontal: 20,
-    paddingBottom: 24,
-  },
-  actionButton: {
-    flex: 1,
+  submitButton: {
     borderRadius: 12,
     minHeight: 56,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  secondaryButton: {
-    borderWidth: 1,
-    borderColor: '#111111',
-    backgroundColor: '#ffffff',
-  },
-  primaryButton: {
     backgroundColor: '#111111',
   },
-  primaryButtonDisabled: {
-    opacity: 0.4,
+  submitButtonDisabled: {
+    opacity: 0.6,
   },
-  buttonText: {
+  submitButtonText: {
     fontSize: 16,
     fontWeight: '600',
-  },
-  secondaryText: {
-    color: '#111111',
-  },
-  primaryText: {
     color: '#ffffff',
+  },
+  submitHelper: {
+    fontSize: 12,
+    color: '#6b7280',
+    textAlign: 'center',
   },
 });
