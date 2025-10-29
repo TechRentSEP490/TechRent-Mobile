@@ -346,6 +346,10 @@ export default function OrdersScreen() {
   const [isContractLoading, setContractLoading] = useState(false);
   const [contractErrorMessage, setContractErrorMessage] = useState<string | null>(null);
   const [contractRequestId, setContractRequestId] = useState(0);
+  const lastContractLoadRef = useRef<{ orderId: number | null; requestId: number }>({
+    orderId: null,
+    requestId: 0,
+  });
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -473,6 +477,7 @@ export default function OrdersScreen() {
   }, [orders, selectedFilter]);
 
   const openFlow = useCallback((order: OrderCard) => {
+    lastContractLoadRef.current = { orderId: null, requestId: 0 };
     setActiveOrder(order);
     setActiveContract(null);
     setContractErrorMessage(null);
@@ -486,6 +491,7 @@ export default function OrdersScreen() {
   }, []);
 
   const resetFlow = useCallback(() => {
+    lastContractLoadRef.current = { orderId: null, requestId: 0 };
     setModalVisible(false);
     setCurrentStep(1);
     setOtpDigits(Array(6).fill(''));
@@ -520,13 +526,39 @@ export default function OrdersScreen() {
       return;
     }
 
+    const targetOrderId = Number.parseInt(activeOrder.id, 10);
+
+    if (Number.isNaN(targetOrderId)) {
+      setContractErrorMessage('Invalid rental order selected.');
+      return;
+    }
+
+    const lastLoad = lastContractLoadRef.current;
+    const hasRequestChanged =
+      contractRequestId !== lastLoad.requestId || targetOrderId !== lastLoad.orderId;
+    const alreadyLoadedForOrder = Boolean(
+      activeContract &&
+        typeof activeContract.orderId === 'number' &&
+        activeContract.orderId === targetOrderId,
+    );
+
+    if (!hasRequestChanged && alreadyLoadedForOrder) {
+      return;
+    }
+
     let isMounted = true;
 
-    const loadContract = async () => {
-      setContractLoading(true);
+    setContractLoading(true);
+    if (hasRequestChanged || !alreadyLoadedForOrder) {
       setContractErrorMessage(null);
-      setActiveContract(null);
+      if (!alreadyLoadedForOrder || targetOrderId !== lastLoad.orderId) {
+        setActiveContract(null);
+      }
+    }
 
+    lastContractLoadRef.current = { orderId: targetOrderId, requestId: contractRequestId };
+
+    const loadContract = async () => {
       try {
         const activeSession = session?.accessToken ? session : await ensureSession();
 
@@ -544,7 +576,6 @@ export default function OrdersScreen() {
           return;
         }
 
-        const targetOrderId = Number.parseInt(activeOrder.id, 10);
         const matchingContract = contracts.find(
           (contract) => typeof contract?.orderId === 'number' && contract.orderId === targetOrderId,
         );
@@ -588,7 +619,14 @@ export default function OrdersScreen() {
     return () => {
       isMounted = false;
     };
-  }, [activeOrder, contractRequestId, ensureSession, isModalVisible, session]);
+  }, [
+    activeContract,
+    activeOrder,
+    contractRequestId,
+    ensureSession,
+    isModalVisible,
+    session,
+  ]);
 
   useEffect(() => {
     const flowParam = Array.isArray(flow) ? flow[0] : flow;
