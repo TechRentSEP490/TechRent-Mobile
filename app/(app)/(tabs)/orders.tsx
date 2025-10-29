@@ -7,6 +7,7 @@ import React, {
   useState,
 } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   FlatList,
   Modal,
@@ -21,6 +22,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+
+import { useAuth } from '@/contexts/AuthContext';
+import { fetchRentalOrders, type RentalOrderResponse } from '@/services/rental-orders';
 
 type OrderStatusFilter = 'All' | 'Pending' | 'Delivered' | 'In Use' | 'Completed';
 type OrderStatus = Exclude<OrderStatusFilter, 'All'>;
@@ -47,70 +51,183 @@ type OrderCard = {
   };
 };
 
+type ApiErrorWithStatus = Error & { status?: number };
+
 const ORDER_FILTERS: OrderStatusFilter[] = ['All', 'Pending', 'Delivered', 'In Use', 'Completed'];
 
-const ORDERS: OrderCard[] = [
-  {
-    id: 'ORD-20001',
-    productName: 'Samsung Galaxy S23',
-    orderNumber: 'Order #ORD-20001',
-    rentalPeriod: 'Jan 14 - Jan 21, 2025',
-    totalAmount: '$560.00',
-    statusFilter: 'Pending',
-    statusLabel: 'Awaiting Docs',
-    statusColor: '#b45309',
-    statusBackground: '#fef3c7',
+type StatusMeta = {
+  filter: OrderStatus;
+  label: string;
+  color: string;
+  background: string;
+  action?: { label: string; type: OrderActionType };
+};
+
+const STATUS_TEMPLATES: Record<OrderStatus, { defaultLabel: string; color: string; background: string; action?: { label: string; type: OrderActionType } }> = {
+  Pending: {
+    defaultLabel: 'Pending',
+    color: '#b45309',
+    background: '#fef3c7',
     action: { label: 'Continue Process', type: 'continueProcess' },
   },
-  {
-    id: 'ORD-12345',
-    productName: 'SmartPhone X',
-    orderNumber: 'Order #12345',
-    rentalPeriod: 'Jan 15 - Jan 22, 2025',
-    totalAmount: '$799.00',
-    statusFilter: 'In Use',
-    statusLabel: 'In Use',
-    statusColor: '#1d4ed8',
-    statusBackground: '#dbeafe',
-    action: { label: 'Extend Rental', type: 'extendRental' },
-  },
-  {
-    id: 'ORD-12344',
-    productName: 'MacBook Pro 16"',
-    orderNumber: 'Order #12344',
-    rentalPeriod: 'Jan 10 - Jan 17, 2025',
-    totalAmount: '$420.00',
-    statusFilter: 'Delivered',
-    statusLabel: 'Delivery',
-    statusColor: '#15803d',
-    statusBackground: '#dcfce7',
+  Delivered: {
+    defaultLabel: 'Delivered',
+    color: '#15803d',
+    background: '#dcfce7',
     action: { label: 'Confirm Receipt', type: 'confirmReceipt' },
   },
-  {
-    id: 'ORD-12343',
-    productName: 'DJI Mavic Air 2 Drone',
-    orderNumber: 'Order #12343',
-    rentalPeriod: 'Jan 20 - Jan 25, 2025',
-    totalAmount: '$180.00',
-    statusFilter: 'Pending',
-    statusLabel: 'In Review',
-    statusColor: '#6d28d9',
-    statusBackground: '#ede9fe',
-    action: { label: 'Cancel Order', type: 'cancelOrder' },
+  'In Use': {
+    defaultLabel: 'In Use',
+    color: '#1d4ed8',
+    background: '#dbeafe',
+    action: { label: 'Extend Rental', type: 'extendRental' },
   },
-  {
-    id: 'ORD-12211',
-    productName: 'Lenovo ThinkPad X1',
-    orderNumber: 'Order #12211',
-    rentalPeriod: 'Dec 01 - Dec 20, 2024',
-    totalAmount: '$650.00',
-    statusFilter: 'Completed',
-    statusLabel: 'Completed',
-    statusColor: '#111111',
-    statusBackground: '#f3f4f6',
+  Completed: {
+    defaultLabel: 'Completed',
+    color: '#111111',
+    background: '#f3f4f6',
     action: { label: 'Rent Again', type: 'rentAgain' },
   },
-];
+};
+
+const toTitleCase = (value: string) =>
+  value
+    .toLowerCase()
+    .split(/[_\s]+/)
+    .filter(Boolean)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(' ');
+
+const mapStatusToMeta = (status: string | null | undefined): StatusMeta => {
+  const normalized = (status ?? '').toUpperCase();
+  let filter: OrderStatus = 'Pending';
+  let includeAction = true;
+
+  switch (normalized) {
+    case 'PENDING':
+    case 'PROCESSING':
+    case 'AWAITING_PAYMENT':
+    case 'AWAITING_APPROVAL':
+    case 'AWAITING_DOCUMENTS':
+      filter = 'Pending';
+      break;
+    case 'DELIVERED':
+    case 'DELIVERING':
+    case 'SHIPPED':
+    case 'OUT_FOR_DELIVERY':
+      filter = 'Delivered';
+      break;
+    case 'IN_USE':
+    case 'ACTIVE':
+    case 'IN_PROGRESS':
+      filter = 'In Use';
+      break;
+    case 'COMPLETED':
+    case 'RETURNED':
+    case 'CLOSED':
+    case 'FINISHED':
+      filter = 'Completed';
+      break;
+    case 'CANCELLED':
+    case 'CANCELED':
+      filter = 'Completed';
+      includeAction = false;
+      break;
+    default:
+      includeAction = false;
+      break;
+  }
+
+  const template = STATUS_TEMPLATES[filter];
+  const label = normalized.length > 0 ? toTitleCase(normalized) : template.defaultLabel;
+
+  return {
+    filter,
+    label,
+    color: template.color,
+    background: template.background,
+    action: includeAction ? template.action : undefined,
+  };
+};
+
+const formatCurrency = (value: number): string => {
+  try {
+    return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(value);
+  } catch {
+    return `${Number.isFinite(value) ? Math.round(value).toLocaleString('vi-VN') : '0'} ₫`;
+  }
+};
+
+const formatRentalPeriod = (startDateIso: string, endDateIso: string): string => {
+  const startDate = startDateIso ? new Date(startDateIso) : null;
+  const endDate = endDateIso ? new Date(endDateIso) : null;
+
+  if (!startDate || Number.isNaN(startDate.getTime())) {
+    return '—';
+  }
+
+  const hasValidEnd = Boolean(endDate && !Number.isNaN(endDate.getTime()));
+
+  try {
+    const sameYear = hasValidEnd && endDate ? startDate.getFullYear() === endDate.getFullYear() : false;
+    const startFormatter = new Intl.DateTimeFormat('vi-VN', {
+      day: '2-digit',
+      month: 'short',
+      ...(sameYear ? {} : { year: 'numeric' }),
+    });
+    const startLabel = startFormatter.format(startDate);
+
+    if (hasValidEnd && endDate) {
+      const endFormatter = new Intl.DateTimeFormat('vi-VN', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+      });
+      const endLabel = endFormatter.format(endDate);
+      return `${startLabel} - ${endLabel}`;
+    }
+
+    return `Starting ${startLabel}`;
+  } catch {
+    const startLabel = startDate.toISOString().slice(0, 10);
+    if (hasValidEnd && endDate) {
+      const endLabel = endDate.toISOString().slice(0, 10);
+      return `${startLabel} - ${endLabel}`;
+    }
+    return `Starting ${startLabel}`;
+  }
+};
+
+const deriveProductName = (order: RentalOrderResponse): string => {
+  if (order.orderDetails && order.orderDetails.length > 0) {
+    if (order.orderDetails.length === 1) {
+      const detail = order.orderDetails[0];
+      if (detail?.deviceModelId) {
+        return `Device Model ${detail.deviceModelId}`;
+      }
+    }
+    return `${order.orderDetails.length} devices`;
+  }
+
+  return `Rental Order ${order.orderId}`;
+};
+
+const mapOrderResponseToCard = (order: RentalOrderResponse): OrderCard => {
+  const statusMeta = mapStatusToMeta(order.orderStatus);
+
+  return {
+    id: String(order.orderId),
+    productName: deriveProductName(order),
+    orderNumber: `Order #${order.orderId}`,
+    rentalPeriod: formatRentalPeriod(order.startDate, order.endDate),
+    totalAmount: formatCurrency(order.totalPrice),
+    statusFilter: statusMeta.filter,
+    statusLabel: statusMeta.label,
+    statusColor: statusMeta.color,
+    statusBackground: statusMeta.background,
+    action: statusMeta.action,
+  };
+};
 
 const PAYMENT_OPTIONS = [
   {
@@ -129,11 +246,13 @@ const PAYMENT_OPTIONS = [
 
 export default function OrdersScreen() {
   const router = useRouter();
+  const { session, ensureSession } = useAuth();
   const { flow, orderId } = useLocalSearchParams<{
     flow?: string | string[];
     orderId?: string | string[];
   }>();
   const listRef = useRef<FlatList<OrderCard>>(null);
+  const [orders, setOrders] = useState<OrderCard[]>([]);
   const [selectedFilter, setSelectedFilter] = useState<OrderStatusFilter>('All');
   const [highlightedOrderId, setHighlightedOrderId] = useState<string | null>(null);
   const [pendingScrollOrderId, setPendingScrollOrderId] = useState<string | null>(null);
@@ -144,6 +263,9 @@ export default function OrdersScreen() {
   const otpRefs = useRef<(TextInput | null)[]>([]);
   const [selectedPayment, setSelectedPayment] = useState(PAYMENT_OPTIONS[0].id);
   const [hasAgreed, setHasAgreed] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const progressWidth = useMemo(() => `${(currentStep / 3) * 100}%`, [currentStep]);
   const isAgreementComplete = hasAgreed;
@@ -152,13 +274,88 @@ export default function OrdersScreen() {
     [otpDigits],
   );
 
+  const loadOrders = useCallback(
+    async (mode: 'initial' | 'refresh' = 'initial') => {
+      if (mode === 'refresh') {
+        setIsRefreshing(true);
+      } else {
+        setIsLoading(true);
+      }
+
+      try {
+        const activeSession = session?.accessToken ? session : await ensureSession();
+
+        if (!activeSession?.accessToken) {
+          setOrders([]);
+          setErrorMessage('You must be signed in to view your rental orders.');
+          return;
+        }
+
+        const response = await fetchRentalOrders(activeSession);
+        const sorted = [...response].sort((a, b) => {
+          const aTime = new Date(a.createdAt ?? a.startDate).getTime();
+          const bTime = new Date(b.createdAt ?? b.startDate).getTime();
+
+          if (Number.isNaN(aTime) && Number.isNaN(bTime)) {
+            return 0;
+          }
+          if (Number.isNaN(aTime)) {
+            return 1;
+          }
+          if (Number.isNaN(bTime)) {
+            return -1;
+          }
+
+          return bTime - aTime;
+        });
+
+        setOrders(sorted.map(mapOrderResponseToCard));
+        setErrorMessage(null);
+      } catch (error) {
+        const fallbackMessage = 'Failed to load rental orders. Please try again.';
+        const normalizedError = error instanceof Error ? error : new Error(fallbackMessage);
+        const status = (normalizedError as ApiErrorWithStatus).status;
+
+        if (status === 401) {
+          setOrders([]);
+          setErrorMessage('Your session has expired. Please sign in again to view your rental orders.');
+        } else {
+          const message =
+            normalizedError.message && normalizedError.message.trim().length > 0
+              ? normalizedError.message
+              : fallbackMessage;
+          setErrorMessage(message);
+        }
+      } finally {
+        if (mode === 'refresh') {
+          setIsRefreshing(false);
+        } else {
+          setIsLoading(false);
+        }
+      }
+    },
+    [ensureSession, session]
+  );
+
+  useEffect(() => {
+    loadOrders();
+  }, [loadOrders]);
+
+  const handleRefresh = useCallback(() => {
+    loadOrders('refresh');
+  }, [loadOrders]);
+
+  const handleRetry = useCallback(() => {
+    loadOrders('initial');
+  }, [loadOrders]);
+
   const filteredOrders = useMemo(() => {
     if (selectedFilter === 'All') {
-      return ORDERS;
+      return orders;
     }
 
-    return ORDERS.filter((order) => order.statusFilter === selectedFilter);
-  }, [selectedFilter]);
+    return orders.filter((order) => order.statusFilter === selectedFilter);
+  }, [orders, selectedFilter]);
 
   const openFlow = useCallback((order: OrderCard) => {
     setActiveOrder(order);
@@ -200,8 +397,8 @@ export default function OrdersScreen() {
 
     const orderIdParam = Array.isArray(orderId) ? orderId[0] : orderId;
     const targetOrder =
-      ORDERS.find((order) => order.id === orderIdParam) ||
-      ORDERS.find((order) => order.action?.type === 'continueProcess');
+      orders.find((order) => order.id === orderIdParam) ||
+      orders.find((order) => order.action?.type === 'continueProcess');
 
     if (targetOrder) {
       setSelectedFilter(targetOrder.statusFilter);
@@ -209,8 +406,10 @@ export default function OrdersScreen() {
       setPendingScrollOrderId(targetOrder.id);
     }
 
-    router.replace('/(app)/(tabs)/orders');
-  }, [flow, orderId, router]);
+    if (orders.length > 0) {
+      router.replace('/(app)/(tabs)/orders');
+    }
+  }, [flow, orderId, orders, router]);
 
   useEffect(() => {
     if (!pendingScrollOrderId) {
@@ -489,13 +688,15 @@ export default function OrdersScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={["top"]}>
+    <SafeAreaView style={styles.safeArea} edges={['top']}>
       <FlatList
         ref={listRef}
         data={filteredOrders}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
+        refreshing={isRefreshing}
+        onRefresh={handleRefresh}
         renderItem={({ item }) => {
           const isHighlighted = highlightedOrderId === item.id;
           return (
@@ -588,17 +789,47 @@ export default function OrdersScreen() {
                 );
               })}
             </View>
+            {errorMessage && orders.length > 0 ? (
+              <View style={styles.inlineErrorBanner}>
+                <Ionicons name="warning-outline" size={16} color="#b45309" />
+                <Text style={styles.inlineErrorText}>{errorMessage}</Text>
+                <Pressable onPress={handleRetry}>
+                  <Text style={styles.inlineErrorAction}>Try again</Text>
+                </Pressable>
+              </View>
+            ) : null}
           </View>
         )}
-        ListEmptyComponent={
+        ListEmptyComponent={() => (
           <View style={styles.emptyState}>
-            <Ionicons name="cube-outline" size={48} color="#9ca3af" />
-            <Text style={styles.emptyTitle}>No orders found</Text>
-            <Text style={styles.emptySubtitle}>
-              Orders matching the selected status will appear here.
-            </Text>
+            {isLoading ? (
+              <>
+                <ActivityIndicator size="large" color="#111111" />
+                <Text style={styles.emptyTitle}>Loading orders…</Text>
+                <Text style={styles.emptySubtitle}>
+                  Hang tight while we fetch your latest rentals.
+                </Text>
+              </>
+            ) : (
+              <>
+                <Ionicons name="cube-outline" size={48} color="#9ca3af" />
+                <Text style={styles.emptyTitle}>
+                  {errorMessage ? 'Unable to load orders' : 'No orders found'}
+                </Text>
+                <Text style={styles.emptySubtitle}>
+                  {errorMessage
+                    ? errorMessage
+                    : 'Orders matching the selected status will appear here.'}
+                </Text>
+                {errorMessage ? (
+                  <Pressable style={styles.retryButton} onPress={handleRetry}>
+                    <Text style={styles.retryButtonText}>Try Again</Text>
+                  </Pressable>
+                ) : null}
+              </>
+            )}
           </View>
-        }
+        )}
         ItemSeparatorComponent={() => <View style={styles.separator} />}
       />
 
@@ -671,6 +902,25 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 12,
+  },
+  inlineErrorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: '#fef3c7',
+  },
+  inlineErrorText: {
+    flex: 1,
+    color: '#92400e',
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  inlineErrorAction: {
+    color: '#b45309',
+    fontSize: 13,
+    fontWeight: '600',
   },
   filterChip: {
     paddingHorizontal: 16,
@@ -793,6 +1043,18 @@ const styles = StyleSheet.create({
   },
   separator: {
     height: 16,
+  },
+  retryButton: {
+    marginTop: 16,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: '#111111',
+  },
+  retryButtonText: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: '600',
   },
   emptyState: {
     alignItems: 'center',
