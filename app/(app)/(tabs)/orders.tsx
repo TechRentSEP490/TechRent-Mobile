@@ -24,6 +24,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 
 import { useAuth } from '@/contexts/AuthContext';
+import { fetchDeviceModelById } from '@/services/device-models';
 import { fetchRentalOrders, type RentalOrderResponse } from '@/services/rental-orders';
 
 type OrderStatusFilter = 'All' | 'Pending' | 'Delivered' | 'In Use' | 'Completed';
@@ -37,8 +38,8 @@ type OrderActionType =
 
 type OrderCard = {
   id: string;
-  productName: string;
-  orderNumber: string;
+  title: string;
+  deviceSummary: string;
   rentalPeriod: string;
   totalAmount: string;
   statusFilter: OrderStatus;
@@ -198,27 +199,49 @@ const formatRentalPeriod = (startDateIso: string, endDateIso: string): string =>
   }
 };
 
-const deriveProductName = (order: RentalOrderResponse): string => {
-  if (order.orderDetails && order.orderDetails.length > 0) {
-    if (order.orderDetails.length === 1) {
-      const detail = order.orderDetails[0];
-      if (detail?.deviceModelId) {
-        return `Device Model ${detail.deviceModelId}`;
+const deriveDeviceSummary = (order: RentalOrderResponse, deviceNames: Map<string, string>): string => {
+  if (!order.orderDetails || order.orderDetails.length === 0) {
+    return 'No devices listed';
+  }
+
+  const names = order.orderDetails
+    .map((detail) => {
+      const id = detail?.deviceModelId;
+      if (!id) {
+        return null;
       }
-    }
+
+      const name = deviceNames.get(String(id));
+      if (name && name.trim().length > 0) {
+        return name;
+      }
+
+      return `Device Model ${id}`;
+    })
+    .filter((value): value is string => Boolean(value && value.trim().length > 0));
+
+  if (names.length === 0) {
     return `${order.orderDetails.length} devices`;
   }
 
-  return `Rental Order ${order.orderId}`;
+  if (names.length === 1) {
+    return names[0];
+  }
+
+  const [firstName, ...rest] = names;
+  return `${firstName} + ${rest.length} more`;
 };
 
-const mapOrderResponseToCard = (order: RentalOrderResponse): OrderCard => {
+const mapOrderResponseToCard = (
+  order: RentalOrderResponse,
+  deviceNames: Map<string, string>,
+): OrderCard => {
   const statusMeta = mapStatusToMeta(order.orderStatus);
 
   return {
     id: String(order.orderId),
-    productName: deriveProductName(order),
-    orderNumber: `Order #${order.orderId}`,
+    title: `Order #${order.orderId}`,
+    deviceSummary: deriveDeviceSummary(order, deviceNames),
     rentalPeriod: formatRentalPeriod(order.startDate, order.endDate),
     totalAmount: formatCurrency(order.totalPrice),
     statusFilter: statusMeta.filter,
@@ -292,6 +315,35 @@ export default function OrdersScreen() {
         }
 
         const response = await fetchRentalOrders(activeSession);
+        const deviceNameMap = new Map<string, string>();
+        const uniqueDeviceModelIds = new Set<string>();
+
+        response.forEach((order) => {
+          order.orderDetails?.forEach((detail) => {
+            if (detail?.deviceModelId) {
+              uniqueDeviceModelIds.add(String(detail.deviceModelId));
+            }
+          });
+        });
+
+        if (uniqueDeviceModelIds.size > 0) {
+          await Promise.all(
+            Array.from(uniqueDeviceModelIds).map(async (id) => {
+              try {
+                const device = await fetchDeviceModelById(id);
+                if (device) {
+                  const label = device.name?.trim().length ? device.name : device.model;
+                  if (label && label.trim().length > 0) {
+                    deviceNameMap.set(id, label.trim());
+                  }
+                }
+              } catch (deviceError) {
+                console.warn(`Failed to load device model ${id} for rental orders`, deviceError);
+              }
+            }),
+          );
+        }
+
         const sorted = [...response].sort((a, b) => {
           const aTime = new Date(a.createdAt ?? a.startDate).getTime();
           const bTime = new Date(b.createdAt ?? b.startDate).getTime();
@@ -309,7 +361,7 @@ export default function OrdersScreen() {
           return bTime - aTime;
         });
 
-        setOrders(sorted.map(mapOrderResponseToCard));
+        setOrders(sorted.map((order) => mapOrderResponseToCard(order, deviceNameMap)));
         setErrorMessage(null);
       } catch (error) {
         const fallbackMessage = 'Failed to load rental orders. Please try again.';
@@ -487,7 +539,7 @@ export default function OrdersScreen() {
   );
 
   const handleViewDetails = useCallback((order: OrderCard) => {
-    Alert.alert('View Details', `Detailed tracking for ${order.productName} is coming soon.`);
+    Alert.alert('View Details', `Detailed tracking for ${order.title} is coming soon.`);
   }, []);
 
   const renderStepContent = () => {
@@ -496,8 +548,8 @@ export default function OrdersScreen() {
         return (
           <View style={styles.stepContent}>
             <View style={styles.modalOrderHeader}>
-              <Text style={styles.modalOrderName}>{activeOrder?.productName ?? 'Rental Order'}</Text>
-              <Text style={styles.modalOrderMeta}>{activeOrder?.orderNumber}</Text>
+              <Text style={styles.modalOrderName}>{activeOrder?.title ?? 'Rental Order'}</Text>
+              <Text style={styles.modalOrderMeta}>{activeOrder?.deviceSummary}</Text>
             </View>
             <Text style={styles.stepTitle}>Rental Agreement Contract</Text>
             <Text style={styles.stepSubtitle}>
@@ -623,7 +675,7 @@ export default function OrdersScreen() {
             <View style={styles.summaryCard}>
               <View style={styles.summaryRow}>
                 <Text style={styles.summaryLabel}>Order</Text>
-                <Text style={styles.summaryValue}>{activeOrder?.productName}</Text>
+                <Text style={styles.summaryValue}>{activeOrder?.deviceSummary}</Text>
               </View>
               <View style={styles.summaryRow}>
                 <Text style={styles.summaryLabel}>Rental Period</Text>
@@ -666,7 +718,7 @@ export default function OrdersScreen() {
               onPress={() =>
                 Alert.alert(
                   'Rental Process Complete',
-                  `${activeOrder?.productName ?? 'Your order'} is confirmed!`,
+                  `${activeOrder?.title ?? 'Your order'} is confirmed!`,
                   [
                     {
                       text: 'Done',
@@ -713,7 +765,7 @@ export default function OrdersScreen() {
               </View>
               <View style={styles.cardBody}>
                 <View style={styles.cardHeader}>
-                  <Text style={styles.productName}>{item.productName}</Text>
+                  <Text style={styles.productName}>{item.title}</Text>
                   <View
                     style={[
                       styles.statusBadge,
@@ -727,7 +779,7 @@ export default function OrdersScreen() {
                     </Text>
                   </View>
                 </View>
-                <Text style={styles.orderNumber}>{item.orderNumber}</Text>
+                <Text style={styles.orderNumber}>{item.deviceSummary}</Text>
                 <View style={styles.metaRow}>
                   <View style={styles.metaGroup}>
                     <Text style={styles.metaLabel}>Rental Period</Text>
