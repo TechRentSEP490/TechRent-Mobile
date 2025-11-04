@@ -1131,6 +1131,11 @@ export default function OrdersScreen() {
     [handleDownloadContract, openFlow],
   );
 
+  const lastOrderDetailsLoadRef = useRef<{ orderId: number | null; requestId: number }>({
+    orderId: null,
+    requestId: 0,
+  });
+
   const handleViewDetails = useCallback(
     (order: OrderCard) => {
       const parsedId = Number.parseInt(order.id, 10);
@@ -1140,10 +1145,10 @@ export default function OrdersScreen() {
         return;
       }
 
+      lastOrderDetailsLoadRef.current = { orderId: null, requestId: 0 };
       setOrderDetailsTargetId(parsedId);
       setOrderDetailsData(null);
       setOrderDetailsError(null);
-      setOrderDetailsLoading(true);
       setOrderDetailsModalVisible(true);
       setOrderDetailsRequestId((previous) => previous + 1);
     },
@@ -1151,6 +1156,7 @@ export default function OrdersScreen() {
   );
 
   const handleCloseOrderDetails = useCallback(() => {
+    lastOrderDetailsLoadRef.current = { orderId: null, requestId: 0 };
     setOrderDetailsModalVisible(false);
     setOrderDetailsData(null);
     setOrderDetailsError(null);
@@ -1170,11 +1176,23 @@ export default function OrdersScreen() {
       return;
     }
 
+    const lastLoad = lastOrderDetailsLoadRef.current;
+    const hasRequestChanged =
+      orderDetailsRequestId !== lastLoad.requestId || orderDetailsTargetId !== lastLoad.orderId;
+
+    if (!hasRequestChanged) {
+      return;
+    }
+
     let isMounted = true;
 
-    const loadOrderDetails = async () => {
-      setOrderDetailsLoading(true);
+    lastOrderDetailsLoadRef.current = {
+      orderId: orderDetailsTargetId,
+      requestId: orderDetailsRequestId,
+    };
+    setOrderDetailsLoading(true);
 
+    const loadOrderDetails = async () => {
       try {
         const activeSession = session?.accessToken ? session : await ensureSession();
 
@@ -1219,13 +1237,7 @@ export default function OrdersScreen() {
     return () => {
       isMounted = false;
     };
-  }, [
-    ensureSession,
-    isOrderDetailsModalVisible,
-    orderDetailsRequestId,
-    orderDetailsTargetId,
-    session,
-  ]);
+  }, [ensureSession, isOrderDetailsModalVisible, orderDetailsRequestId, orderDetailsTargetId, session]);
 
   const renderStepContent = () => {
     switch (currentStep) {
