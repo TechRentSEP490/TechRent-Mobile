@@ -12,8 +12,10 @@ import {
   FlatList,
   Modal,
   NativeSyntheticEvent,
+  Platform,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -22,12 +24,13 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import * as WebBrowser from 'expo-web-browser';
+// eslint-disable-next-line import/no-unresolved
+import RNHTMLtoPDF from 'react-native-html-to-pdf';
 
 import { useAuth } from '@/contexts/AuthContext';
-import { buildApiUrl } from '@/services/api';
 import { fetchDeviceModelById } from '@/services/device-models';
 import {
+  fetchContractById,
   fetchContracts,
   sendContractPin,
   signContract,
@@ -268,6 +271,199 @@ const formatContractStatus = (status: string | null | undefined): string => {
   return toTitleCase(status);
 };
 
+const escapeHtml = (value: string): string =>
+  value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+const sanitizeRichHtml = (value: string | null | undefined): string => {
+  if (!value) {
+    return '';
+  }
+
+  const trimmed = value.trim();
+
+  if (trimmed.length === 0) {
+    return '';
+  }
+
+  return trimmed
+    .replace(/<!DOCTYPE[^>]*>/gi, '')
+    .replace(/<\/?html[^>]*>/gi, '')
+    .replace(/<\/?head[^>]*>.*?<\/?head>/gis, '')
+    .replace(/<\/?body[^>]*>/gi, '')
+    .trim();
+};
+
+const buildContractPdfHtml = (
+  contract: ContractResponse,
+  contextLabel?: string,
+): string => {
+  const fallbackTitle = contextLabel ? `${contextLabel} Contract` : `Contract #${contract.contractId}`;
+  const contractTitle = contract.title && contract.title.trim().length > 0 ? contract.title.trim() : fallbackTitle;
+  const contractNumber =
+    contract.contractNumber && contract.contractNumber.trim().length > 0
+      ? contract.contractNumber.trim()
+      : contract.contractId
+        ? `#${contract.contractId}`
+        : '';
+  const contractStatusLabel = formatContractStatus(contract.status);
+  const totalAmountLabel =
+    typeof contract.totalAmount === 'number' ? formatCurrency(contract.totalAmount) : undefined;
+  const depositAmountLabel =
+    typeof contract.depositAmount === 'number' ? formatCurrency(contract.depositAmount) : undefined;
+
+  const metadata: { label: string; value: string }[] = [];
+
+  if (contractNumber) {
+    metadata.push({ label: 'Contract Number', value: contractNumber });
+  }
+
+  if (contractStatusLabel && contractStatusLabel !== 'Unknown') {
+    metadata.push({ label: 'Status', value: contractStatusLabel });
+  }
+
+  if (contract.startDate) {
+    metadata.push({ label: 'Start Date', value: formatDateTime(contract.startDate) });
+  }
+
+  if (contract.endDate) {
+    metadata.push({ label: 'End Date', value: formatDateTime(contract.endDate) });
+  }
+
+  if (contract.signedAt) {
+    metadata.push({ label: 'Signed At', value: formatDateTime(contract.signedAt) });
+  }
+
+  if (totalAmountLabel) {
+    metadata.push({ label: 'Total Amount', value: totalAmountLabel });
+  }
+
+  if (depositAmountLabel) {
+    metadata.push({ label: 'Deposit Amount', value: depositAmountLabel });
+  }
+
+  const sanitizedContent = sanitizeRichHtml(contract.contractContent);
+  const sanitizedTerms = sanitizeRichHtml(contract.termsAndConditions);
+
+  const sections: string[] = [];
+
+  if (sanitizedContent.length > 0) {
+    sections.push(`<section><h2>Agreement</h2>${sanitizedContent}</section>`);
+  }
+
+  if (sanitizedTerms.length > 0) {
+    sections.push(`<section><h2>Terms &amp; Conditions</h2>${sanitizedTerms}</section>`);
+  }
+
+  if (sections.length === 0) {
+    sections.push('<section><p>No contract content is available at this time.</p></section>');
+  }
+
+  const metadataHtml = metadata
+    .map(
+      (item) =>
+        `<div class="meta-row"><span class="meta-label">${escapeHtml(item.label)}:</span><span class="meta-value">${escapeHtml(item.value)}</span></div>`,
+    )
+    .join('');
+
+  const contextHeading = contextLabel ? `<p class="context">${escapeHtml(contextLabel)}</p>` : '';
+
+  return `<!DOCTYPE html>
+  <html>
+    <head>
+      <meta charset="utf-8" />
+      <style>
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+          padding: 32px;
+          color: #111111;
+          line-height: 1.6;
+          font-size: 14px;
+        }
+
+        h1 {
+          font-size: 24px;
+          margin-bottom: 8px;
+        }
+
+        h2 {
+          font-size: 18px;
+          margin-bottom: 8px;
+          margin-top: 24px;
+        }
+
+        p {
+          margin: 0 0 12px 0;
+        }
+
+        .context {
+          color: #4b5563;
+          margin-bottom: 16px;
+        }
+
+        .meta-row {
+          display: flex;
+          justify-content: space-between;
+          border-bottom: 1px solid #e5e7eb;
+          padding: 6px 0;
+        }
+
+        .meta-label {
+          font-weight: 600;
+          color: #374151;
+        }
+
+        .meta-value {
+          color: #111827;
+        }
+
+        section {
+          margin-top: 16px;
+        }
+
+        section:first-of-type {
+          margin-top: 24px;
+        }
+
+        ul {
+          padding-left: 20px;
+        }
+
+        li {
+          margin-bottom: 8px;
+        }
+
+        table {
+          width: 100%;
+          border-collapse: collapse;
+          margin-bottom: 16px;
+        }
+
+        th,
+        td {
+          border: 1px solid #d1d5db;
+          padding: 8px;
+          text-align: left;
+        }
+
+        strong {
+          font-weight: 600;
+        }
+      </style>
+    </head>
+    <body>
+      <h1>${escapeHtml(contractTitle)}</h1>
+      ${contextHeading}
+      ${metadataHtml}
+      ${sections.join('\n')}
+    </body>
+  </html>`;
+};
+
 const isValidEmail = (value: string): boolean => {
   if (!value) {
     return false;
@@ -389,6 +585,7 @@ export default function OrdersScreen() {
   const [emailEditorError, setEmailEditorError] = useState<string | null>(null);
   const [isSendingPin, setIsSendingPin] = useState(false);
   const [isSigningContract, setIsSigningContract] = useState(false);
+  const [activeContractDownloadId, setActiveContractDownloadId] = useState<number | null>(null);
   const [verificationError, setVerificationError] = useState<string | null>(null);
   const lastContractLoadRef = useRef<{ orderId: number | null; requestId: number }>({
     orderId: null,
@@ -1071,23 +1268,84 @@ export default function OrdersScreen() {
       }
 
       try {
+        if (Platform.OS === 'web') {
+          Alert.alert(
+            'Download unavailable',
+            'Contract downloads are only supported from the mobile application.',
+          );
+          return;
+        }
+
+        setActiveContractDownloadId(contractId);
+
         const activeSession = session?.accessToken ? session : await ensureSession();
 
         if (!activeSession?.accessToken) {
           throw new Error('You must be signed in to download the contract.');
         }
 
-        const tokenType =
-          activeSession.tokenType && activeSession.tokenType.length > 0
-            ? activeSession.tokenType
-            : 'Bearer';
-        const downloadUrl = `${buildApiUrl('contracts', contractId, 'download')}?tokenType=${encodeURIComponent(
-          tokenType,
-        )}&token=${encodeURIComponent(activeSession.accessToken)}`;
+        const sessionCredentials = {
+          accessToken: activeSession.accessToken,
+          tokenType: activeSession.tokenType,
+        };
 
-        await WebBrowser.openBrowserAsync(downloadUrl);
+        let contractDetails: ContractResponse | null = contract ?? null;
+        const hasExistingContent = Boolean(
+          contractDetails &&
+            ((contractDetails.contractContent && contractDetails.contractContent.trim().length > 0) ||
+              (contractDetails.termsAndConditions && contractDetails.termsAndConditions.trim().length > 0)),
+        );
+
+        if (!hasExistingContent) {
+          contractDetails = await fetchContractById(sessionCredentials, contractId);
+        }
+
+        const hasDownloadableContent = Boolean(
+          contractDetails &&
+            ((contractDetails.contractContent && contractDetails.contractContent.trim().length > 0) ||
+              (contractDetails.termsAndConditions && contractDetails.termsAndConditions.trim().length > 0)),
+        );
+
+        if (!hasDownloadableContent || !contractDetails) {
+          throw new Error('The contract details are not yet available for download.');
+        }
+
+        const html = buildContractPdfHtml(contractDetails, contextLabel);
+        const pdfResult = await RNHTMLtoPDF.convert({
+          html,
+          fileName: `contract-${contractId}`,
+          base64: false,
+          directory: 'Documents',
+        });
+
+        const pdfPath = pdfResult?.filePath ?? pdfResult?.path;
+
+        if (!pdfPath) {
+          throw new Error('Failed to generate the contract PDF. Please try again.');
+        }
+
+        const normalizedPath =
+          Platform.OS === 'android' && !pdfPath.startsWith('file://') ? `file://${pdfPath}` : pdfPath;
+
+        const shareTitle =
+          contextLabel && contextLabel.trim().length > 0
+            ? `${contextLabel} Contract`
+            : contractDetails.title && contractDetails.title.trim().length > 0
+              ? contractDetails.title.trim()
+              : `Contract #${contractId}`;
+
+        const sharePayload =
+          Platform.OS === 'ios'
+            ? { url: normalizedPath, title: shareTitle }
+            : {
+                url: normalizedPath,
+                title: shareTitle,
+                message: `Rental contract PDF: ${normalizedPath}`,
+              };
+
+        await Share.share(sharePayload);
       } catch (error) {
-        const fallbackMessage = 'Unable to open the contract download link. Please try again later.';
+        const fallbackMessage = 'Unable to download the contract. Please try again later.';
         const normalizedError = error instanceof Error ? error : new Error(fallbackMessage);
         Alert.alert(
           'Download contract',
@@ -1095,6 +1353,8 @@ export default function OrdersScreen() {
             ? normalizedError.message
             : fallbackMessage,
         );
+      } finally {
+        setActiveContractDownloadId((current) => (current === contractId ? null : current));
       }
     },
     [ensureSession, session],
@@ -1284,6 +1544,9 @@ export default function OrdersScreen() {
           typeof activeContract?.depositAmount === 'number'
             ? formatCurrency(activeContract.depositAmount)
             : '—';
+        const isDownloadingActiveContract = Boolean(
+          activeContract?.contractId && activeContractDownloadId === activeContract.contractId,
+        );
         const contractRentalDays =
           typeof activeContract?.rentalPeriodDays === 'number'
             ? `${activeContract.rentalPeriodDays} day${activeContract.rentalPeriodDays === 1 ? '' : 's'}`
@@ -1428,10 +1691,23 @@ export default function OrdersScreen() {
             <View style={styles.primaryActions}>
               {isSignedContract ? (
                 <Pressable
-                  style={[styles.primaryButton, styles.buttonFlex, styles.primaryButtonEnabled]}
-                  onPress={() => handleDownloadContract(activeContract, activeOrder?.title)}
+                  style={[
+                    styles.primaryButton,
+                    styles.buttonFlex,
+                    styles.primaryButtonEnabled,
+                    isDownloadingActiveContract && styles.primaryButtonBusy,
+                  ]}
+                  onPress={() =>
+                    !isDownloadingActiveContract &&
+                    handleDownloadContract(activeContract, activeOrder?.title)
+                  }
+                  disabled={isDownloadingActiveContract}
                 >
-                  <Text style={styles.primaryButtonText}>Download Contract</Text>
+                  {isDownloadingActiveContract ? (
+                    <ActivityIndicator color="#ffffff" />
+                  ) : (
+                    <Text style={styles.primaryButtonText}>Download Contract</Text>
+                  )}
                 </Pressable>
               ) : (
                 <Pressable
@@ -1628,6 +1904,12 @@ export default function OrdersScreen() {
         onRefresh={handleRefresh}
         renderItem={({ item }) => {
           const isHighlighted = highlightedOrderId === item.id;
+          const isDownloadAction = item.action?.type === 'downloadContract';
+          const isDownloadingCardContract = Boolean(
+            isDownloadAction &&
+              item.contract?.contractId &&
+              activeContractDownloadId === item.contract.contractId,
+          );
           return (
             <View
               style={[
@@ -1673,10 +1955,22 @@ export default function OrdersScreen() {
                   </Pressable>
                   {item.action ? (
                     <Pressable
-                      style={styles.cardActionButton}
-                      onPress={() => handleCardAction(item)}
+                      style={[
+                        styles.cardActionButton,
+                        isDownloadingCardContract && styles.cardActionButtonDisabled,
+                      ]}
+                      onPress={() => {
+                        if (!isDownloadingCardContract) {
+                          handleCardAction(item);
+                        }
+                      }}
+                      disabled={isDownloadingCardContract}
                     >
-                      <Text style={styles.cardActionLabel}>{item.action.label}</Text>
+                      {isDownloadingCardContract ? (
+                        <ActivityIndicator color="#ffffff" size="small" />
+                      ) : (
+                        <Text style={styles.cardActionLabel}>{item.action.label}</Text>
+                      )}
                     </Pressable>
                   ) : null}
                 </View>
@@ -1956,16 +2250,29 @@ export default function OrdersScreen() {
                       </Text>
                     </View>
                     <Pressable
-                      style={styles.detailDownloadButton}
-                      onPress={() =>
-                        handleDownloadContract(
-                          contractForSelectedOrder,
-                          `Order #${orderDetailsData.orderId}`,
-                        )
-                      }
+                      style={[
+                        styles.detailDownloadButton,
+                        activeContractDownloadId === contractForSelectedOrder.contractId &&
+                          styles.detailDownloadButtonDisabled,
+                      ]}
+                      onPress={() => {
+                        if (activeContractDownloadId !== contractForSelectedOrder.contractId) {
+                          handleDownloadContract(
+                            contractForSelectedOrder,
+                            `Order #${orderDetailsData.orderId}`,
+                          );
+                        }
+                      }}
+                      disabled={activeContractDownloadId === contractForSelectedOrder.contractId}
                     >
-                      <Ionicons name="download-outline" size={18} color="#1f7df4" />
-                      <Text style={styles.detailDownloadLabel}>Download Contract</Text>
+                      {activeContractDownloadId === contractForSelectedOrder.contractId ? (
+                        <ActivityIndicator color="#1f7df4" />
+                      ) : (
+                        <>
+                          <Ionicons name="download-outline" size={18} color="#1f7df4" />
+                          <Text style={styles.detailDownloadLabel}>Download Contract</Text>
+                        </>
+                      )}
                     </Pressable>
                   </View>
                 ) : null}
@@ -2160,6 +2467,9 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 16,
     paddingVertical: 10,
+  },
+  cardActionButtonDisabled: {
+    opacity: 0.6,
   },
   cardActionLabel: {
     fontSize: 13,
@@ -2419,6 +2729,9 @@ const styles = StyleSheet.create({
   },
   primaryButtonEnabled: {
     opacity: 1,
+  },
+  primaryButtonBusy: {
+    opacity: 0.7,
   },
   primaryButtonDisabled: {
     backgroundColor: '#d1d5db',
@@ -2744,6 +3057,9 @@ const styles = StyleSheet.create({
     borderColor: '#1f7df4',
     backgroundColor: '#eef4ff',
     alignSelf: 'flex-start',
+  },
+  detailDownloadButtonDisabled: {
+    opacity: 0.6,
   },
   detailDownloadLabel: {
     fontSize: 13,

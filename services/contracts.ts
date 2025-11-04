@@ -38,6 +38,14 @@ export type FetchContractsResult = {
   data: ContractResponse[] | null;
 };
 
+export type FetchContractResult = {
+  status: string;
+  message: string;
+  details: string;
+  code: number;
+  data: ContractResponse | null;
+};
+
 export type SendContractPinResult = {
   status: string;
   message: string;
@@ -121,6 +129,52 @@ export async function fetchContracts(session: SessionCredentials): Promise<Contr
   }
 
   return json.data;
+}
+
+export async function fetchContractById(
+  session: SessionCredentials,
+  contractId: number,
+): Promise<ContractResponse | null> {
+  if (!session?.accessToken) {
+    throw new Error('An access token is required to load the contract.');
+  }
+
+  if (!Number.isInteger(contractId) || contractId <= 0) {
+    throw new Error('A valid contract identifier is required to load the contract.');
+  }
+
+  const response = await fetch(buildApiUrl('contracts', contractId), {
+    method: 'GET',
+    headers: {
+      Accept: 'application/json',
+      Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
+        session.accessToken
+      }`,
+    },
+  });
+
+  if (!response.ok) {
+    const apiMessage = await parseErrorMessage(response);
+    const error = new Error(
+      apiMessage ?? `Unable to load the contract (status ${response.status}).`,
+    ) as ApiErrorWithStatus;
+    error.status = response.status;
+    throw error;
+  }
+
+  const json = (await response.json()) as FetchContractResult | null;
+
+  if (!json || json.status !== 'SUCCESS') {
+    const error = new Error(
+      json?.message ?? 'Failed to load the contract. Please try again.',
+    ) as ApiErrorWithStatus;
+    if (typeof json?.code === 'number') {
+      error.status = json.code;
+    }
+    throw error;
+  }
+
+  return json.data ?? null;
 }
 
 type SendContractPinOptions = {
