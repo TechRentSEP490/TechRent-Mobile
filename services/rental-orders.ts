@@ -54,6 +54,14 @@ export type FetchRentalOrdersResult = {
   data: RentalOrderResponse[] | null;
 };
 
+export type FetchRentalOrderDetailResult = {
+  status: string;
+  message: string;
+  details: string;
+  code: number;
+  data: RentalOrderResponse | null;
+};
+
 type SessionCredentials = {
   accessToken: string;
   tokenType?: string | null;
@@ -151,6 +159,54 @@ export async function fetchRentalOrders(session: SessionCredentials): Promise<Re
   if (!json || json.status !== 'SUCCESS' || !Array.isArray(json.data)) {
     const error = new Error(
       json?.message ?? 'Failed to load rental orders. Please try again.'
+    ) as ApiErrorWithStatus;
+    if (typeof json?.code === 'number') {
+      error.status = json.code;
+    }
+    throw error;
+  }
+
+  return json.data;
+}
+
+export async function fetchRentalOrderById(
+  session: SessionCredentials,
+  orderId: number | string,
+): Promise<RentalOrderResponse> {
+  if (!session?.accessToken) {
+    throw new Error('An access token is required to view the rental order.');
+  }
+
+  const normalizedId = typeof orderId === 'string' ? Number.parseInt(orderId, 10) : Number(orderId);
+
+  if (!Number.isFinite(normalizedId) || normalizedId <= 0) {
+    throw new Error('A valid rental order identifier is required.');
+  }
+
+  const response = await fetch(buildApiUrl('rental-orders', normalizedId), {
+    method: 'GET',
+    headers: {
+      Accept: 'application/json',
+      Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
+        session.accessToken
+      }`,
+    },
+  });
+
+  if (!response.ok) {
+    const apiMessage = await parseErrorMessage(response);
+    const error = new Error(
+      apiMessage ?? `Unable to load rental order ${normalizedId} (status ${response.status}).`,
+    ) as ApiErrorWithStatus;
+    error.status = response.status;
+    throw error;
+  }
+
+  const json = (await response.json()) as FetchRentalOrderDetailResult | null;
+
+  if (!json || json.status !== 'SUCCESS' || !json.data) {
+    const error = new Error(
+      json?.message ?? 'Failed to load the rental order details. Please try again.',
     ) as ApiErrorWithStatus;
     if (typeof json?.code === 'number') {
       error.status = json.code;
