@@ -7,6 +7,7 @@ import React, {
   useState,
 } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   FlatList,
   Modal,
@@ -22,6 +23,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 
+import { useAuth } from '@/contexts/AuthContext';
+import { fetchDeviceModelById } from '@/services/device-models';
+import { fetchContracts, type ContractResponse } from '@/services/contracts';
+import { fetchRentalOrders, type RentalOrderResponse } from '@/services/rental-orders';
+
 type OrderStatusFilter = 'All' | 'Pending' | 'Delivered' | 'In Use' | 'Completed';
 type OrderStatus = Exclude<OrderStatusFilter, 'All'>;
 type OrderActionType =
@@ -33,8 +39,8 @@ type OrderActionType =
 
 type OrderCard = {
   id: string;
-  productName: string;
-  orderNumber: string;
+  title: string;
+  deviceSummary: string;
   rentalPeriod: string;
   totalAmount: string;
   statusFilter: OrderStatus;
@@ -47,70 +53,260 @@ type OrderCard = {
   };
 };
 
+type ApiErrorWithStatus = Error & { status?: number };
+
 const ORDER_FILTERS: OrderStatusFilter[] = ['All', 'Pending', 'Delivered', 'In Use', 'Completed'];
 
-const ORDERS: OrderCard[] = [
-  {
-    id: 'ORD-20001',
-    productName: 'Samsung Galaxy S23',
-    orderNumber: 'Order #ORD-20001',
-    rentalPeriod: 'Jan 14 - Jan 21, 2025',
-    totalAmount: '$560.00',
-    statusFilter: 'Pending',
-    statusLabel: 'Awaiting Docs',
-    statusColor: '#b45309',
-    statusBackground: '#fef3c7',
+type StatusMeta = {
+  filter: OrderStatus;
+  label: string;
+  color: string;
+  background: string;
+  action?: { label: string; type: OrderActionType };
+};
+
+const STATUS_TEMPLATES: Record<OrderStatus, { defaultLabel: string; color: string; background: string; action?: { label: string; type: OrderActionType } }> = {
+  Pending: {
+    defaultLabel: 'Pending',
+    color: '#b45309',
+    background: '#fef3c7',
     action: { label: 'Continue Process', type: 'continueProcess' },
   },
-  {
-    id: 'ORD-12345',
-    productName: 'SmartPhone X',
-    orderNumber: 'Order #12345',
-    rentalPeriod: 'Jan 15 - Jan 22, 2025',
-    totalAmount: '$799.00',
-    statusFilter: 'In Use',
-    statusLabel: 'In Use',
-    statusColor: '#1d4ed8',
-    statusBackground: '#dbeafe',
-    action: { label: 'Extend Rental', type: 'extendRental' },
-  },
-  {
-    id: 'ORD-12344',
-    productName: 'MacBook Pro 16"',
-    orderNumber: 'Order #12344',
-    rentalPeriod: 'Jan 10 - Jan 17, 2025',
-    totalAmount: '$420.00',
-    statusFilter: 'Delivered',
-    statusLabel: 'Delivery',
-    statusColor: '#15803d',
-    statusBackground: '#dcfce7',
+  Delivered: {
+    defaultLabel: 'Delivered',
+    color: '#15803d',
+    background: '#dcfce7',
     action: { label: 'Confirm Receipt', type: 'confirmReceipt' },
   },
-  {
-    id: 'ORD-12343',
-    productName: 'DJI Mavic Air 2 Drone',
-    orderNumber: 'Order #12343',
-    rentalPeriod: 'Jan 20 - Jan 25, 2025',
-    totalAmount: '$180.00',
-    statusFilter: 'Pending',
-    statusLabel: 'In Review',
-    statusColor: '#6d28d9',
-    statusBackground: '#ede9fe',
-    action: { label: 'Cancel Order', type: 'cancelOrder' },
+  'In Use': {
+    defaultLabel: 'In Use',
+    color: '#1d4ed8',
+    background: '#dbeafe',
+    action: { label: 'Extend Rental', type: 'extendRental' },
   },
-  {
-    id: 'ORD-12211',
-    productName: 'Lenovo ThinkPad X1',
-    orderNumber: 'Order #12211',
-    rentalPeriod: 'Dec 01 - Dec 20, 2024',
-    totalAmount: '$650.00',
-    statusFilter: 'Completed',
-    statusLabel: 'Completed',
-    statusColor: '#111111',
-    statusBackground: '#f3f4f6',
+  Completed: {
+    defaultLabel: 'Completed',
+    color: '#111111',
+    background: '#f3f4f6',
     action: { label: 'Rent Again', type: 'rentAgain' },
   },
-];
+};
+
+const toTitleCase = (value: string) =>
+  value
+    .toLowerCase()
+    .split(/[_\s]+/)
+    .filter(Boolean)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(' ');
+
+const mapStatusToMeta = (status: string | null | undefined): StatusMeta => {
+  const normalized = (status ?? '').toUpperCase();
+  let filter: OrderStatus = 'Pending';
+  let includeAction = true;
+
+  switch (normalized) {
+    case 'PENDING':
+    case 'PROCESSING':
+    case 'AWAITING_PAYMENT':
+    case 'AWAITING_APPROVAL':
+    case 'AWAITING_DOCUMENTS':
+      filter = 'Pending';
+      break;
+    case 'DELIVERED':
+    case 'DELIVERING':
+    case 'SHIPPED':
+    case 'OUT_FOR_DELIVERY':
+      filter = 'Delivered';
+      break;
+    case 'IN_USE':
+    case 'ACTIVE':
+    case 'IN_PROGRESS':
+      filter = 'In Use';
+      break;
+    case 'COMPLETED':
+    case 'RETURNED':
+    case 'CLOSED':
+    case 'FINISHED':
+      filter = 'Completed';
+      break;
+    case 'CANCELLED':
+    case 'CANCELED':
+      filter = 'Completed';
+      includeAction = false;
+      break;
+    default:
+      includeAction = false;
+      break;
+  }
+
+  const template = STATUS_TEMPLATES[filter];
+  const label = normalized.length > 0 ? toTitleCase(normalized) : template.defaultLabel;
+
+  return {
+    filter,
+    label,
+    color: template.color,
+    background: template.background,
+    action: includeAction ? template.action : undefined,
+  };
+};
+
+const formatCurrency = (value: number): string => {
+  try {
+    return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(value);
+  } catch {
+    return `${Number.isFinite(value) ? Math.round(value).toLocaleString('vi-VN') : '0'} ₫`;
+  }
+};
+
+const formatRentalPeriod = (startDateIso: string, endDateIso: string): string => {
+  const startDate = startDateIso ? new Date(startDateIso) : null;
+  const endDate = endDateIso ? new Date(endDateIso) : null;
+
+  if (!startDate || Number.isNaN(startDate.getTime())) {
+    return '—';
+  }
+
+  const hasValidEnd = Boolean(endDate && !Number.isNaN(endDate.getTime()));
+
+  try {
+    const sameYear = hasValidEnd && endDate ? startDate.getFullYear() === endDate.getFullYear() : false;
+    const startFormatter = new Intl.DateTimeFormat('vi-VN', {
+      day: '2-digit',
+      month: 'short',
+      ...(sameYear ? {} : { year: 'numeric' }),
+    });
+    const startLabel = startFormatter.format(startDate);
+
+    if (hasValidEnd && endDate) {
+      const endFormatter = new Intl.DateTimeFormat('vi-VN', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+      });
+      const endLabel = endFormatter.format(endDate);
+      return `${startLabel} - ${endLabel}`;
+    }
+
+    return `Starting ${startLabel}`;
+  } catch {
+    const startLabel = startDate.toISOString().slice(0, 10);
+    if (hasValidEnd && endDate) {
+      const endLabel = endDate.toISOString().slice(0, 10);
+      return `${startLabel} - ${endLabel}`;
+    }
+    return `Starting ${startLabel}`;
+  }
+};
+
+const formatDateTime = (iso: string | null | undefined): string => {
+  if (!iso) {
+    return '—';
+  }
+
+  const date = new Date(iso);
+
+  if (Number.isNaN(date.getTime())) {
+    return iso;
+  }
+
+  try {
+    return new Intl.DateTimeFormat('vi-VN', {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    }).format(date);
+  } catch {
+    return date.toISOString().replace('T', ' ').slice(0, 16);
+  }
+};
+
+const normalizeHtmlContent = (value: string | null | undefined): string => {
+  if (!value || value.trim().length === 0) {
+    return '';
+  }
+
+  const withLineBreaks = value
+    .replace(/<\s*br\s*\/?\s*>/gi, '\n')
+    .replace(/<\s*\/p\s*>/gi, '\n\n')
+    .replace(/<\s*li\s*>/gi, '• ')
+    .replace(/<\s*\/li\s*>/gi, '\n')
+    .replace(/<\s*\/h[1-6]\s*>/gi, '\n\n');
+
+  const withoutTags = withLineBreaks.replace(/<[^>]*>/g, '');
+
+  return withoutTags
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+};
+
+const formatContractStatus = (status: string | null | undefined): string => {
+  if (!status || status.trim().length === 0) {
+    return 'Unknown';
+  }
+
+  return toTitleCase(status);
+};
+
+const deriveDeviceSummary = (order: RentalOrderResponse, deviceNames: Map<string, string>): string => {
+  if (!order.orderDetails || order.orderDetails.length === 0) {
+    return 'No devices listed';
+  }
+
+  const names = order.orderDetails
+    .map((detail) => {
+      const id = detail?.deviceModelId;
+      if (!id) {
+        return null;
+      }
+
+      const name = deviceNames.get(String(id));
+      if (name && name.trim().length > 0) {
+        return name;
+      }
+
+      return `Device Model ${id}`;
+    })
+    .filter((value): value is string => Boolean(value && value.trim().length > 0));
+
+  if (names.length === 0) {
+    return `${order.orderDetails.length} devices`;
+  }
+
+  if (names.length === 1) {
+    return names[0];
+  }
+
+  const [firstName, ...rest] = names;
+  return `${firstName} + ${rest.length} more`;
+};
+
+const mapOrderResponseToCard = (
+  order: RentalOrderResponse,
+  deviceNames: Map<string, string>,
+): OrderCard => {
+  const statusMeta = mapStatusToMeta(order.orderStatus);
+
+  return {
+    id: String(order.orderId),
+    title: `Order #${order.orderId}`,
+    deviceSummary: deriveDeviceSummary(order, deviceNames),
+    rentalPeriod: formatRentalPeriod(order.startDate, order.endDate),
+    totalAmount: formatCurrency(order.totalPrice),
+    statusFilter: statusMeta.filter,
+    statusLabel: statusMeta.label,
+    statusColor: statusMeta.color,
+    statusBackground: statusMeta.background,
+    action: statusMeta.action,
+  };
+};
 
 const PAYMENT_OPTIONS = [
   {
@@ -129,11 +325,13 @@ const PAYMENT_OPTIONS = [
 
 export default function OrdersScreen() {
   const router = useRouter();
+  const { session, ensureSession } = useAuth();
   const { flow, orderId } = useLocalSearchParams<{
     flow?: string | string[];
     orderId?: string | string[];
   }>();
   const listRef = useRef<FlatList<OrderCard>>(null);
+  const [orders, setOrders] = useState<OrderCard[]>([]);
   const [selectedFilter, setSelectedFilter] = useState<OrderStatusFilter>('All');
   const [highlightedOrderId, setHighlightedOrderId] = useState<string | null>(null);
   const [pendingScrollOrderId, setPendingScrollOrderId] = useState<string | null>(null);
@@ -144,38 +342,169 @@ export default function OrdersScreen() {
   const otpRefs = useRef<(TextInput | null)[]>([]);
   const [selectedPayment, setSelectedPayment] = useState(PAYMENT_OPTIONS[0].id);
   const [hasAgreed, setHasAgreed] = useState(false);
+  const [activeContract, setActiveContract] = useState<ContractResponse | null>(null);
+  const [isContractLoading, setContractLoading] = useState(false);
+  const [contractErrorMessage, setContractErrorMessage] = useState<string | null>(null);
+  const [contractRequestId, setContractRequestId] = useState(0);
+  const lastContractLoadRef = useRef<{ orderId: number | null; requestId: number }>({
+    orderId: null,
+    requestId: 0,
+  });
+  const [isLoading, setIsLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const progressWidth = useMemo(() => `${(currentStep / 3) * 100}%`, [currentStep]);
-  const isAgreementComplete = hasAgreed;
+  const isAgreementComplete = useMemo(
+    () => hasAgreed && Boolean(activeContract) && !isContractLoading && !contractErrorMessage,
+    [hasAgreed, activeContract, isContractLoading, contractErrorMessage],
+  );
   const isOtpComplete = useMemo(
     () => otpDigits.every((digit) => digit.length === 1),
     [otpDigits],
   );
 
+  const loadOrders = useCallback(
+    async (mode: 'initial' | 'refresh' = 'initial') => {
+      if (mode === 'refresh') {
+        setIsRefreshing(true);
+      } else {
+        setIsLoading(true);
+      }
+
+      try {
+        const activeSession = session?.accessToken ? session : await ensureSession();
+
+        if (!activeSession?.accessToken) {
+          setOrders([]);
+          setErrorMessage('You must be signed in to view your rental orders.');
+          return;
+        }
+
+        const response = await fetchRentalOrders(activeSession);
+        const deviceNameMap = new Map<string, string>();
+        const uniqueDeviceModelIds = new Set<string>();
+
+        response.forEach((order) => {
+          order.orderDetails?.forEach((detail) => {
+            if (detail?.deviceModelId) {
+              uniqueDeviceModelIds.add(String(detail.deviceModelId));
+            }
+          });
+        });
+
+        if (uniqueDeviceModelIds.size > 0) {
+          await Promise.all(
+            Array.from(uniqueDeviceModelIds).map(async (id) => {
+              try {
+                const device = await fetchDeviceModelById(id);
+                if (device) {
+                  const label = device.name?.trim().length ? device.name : device.model;
+                  if (label && label.trim().length > 0) {
+                    deviceNameMap.set(id, label.trim());
+                  }
+                }
+              } catch (deviceError) {
+                console.warn(`Failed to load device model ${id} for rental orders`, deviceError);
+              }
+            }),
+          );
+        }
+
+        const sorted = [...response].sort((a, b) => {
+          const aTime = new Date(a.createdAt ?? a.startDate).getTime();
+          const bTime = new Date(b.createdAt ?? b.startDate).getTime();
+
+          if (Number.isNaN(aTime) && Number.isNaN(bTime)) {
+            return 0;
+          }
+          if (Number.isNaN(aTime)) {
+            return 1;
+          }
+          if (Number.isNaN(bTime)) {
+            return -1;
+          }
+
+          return bTime - aTime;
+        });
+
+        setOrders(sorted.map((order) => mapOrderResponseToCard(order, deviceNameMap)));
+        setErrorMessage(null);
+      } catch (error) {
+        const fallbackMessage = 'Failed to load rental orders. Please try again.';
+        const normalizedError = error instanceof Error ? error : new Error(fallbackMessage);
+        const status = (normalizedError as ApiErrorWithStatus).status;
+
+        if (status === 401) {
+          setOrders([]);
+          setErrorMessage('Your session has expired. Please sign in again to view your rental orders.');
+        } else {
+          const message =
+            normalizedError.message && normalizedError.message.trim().length > 0
+              ? normalizedError.message
+              : fallbackMessage;
+          setErrorMessage(message);
+        }
+      } finally {
+        if (mode === 'refresh') {
+          setIsRefreshing(false);
+        } else {
+          setIsLoading(false);
+        }
+      }
+    },
+    [ensureSession, session]
+  );
+
+  useEffect(() => {
+    loadOrders();
+  }, [loadOrders]);
+
+  const handleRefresh = useCallback(() => {
+    loadOrders('refresh');
+  }, [loadOrders]);
+
+  const handleRetry = useCallback(() => {
+    loadOrders('initial');
+  }, [loadOrders]);
+
   const filteredOrders = useMemo(() => {
     if (selectedFilter === 'All') {
-      return ORDERS;
+      return orders;
     }
 
-    return ORDERS.filter((order) => order.statusFilter === selectedFilter);
-  }, [selectedFilter]);
+    return orders.filter((order) => order.statusFilter === selectedFilter);
+  }, [orders, selectedFilter]);
 
   const openFlow = useCallback((order: OrderCard) => {
+    lastContractLoadRef.current = { orderId: null, requestId: 0 };
     setActiveOrder(order);
+    setActiveContract(null);
+    setContractErrorMessage(null);
+    setContractLoading(false);
     setModalVisible(true);
     setCurrentStep(1);
     setOtpDigits(Array(6).fill(''));
     setSelectedPayment(PAYMENT_OPTIONS[0].id);
     setHasAgreed(false);
+    setContractRequestId((previous) => previous + 1);
   }, []);
 
   const resetFlow = useCallback(() => {
+    lastContractLoadRef.current = { orderId: null, requestId: 0 };
     setModalVisible(false);
     setCurrentStep(1);
     setOtpDigits(Array(6).fill(''));
     setSelectedPayment(PAYMENT_OPTIONS[0].id);
     setHasAgreed(false);
     setActiveOrder(null);
+    setActiveContract(null);
+    setContractErrorMessage(null);
+    setContractLoading(false);
+  }, []);
+
+  const handleRetryContract = useCallback(() => {
+    setContractRequestId((previous) => previous + 1);
   }, []);
 
   useEffect(() => {
@@ -193,6 +522,113 @@ export default function OrdersScreen() {
   }, [highlightedOrderId]);
 
   useEffect(() => {
+    if (!isModalVisible || !activeOrder) {
+      return;
+    }
+
+    const targetOrderId = Number.parseInt(activeOrder.id, 10);
+
+    if (Number.isNaN(targetOrderId)) {
+      setContractErrorMessage('Invalid rental order selected.');
+      return;
+    }
+
+    const lastLoad = lastContractLoadRef.current;
+    const hasRequestChanged =
+      contractRequestId !== lastLoad.requestId || targetOrderId !== lastLoad.orderId;
+    const alreadyLoadedForOrder = Boolean(
+      activeContract &&
+        typeof activeContract.orderId === 'number' &&
+        activeContract.orderId === targetOrderId,
+    );
+
+    if (!hasRequestChanged && alreadyLoadedForOrder) {
+      return;
+    }
+
+    let isMounted = true;
+
+    setContractLoading(true);
+    if (hasRequestChanged || !alreadyLoadedForOrder) {
+      setContractErrorMessage(null);
+      if (!alreadyLoadedForOrder || targetOrderId !== lastLoad.orderId) {
+        setActiveContract(null);
+      }
+    }
+
+    lastContractLoadRef.current = { orderId: targetOrderId, requestId: contractRequestId };
+
+    const loadContract = async () => {
+      try {
+        const activeSession = session?.accessToken ? session : await ensureSession();
+
+        if (!isMounted) {
+          return;
+        }
+
+        if (!activeSession?.accessToken) {
+          throw new Error('You must be signed in to view rental contracts.');
+        }
+
+        const contracts = await fetchContracts(activeSession);
+
+        if (!isMounted) {
+          return;
+        }
+
+        const matchingContract = contracts.find(
+          (contract) => typeof contract?.orderId === 'number' && contract.orderId === targetOrderId,
+        );
+
+        if (matchingContract) {
+          setActiveContract(matchingContract);
+        } else {
+          setContractErrorMessage('No rental contract is available for this order yet.');
+        }
+      } catch (error) {
+        if (!isMounted) {
+          return;
+        }
+
+        const fallbackMessage = 'Failed to load rental contract. Please try again.';
+        const normalizedError = error instanceof Error ? error : new Error(fallbackMessage);
+        const status = (normalizedError as ApiErrorWithStatus).status;
+
+        if (status === 401) {
+          setContractErrorMessage(
+            'Your session has expired. Please sign in again to view the rental contract.',
+          );
+        } else {
+          const message =
+            normalizedError.message && normalizedError.message.trim().length > 0
+              ? normalizedError.message
+              : fallbackMessage;
+          setContractErrorMessage(message);
+        }
+      } finally {
+        if (!isMounted) {
+          return;
+        }
+
+        setContractLoading(false);
+      }
+    };
+
+    loadContract();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [
+    activeContract,
+    activeOrder,
+    contractRequestId,
+    ensureSession,
+    isModalVisible,
+    session,
+  ]);
+
+  useEffect(() => {
     const flowParam = Array.isArray(flow) ? flow[0] : flow;
     if (flowParam !== 'continue') {
       return;
@@ -200,8 +636,8 @@ export default function OrdersScreen() {
 
     const orderIdParam = Array.isArray(orderId) ? orderId[0] : orderId;
     const targetOrder =
-      ORDERS.find((order) => order.id === orderIdParam) ||
-      ORDERS.find((order) => order.action?.type === 'continueProcess');
+      orders.find((order) => order.id === orderIdParam) ||
+      orders.find((order) => order.action?.type === 'continueProcess');
 
     if (targetOrder) {
       setSelectedFilter(targetOrder.statusFilter);
@@ -209,8 +645,10 @@ export default function OrdersScreen() {
       setPendingScrollOrderId(targetOrder.id);
     }
 
-    router.replace('/(app)/(tabs)/orders');
-  }, [flow, orderId, router]);
+    if (orders.length > 0) {
+      router.replace('/(app)/(tabs)/orders');
+    }
+  }, [flow, orderId, orders, router]);
 
   useEffect(() => {
     if (!pendingScrollOrderId) {
@@ -288,45 +726,159 @@ export default function OrdersScreen() {
   );
 
   const handleViewDetails = useCallback((order: OrderCard) => {
-    Alert.alert('View Details', `Detailed tracking for ${order.productName} is coming soon.`);
+    Alert.alert('View Details', `Detailed tracking for ${order.title} is coming soon.`);
   }, []);
 
   const renderStepContent = () => {
     switch (currentStep) {
-      case 1:
+      case 1: {
+        const canAgreeToContract = Boolean(activeContract) && !isContractLoading && !contractErrorMessage;
+        const contractTitle = activeContract
+          ? activeContract.title && activeContract.title.trim().length > 0
+            ? activeContract.title.trim()
+            : `Contract #${activeContract.contractId}`
+          : 'Rental Contract';
+        const contractNumber = activeContract
+          ? activeContract.contractNumber && activeContract.contractNumber.trim().length > 0
+            ? activeContract.contractNumber.trim()
+            : `#${activeContract.contractId}`
+          : '—';
+        const contractStatusLabel = formatContractStatus(activeContract?.status);
+        const contractPeriod = activeContract
+          ? formatRentalPeriod(activeContract.startDate ?? '', activeContract.endDate ?? '')
+          : '—';
+        const contractTotal =
+          typeof activeContract?.totalAmount === 'number'
+            ? formatCurrency(activeContract.totalAmount)
+            : '—';
+        const contractDeposit =
+          typeof activeContract?.depositAmount === 'number'
+            ? formatCurrency(activeContract.depositAmount)
+            : '—';
+        const contractRentalDays =
+          typeof activeContract?.rentalPeriodDays === 'number'
+            ? `${activeContract.rentalPeriodDays} day${activeContract.rentalPeriodDays === 1 ? '' : 's'}`
+            : '—';
+        const contractStart = formatDateTime(activeContract?.startDate);
+        const contractEnd = formatDateTime(activeContract?.endDate);
+        const contractExpires = formatDateTime(activeContract?.expiresAt);
+        const contractCreated = formatDateTime(activeContract?.createdAt);
+        const contractUpdated = formatDateTime(activeContract?.updatedAt);
+        const contractDescription = normalizeHtmlContent(activeContract?.description);
+        const contractBody = normalizeHtmlContent(activeContract?.contractContent);
+        const contractTerms = normalizeHtmlContent(activeContract?.termsAndConditions);
+
         return (
           <View style={styles.stepContent}>
             <View style={styles.modalOrderHeader}>
-              <Text style={styles.modalOrderName}>{activeOrder?.productName ?? 'Rental Order'}</Text>
-              <Text style={styles.modalOrderMeta}>{activeOrder?.orderNumber}</Text>
+              <Text style={styles.modalOrderName}>{activeOrder?.title ?? 'Rental Order'}</Text>
+              <Text style={styles.modalOrderMeta}>{activeOrder?.deviceSummary}</Text>
             </View>
             <Text style={styles.stepTitle}>Rental Agreement Contract</Text>
             <Text style={styles.stepSubtitle}>
               Please review the complete terms and conditions below
             </Text>
             <View style={styles.contractContainer}>
-              <ScrollView showsVerticalScrollIndicator={false}>
-                <Text style={styles.contractHeading}>RENTAL AGREEMENT CONTRACT</Text>
-                <Text style={styles.contractBody}>
-                  Lorem ipsum dolor sit amet, consectetur adipisicing elit. Sed do eiusmod tempor
-                  incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud
-                  exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
-                  {'\n\n'}Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore
-                  eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in
-                  culpa qui officia deserunt mollit anim id est laborum.
-                </Text>
-              </ScrollView>
+              {isContractLoading ? (
+                <View style={styles.contractStateWrapper}>
+                  <ActivityIndicator color="#111111" />
+                  <Text style={styles.contractStateText}>Loading rental contract…</Text>
+                </View>
+              ) : contractErrorMessage ? (
+                <View style={styles.contractStateWrapper}>
+                  <Text style={[styles.contractStateText, styles.contractErrorText]}>
+                    {contractErrorMessage}
+                  </Text>
+                  <Pressable style={styles.contractRetryButton} onPress={handleRetryContract}>
+                    <Text style={styles.contractRetryButtonText}>Try Again</Text>
+                  </Pressable>
+                </View>
+              ) : activeContract ? (
+                <ScrollView showsVerticalScrollIndicator={false}>
+                  <Text style={styles.contractHeading}>{contractTitle}</Text>
+                  <View style={styles.contractMetaList}>
+                    <View style={styles.contractMetaRow}>
+                      <Text style={styles.contractMetaLabel}>Contract Number</Text>
+                      <Text style={styles.contractMetaValue}>{contractNumber}</Text>
+                    </View>
+                    <View style={styles.contractMetaRow}>
+                      <Text style={styles.contractMetaLabel}>Status</Text>
+                      <Text style={styles.contractMetaValue}>{contractStatusLabel}</Text>
+                    </View>
+                    <View style={styles.contractMetaRow}>
+                      <Text style={styles.contractMetaLabel}>Rental Period</Text>
+                      <Text style={styles.contractMetaValue}>{contractPeriod}</Text>
+                    </View>
+                    <View style={styles.contractMetaRow}>
+                      <Text style={styles.contractMetaLabel}>Rental Days</Text>
+                      <Text style={styles.contractMetaValue}>{contractRentalDays}</Text>
+                    </View>
+                    <View style={styles.contractMetaRow}>
+                      <Text style={styles.contractMetaLabel}>Start Date</Text>
+                      <Text style={styles.contractMetaValue}>{contractStart}</Text>
+                    </View>
+                    <View style={styles.contractMetaRow}>
+                      <Text style={styles.contractMetaLabel}>End Date</Text>
+                      <Text style={styles.contractMetaValue}>{contractEnd}</Text>
+                    </View>
+                    <View style={styles.contractMetaRow}>
+                      <Text style={styles.contractMetaLabel}>Total Amount</Text>
+                      <Text style={styles.contractMetaValue}>{contractTotal}</Text>
+                    </View>
+                    <View style={styles.contractMetaRow}>
+                      <Text style={styles.contractMetaLabel}>Deposit</Text>
+                      <Text style={styles.contractMetaValue}>{contractDeposit}</Text>
+                    </View>
+                    <View style={styles.contractMetaRow}>
+                      <Text style={styles.contractMetaLabel}>Expires</Text>
+                      <Text style={styles.contractMetaValue}>{contractExpires}</Text>
+                    </View>
+                    <View style={styles.contractMetaRow}>
+                      <Text style={styles.contractMetaLabel}>Created</Text>
+                      <Text style={styles.contractMetaValue}>{contractCreated}</Text>
+                    </View>
+                    <View style={styles.contractMetaRow}>
+                      <Text style={styles.contractMetaLabel}>Updated</Text>
+                      <Text style={styles.contractMetaValue}>{contractUpdated}</Text>
+                    </View>
+                  </View>
+                  {contractDescription.length > 0 && (
+                    <Text style={styles.contractBody}>{contractDescription}</Text>
+                  )}
+                  {contractBody.length > 0 && (
+                    <View style={styles.contractSection}>
+                      <Text style={styles.contractSectionHeading}>Contract Content</Text>
+                      <Text style={styles.contractBody}>{contractBody}</Text>
+                    </View>
+                  )}
+                  {contractTerms.length > 0 && (
+                    <View style={styles.contractTermsSection}>
+                      <Text style={styles.contractTermsHeading}>Terms &amp; Conditions</Text>
+                      <Text style={styles.contractTermsText}>{contractTerms}</Text>
+                    </View>
+                  )}
+                </ScrollView>
+              ) : (
+                <View style={styles.contractStateWrapper}>
+                  <Text style={styles.contractStateText}>
+                    No rental contract is available for this order yet.
+                  </Text>
+                </View>
+              )}
             </View>
             <Pressable
-              style={styles.agreementRow}
+              style={[styles.agreementRow, !canAgreeToContract && styles.agreementRowDisabled]}
               onPress={() => setHasAgreed((previous) => !previous)}
               accessibilityRole="checkbox"
-              accessibilityState={{ checked: hasAgreed }}
+              accessibilityState={{ checked: hasAgreed, disabled: !canAgreeToContract }}
+              disabled={!canAgreeToContract}
             >
               <MaterialCommunityIcons
                 name={hasAgreed ? 'checkbox-marked' : 'checkbox-blank-outline'}
                 size={24}
-                color={hasAgreed ? '#111111' : '#8a8a8a'}
+                color={
+                  canAgreeToContract ? (hasAgreed ? '#111111' : '#8a8a8a') : '#d1d5db'
+                }
               />
               <View style={styles.agreementTextWrapper}>
                 <Text style={styles.agreementLabel}>I agree to the rental contract terms</Text>
@@ -360,6 +912,7 @@ export default function OrdersScreen() {
             </View>
           </View>
         );
+      }
       case 2:
         return (
           <View style={styles.stepContent}>
@@ -424,7 +977,7 @@ export default function OrdersScreen() {
             <View style={styles.summaryCard}>
               <View style={styles.summaryRow}>
                 <Text style={styles.summaryLabel}>Order</Text>
-                <Text style={styles.summaryValue}>{activeOrder?.productName}</Text>
+                <Text style={styles.summaryValue}>{activeOrder?.deviceSummary}</Text>
               </View>
               <View style={styles.summaryRow}>
                 <Text style={styles.summaryLabel}>Rental Period</Text>
@@ -467,7 +1020,7 @@ export default function OrdersScreen() {
               onPress={() =>
                 Alert.alert(
                   'Rental Process Complete',
-                  `${activeOrder?.productName ?? 'Your order'} is confirmed!`,
+                  `${activeOrder?.title ?? 'Your order'} is confirmed!`,
                   [
                     {
                       text: 'Done',
@@ -489,13 +1042,15 @@ export default function OrdersScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={["top"]}>
+    <SafeAreaView style={styles.safeArea} edges={['top']}>
       <FlatList
         ref={listRef}
         data={filteredOrders}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
+        refreshing={isRefreshing}
+        onRefresh={handleRefresh}
         renderItem={({ item }) => {
           const isHighlighted = highlightedOrderId === item.id;
           return (
@@ -512,7 +1067,7 @@ export default function OrdersScreen() {
               </View>
               <View style={styles.cardBody}>
                 <View style={styles.cardHeader}>
-                  <Text style={styles.productName}>{item.productName}</Text>
+                  <Text style={styles.productName}>{item.title}</Text>
                   <View
                     style={[
                       styles.statusBadge,
@@ -526,7 +1081,7 @@ export default function OrdersScreen() {
                     </Text>
                   </View>
                 </View>
-                <Text style={styles.orderNumber}>{item.orderNumber}</Text>
+                <Text style={styles.orderNumber}>{item.deviceSummary}</Text>
                 <View style={styles.metaRow}>
                   <View style={styles.metaGroup}>
                     <Text style={styles.metaLabel}>Rental Period</Text>
@@ -588,17 +1143,47 @@ export default function OrdersScreen() {
                 );
               })}
             </View>
+            {errorMessage && orders.length > 0 ? (
+              <View style={styles.inlineErrorBanner}>
+                <Ionicons name="warning-outline" size={16} color="#b45309" />
+                <Text style={styles.inlineErrorText}>{errorMessage}</Text>
+                <Pressable onPress={handleRetry}>
+                  <Text style={styles.inlineErrorAction}>Try again</Text>
+                </Pressable>
+              </View>
+            ) : null}
           </View>
         )}
-        ListEmptyComponent={
+        ListEmptyComponent={() => (
           <View style={styles.emptyState}>
-            <Ionicons name="cube-outline" size={48} color="#9ca3af" />
-            <Text style={styles.emptyTitle}>No orders found</Text>
-            <Text style={styles.emptySubtitle}>
-              Orders matching the selected status will appear here.
-            </Text>
+            {isLoading ? (
+              <>
+                <ActivityIndicator size="large" color="#111111" />
+                <Text style={styles.emptyTitle}>Loading orders…</Text>
+                <Text style={styles.emptySubtitle}>
+                  Hang tight while we fetch your latest rentals.
+                </Text>
+              </>
+            ) : (
+              <>
+                <Ionicons name="cube-outline" size={48} color="#9ca3af" />
+                <Text style={styles.emptyTitle}>
+                  {errorMessage ? 'Unable to load orders' : 'No orders found'}
+                </Text>
+                <Text style={styles.emptySubtitle}>
+                  {errorMessage
+                    ? errorMessage
+                    : 'Orders matching the selected status will appear here.'}
+                </Text>
+                {errorMessage ? (
+                  <Pressable style={styles.retryButton} onPress={handleRetry}>
+                    <Text style={styles.retryButtonText}>Try Again</Text>
+                  </Pressable>
+                ) : null}
+              </>
+            )}
           </View>
-        }
+        )}
         ItemSeparatorComponent={() => <View style={styles.separator} />}
       />
 
@@ -671,6 +1256,25 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 12,
+  },
+  inlineErrorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: '#fef3c7',
+  },
+  inlineErrorText: {
+    flex: 1,
+    color: '#92400e',
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  inlineErrorAction: {
+    color: '#b45309',
+    fontSize: 13,
+    fontWeight: '600',
   },
   filterChip: {
     paddingHorizontal: 16,
@@ -794,6 +1398,18 @@ const styles = StyleSheet.create({
   separator: {
     height: 16,
   },
+  retryButton: {
+    marginTop: 16,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: '#111111',
+  },
+  retryButtonText: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: '600',
+  },
   emptyState: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -911,10 +1527,83 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     color: '#4b5563',
   },
+  contractSection: {
+    marginTop: 16,
+    gap: 8,
+  },
+  contractSectionHeading: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#111111',
+  },
+  contractStateWrapper: {
+    minHeight: 140,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+  },
+  contractStateText: {
+    fontSize: 14,
+    color: '#4b5563',
+    textAlign: 'center',
+  },
+  contractErrorText: {
+    color: '#b91c1c',
+  },
+  contractRetryButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#111111',
+  },
+  contractRetryButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#111111',
+  },
+  contractMetaList: {
+    gap: 8,
+    marginBottom: 12,
+  },
+  contractMetaRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  contractMetaLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#111111',
+  },
+  contractMetaValue: {
+    fontSize: 13,
+    color: '#4b5563',
+    textAlign: 'right',
+    flexShrink: 1,
+  },
+  contractTermsSection: {
+    marginTop: 16,
+    gap: 8,
+  },
+  contractTermsHeading: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#111111',
+  },
+  contractTermsText: {
+    fontSize: 13,
+    lineHeight: 20,
+    color: '#4b5563',
+  },
   agreementRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 12,
+  },
+  agreementRowDisabled: {
+    opacity: 0.6,
   },
   agreementTextWrapper: {
     flex: 1,

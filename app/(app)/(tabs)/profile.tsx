@@ -1,4 +1,5 @@
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import type { ComponentProps } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -13,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 
 import { useAuth } from '@/contexts/AuthContext';
+import { formatKycStatusLabel, getKycProgressState } from '@/constants/kyc';
 
 const formatRole = (role?: string | null) => {
   if (!role || role.trim().length === 0) {
@@ -38,14 +40,73 @@ const formatStatus = (status?: string | null) => {
     .join(' ');
 };
 
-const formatKycStatus = (status?: string | null) => {
-  const formatted = formatStatus(status);
+type KycReminderVariant = 'reminder' | 'pending' | 'verified' | 'attention';
 
-  if (formatted === 'Unknown') {
-    return 'Not Started';
+type KycReminderContent = {
+  icon: { name: ComponentProps<typeof Ionicons>['name']; color: string };
+  title: string;
+  description: string;
+  primaryAction: {
+    label: string;
+    route: `/(app)/${string}`;
+    variant: 'primary' | 'dark' | 'outline' | 'danger';
+  };
+  cardVariant: KycReminderVariant;
+};
+
+const getKycReminderContent = (status?: string | null): KycReminderContent => {
+  const progress = getKycProgressState(status);
+
+  switch (progress) {
+    case 'pending':
+      return {
+        icon: { name: 'time-outline', color: '#4338ca' },
+        title: 'KYC Under Review',
+        description: 'We received your documents and are currently reviewing them. You can review what you sent while you wait.',
+        primaryAction: {
+          label: 'Show My Documents',
+          route: '/(app)/kyc-details',
+          variant: 'dark',
+        },
+        cardVariant: 'pending',
+      };
+    case 'verified':
+      return {
+        icon: { name: 'shield-checkmark-outline', color: '#047857' },
+        title: 'KYC Verified',
+        description: 'Your identity has been verified. Feel free to review your submitted documents at any time.',
+        primaryAction: {
+          label: 'View KYC Information',
+          route: '/(app)/kyc-details',
+          variant: 'outline',
+        },
+        cardVariant: 'verified',
+      };
+    case 'rejected':
+      return {
+        icon: { name: 'alert-circle-outline', color: '#b91c1c' },
+        title: 'KYC Needs Attention',
+        description: 'We could not verify your documents. Please review them and resubmit so we can activate your rentals.',
+        primaryAction: {
+          label: 'Update KYC Documents',
+          route: '/(app)/kyc-details',
+          variant: 'danger',
+        },
+        cardVariant: 'attention',
+      };
+    default:
+      return {
+        icon: { name: 'shield-checkmark-outline', color: '#b45309' },
+        title: 'Complete Your KYC',
+        description: 'Verify your identity to unlock rentals and keep your account secure.',
+        primaryAction: {
+          label: 'Start KYC',
+          route: '/(app)/kyc-documents',
+          variant: 'primary',
+        },
+        cardVariant: 'reminder',
+      };
   }
-
-  return formatted;
 };
 
 export default function ProfileScreen() {
@@ -82,6 +143,17 @@ export default function ProfileScreen() {
     }
   }, [isFetchingProfile, refreshProfile]);
 
+  const handleOpenSettings = useCallback(() => {
+    router.push('/(app)/profile-settings');
+  }, [router]);
+
+  const handleKycAction = useCallback(
+    (route: `/(app)/${string}`) => {
+      router.push(route);
+    },
+    [router]
+  );
+
   const contactItems = useMemo(() => {
     if (!user) {
       return [];
@@ -93,6 +165,18 @@ export default function ProfileScreen() {
         : 'Not provided';
 
     return [
+      {
+        id: 'customerId',
+        label: 'Customer ID',
+        value: String(user.customerId),
+        icon: 'finger-print-outline' as const,
+      },
+      {
+        id: 'accountId',
+        label: 'Account ID',
+        value: String(user.accountId),
+        icon: 'key-outline' as const,
+      },
       {
         id: 'fullName',
         label: 'Full Name',
@@ -121,13 +205,21 @@ export default function ProfileScreen() {
         icon: 'briefcase-outline' as const,
       },
       {
+        id: 'status',
+        label: 'Account Status',
+        value: formatStatus(user.status),
+        icon: 'information-circle-outline' as const,
+      },
+      {
         id: 'kycStatus',
         label: 'KYC Status',
-        value: formatKycStatus(user.kycStatus),
+        value: formatKycStatusLabel(user.kycStatus),
         icon: 'shield-checkmark-outline' as const,
       },
     ];
   }, [user]);
+
+  const kycReminder = useMemo(() => getKycReminderContent(user?.kycStatus), [user?.kycStatus]);
 
   const isInitialLoading = isHydrating || (!user && isFetchingProfile);
 
@@ -215,6 +307,9 @@ export default function ProfileScreen() {
           <Ionicons name="person-circle-outline" size={32} color="#111" />
           <Text style={styles.headerTitle}>User Profile</Text>
           <View style={styles.headerActions}>
+            <TouchableOpacity style={styles.headerActionButton} onPress={handleOpenSettings}>
+              <Ionicons name="settings-outline" size={20} color="#111" />
+            </TouchableOpacity>
             <TouchableOpacity
               style={[
                 styles.headerActionButton,
@@ -284,18 +379,43 @@ export default function ProfileScreen() {
           </View>
         </View>
 
-        <View style={styles.kycCard}>
+        <View
+          style={[
+            styles.kycCard,
+            kycReminder.cardVariant === 'pending' && styles.kycCardPending,
+            kycReminder.cardVariant === 'verified' && styles.kycCardVerified,
+            kycReminder.cardVariant === 'attention' && styles.kycCardAttention,
+          ]}
+        >
           <View style={styles.kycHeader}>
-            <Ionicons name="shield-checkmark-outline" size={24} color="#f6a609" />
-            <Text style={styles.kycTitle}>KYC Reminder</Text>
+            <Ionicons name={kycReminder.icon.name} size={24} color={kycReminder.icon.color} />
+            <Text style={styles.kycTitle}>{kycReminder.title}</Text>
           </View>
-          <Text style={styles.kycDescription}>Don’t forget to complete your KYC.</Text>
-          <TouchableOpacity
-            style={styles.kycButton}
-            onPress={() => router.push('/(app)/kyc-documents')}
-          >
-            <Text style={styles.kycButtonText}>Complete KYC</Text>
-          </TouchableOpacity>
+          <Text style={styles.kycDescription}>{kycReminder.description}</Text>
+          <View style={styles.kycActions}>
+            <TouchableOpacity
+              style={[
+                styles.kycButton,
+                kycReminder.primaryAction.variant === 'primary' && styles.kycButtonPrimary,
+                kycReminder.primaryAction.variant === 'dark' && styles.kycButtonDark,
+                kycReminder.primaryAction.variant === 'outline' && styles.kycButtonOutline,
+                kycReminder.primaryAction.variant === 'danger' && styles.kycButtonDanger,
+              ]}
+              onPress={() => handleKycAction(kycReminder.primaryAction.route)}
+            >
+              <Text
+                style={[
+                  styles.kycButtonText,
+                  kycReminder.primaryAction.variant === 'dark' ||
+                    kycReminder.primaryAction.variant === 'danger'
+                    ? styles.kycButtonTextLight
+                    : styles.kycButtonTextDark,
+                ]}
+              >
+                {kycReminder.primaryAction.label}
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         <TouchableOpacity style={styles.logoutButton} onPress={() => void handleLogout()}>
@@ -511,6 +631,15 @@ const styles = StyleSheet.create({
     padding: 20,
     gap: 12,
   },
+  kycCardPending: {
+    backgroundColor: '#eef2ff',
+  },
+  kycCardVerified: {
+    backgroundColor: '#ecfdf5',
+  },
+  kycCardAttention: {
+    backgroundColor: '#fef2f2',
+  },
   kycHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -525,17 +654,44 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#555555',
   },
+  kycActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
   kycButton: {
     alignSelf: 'flex-start',
-    backgroundColor: '#f6a609',
     borderRadius: 20,
     paddingHorizontal: 20,
     paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  kycButtonPrimary: {
+    backgroundColor: '#f6a609',
+    borderColor: '#f6a609',
+  },
+  kycButtonDark: {
+    backgroundColor: '#111111',
+    borderColor: '#111111',
+  },
+  kycButtonOutline: {
+    backgroundColor: '#ffffff',
+    borderColor: '#111111',
+  },
+  kycButtonDanger: {
+    backgroundColor: '#dc2626',
+    borderColor: '#dc2626',
   },
   kycButtonText: {
     fontSize: 14,
     fontWeight: '600',
+  },
+  kycButtonTextDark: {
     color: '#111111',
+  },
+  kycButtonTextLight: {
+    color: '#ffffff',
   },
   logoutButton: {
     borderRadius: 16,
