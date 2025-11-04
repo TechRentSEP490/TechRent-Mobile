@@ -12,9 +12,9 @@ export type ContractResponse = {
   description: string | null;
   contractType: string | null;
   status: string | null;
-  customerId: number | null;
-  staffId: number | null;
-  orderId: number | null;
+  customerId: number | string | null;
+  staffId: number | string | null;
+  orderId: number | string | null;
   contractContent: string | null;
   termsAndConditions: string | null;
   rentalPeriodDays: number | null;

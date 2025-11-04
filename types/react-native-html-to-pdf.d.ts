@@ -20,6 +20,6 @@ declare module 'react-native-html-to-pdf' {
     convert(options: HTMLToPDFOptions): Promise<HTMLToPDFResult>;
   };
 
-  const RNHTMLtoPDF: HTMLToPDFModule;
+  const RNHTMLtoPDF: HTMLToPDFModule | null | undefined;
   export default RNHTMLtoPDF;
 }

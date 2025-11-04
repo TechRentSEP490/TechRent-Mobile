@@ -1311,7 +1311,13 @@ export default function OrdersScreen() {
         }
 
         const html = buildContractPdfHtml(contractDetails, contextLabel);
-        const pdfResult = await RNHTMLtoPDF.convert({
+        const pdfModule = RNHTMLtoPDF ?? null;
+
+        if (!pdfModule || typeof pdfModule.convert !== 'function') {
+          throw new Error('Contract PDF generation is not supported on this device.');
+        }
+
+        const pdfResult = await pdfModule.convert({
           html,
           fileName: `contract-${contractId}`,
           base64: false,
