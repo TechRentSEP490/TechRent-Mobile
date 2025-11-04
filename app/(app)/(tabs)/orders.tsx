@@ -22,6 +22,9 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 
+import { useAuth } from '@/contexts/AuthContext';
+import { sendContractPinEmail, signContract } from '@/services/contracts';
+
 type OrderStatusFilter = 'All' | 'Pending' | 'Delivered' | 'In Use' | 'Completed';
 type OrderStatus = Exclude<OrderStatusFilter, 'All'>;
 type OrderActionType =
@@ -45,6 +48,7 @@ type OrderCard = {
     label: string;
     type: OrderActionType;
   };
+  contractId?: number | null;
 };
 
 const ORDER_FILTERS: OrderStatusFilter[] = ['All', 'Pending', 'Delivered', 'In Use', 'Completed'];
@@ -61,6 +65,7 @@ const ORDERS: OrderCard[] = [
     statusColor: '#b45309',
     statusBackground: '#fef3c7',
     action: { label: 'Continue Process', type: 'continueProcess' },
+    contractId: 28,
   },
   {
     id: 'ORD-12345',
@@ -133,6 +138,7 @@ export default function OrdersScreen() {
     flow?: string | string[];
     orderId?: string | string[];
   }>();
+  const { session, user } = useAuth();
   const listRef = useRef<FlatList<OrderCard>>(null);
   const [selectedFilter, setSelectedFilter] = useState<OrderStatusFilter>('All');
   const [highlightedOrderId, setHighlightedOrderId] = useState<string | null>(null);
@@ -144,6 +150,15 @@ export default function OrdersScreen() {
   const otpRefs = useRef<(TextInput | null)[]>([]);
   const [selectedPayment, setSelectedPayment] = useState(PAYMENT_OPTIONS[0].id);
   const [hasAgreed, setHasAgreed] = useState(false);
+  const [verificationEmail, setVerificationEmail] = useState('');
+  const [emailEditorVisible, setEmailEditorVisible] = useState(false);
+  const [emailInputValue, setEmailInputValue] = useState('');
+  const [isSendingPin, setIsSendingPin] = useState(false);
+  const [isSigningContract, setIsSigningContract] = useState(false);
+  const [verificationStatus, setVerificationStatus] = useState<string | null>(null);
+  const [verificationError, setVerificationError] = useState<string | null>(null);
+  const [signatureStatus, setSignatureStatus] = useState<string | null>(null);
+  const [signatureError, setSignatureError] = useState<string | null>(null);
 
   const progressWidth = useMemo(() => `${(currentStep / 3) * 100}%`, [currentStep]);
   const isAgreementComplete = hasAgreed;
@@ -151,6 +166,8 @@ export default function OrdersScreen() {
     () => otpDigits.every((digit) => digit.length === 1),
     [otpDigits],
   );
+  const isAgreementActionDisabled = !isAgreementComplete || isSendingPin;
+  const isVerifyActionDisabled = !isOtpComplete || isSigningContract;
 
   const filteredOrders = useMemo(() => {
     if (selectedFilter === 'All') {
@@ -160,14 +177,27 @@ export default function OrdersScreen() {
     return ORDERS.filter((order) => order.statusFilter === selectedFilter);
   }, [selectedFilter]);
 
-  const openFlow = useCallback((order: OrderCard) => {
-    setActiveOrder(order);
-    setModalVisible(true);
-    setCurrentStep(1);
-    setOtpDigits(Array(6).fill(''));
-    setSelectedPayment(PAYMENT_OPTIONS[0].id);
-    setHasAgreed(false);
-  }, []);
+  const openFlow = useCallback(
+    (order: OrderCard) => {
+      setActiveOrder(order);
+      setModalVisible(true);
+      setCurrentStep(1);
+      setOtpDigits(Array(6).fill(''));
+      setSelectedPayment(PAYMENT_OPTIONS[0].id);
+      setHasAgreed(false);
+      const nextEmail = user?.email ?? '';
+      setVerificationEmail(nextEmail);
+      setEmailInputValue(nextEmail);
+      setVerificationStatus(null);
+      setVerificationError(null);
+      setSignatureStatus(null);
+      setSignatureError(null);
+      setIsSendingPin(false);
+      setIsSigningContract(false);
+      setEmailEditorVisible(false);
+    },
+    [user?.email],
+  );
 
   const resetFlow = useCallback(() => {
     setModalVisible(false);
@@ -176,6 +206,13 @@ export default function OrdersScreen() {
     setSelectedPayment(PAYMENT_OPTIONS[0].id);
     setHasAgreed(false);
     setActiveOrder(null);
+    setVerificationStatus(null);
+    setVerificationError(null);
+    setSignatureStatus(null);
+    setSignatureError(null);
+    setIsSendingPin(false);
+    setIsSigningContract(false);
+    setEmailEditorVisible(false);
   }, []);
 
   useEffect(() => {
@@ -230,10 +267,6 @@ export default function OrdersScreen() {
     setPendingScrollOrderId(null);
   }, [filteredOrders, pendingScrollOrderId]);
 
-  const goToNextStep = () => {
-    setCurrentStep((prev) => Math.min(prev + 1, 3));
-  };
-
   const goToPreviousStep = () => {
     setCurrentStep((prev) => Math.max(prev - 1, 1));
   };
@@ -257,6 +290,137 @@ export default function OrdersScreen() {
       otpRefs.current[index - 1]?.focus();
     }
   };
+
+  const requestContractPin = useCallback(
+    async ({ email, advanceStep = false }: { email?: string; advanceStep?: boolean } = {}) => {
+      if (!activeOrder?.contractId) {
+        Alert.alert(
+          'Contract unavailable',
+          'We could not find the contract associated with this order. Please contact support.',
+        );
+        return false;
+      }
+
+      if (!session?.accessToken) {
+        Alert.alert('Sign in required', 'Please sign in again to continue the contract process.');
+        return false;
+      }
+
+      const targetEmail = (email ?? verificationEmail).trim();
+
+      if (targetEmail.length === 0) {
+        Alert.alert('Email required', 'Please provide an email address to receive the PIN code.');
+        return false;
+      }
+
+      setIsSendingPin(true);
+      setVerificationError(null);
+      setVerificationStatus(null);
+
+      try {
+        const response = await sendContractPinEmail(
+          activeOrder.contractId,
+          { email: targetEmail },
+          session,
+        );
+
+        setVerificationEmail(targetEmail);
+        setEmailInputValue(targetEmail);
+        setVerificationStatus(response.details || response.message || 'Verification code sent.');
+        setSignatureStatus(null);
+        setSignatureError(null);
+        setOtpDigits(Array(6).fill(''));
+
+        if (advanceStep) {
+          setCurrentStep(2);
+        }
+
+        return true;
+      } catch (error) {
+        const normalizedError =
+          error instanceof Error ? error.message : 'Failed to request a verification code.';
+        setVerificationError(normalizedError);
+        return false;
+      } finally {
+        setIsSendingPin(false);
+      }
+    },
+    [activeOrder?.contractId, session, verificationEmail],
+  );
+
+  const handleAgreementSubmit = useCallback(() => {
+    void requestContractPin({ advanceStep: true });
+  }, [requestContractPin]);
+
+  const handleResendCode = useCallback(() => {
+    void requestContractPin({ advanceStep: false });
+  }, [requestContractPin]);
+
+  const handleVerifyOtp = useCallback(async () => {
+    if (!activeOrder?.contractId) {
+      Alert.alert(
+        'Contract unavailable',
+        'We could not find the contract associated with this order. Please contact support.',
+      );
+      return;
+    }
+
+    if (!session?.accessToken) {
+      Alert.alert('Sign in required', 'Please sign in again to continue the contract process.');
+      return;
+    }
+
+    const pinCode = otpDigits.join('');
+
+    if (pinCode.length !== otpDigits.length) {
+      setSignatureError('Please enter the 6-digit verification code.');
+      return;
+    }
+
+    setIsSigningContract(true);
+    setSignatureError(null);
+
+    try {
+      const response = await signContract(
+        activeOrder.contractId,
+        {
+          contractId: activeOrder.contractId,
+          pinCode,
+          digitalSignature: 'string',
+          signatureMethod: 'EMAIL_OTP',
+          deviceInfo: 'string',
+          ipAddress: 'string',
+        },
+        session,
+      );
+
+      setSignatureStatus(response.details || response.message || 'Contract signed successfully.');
+      setCurrentStep(3);
+    } catch (error) {
+      const normalizedError =
+        error instanceof Error ? error.message : 'Failed to verify the provided PIN code.';
+      setSignatureError(normalizedError);
+    } finally {
+      setIsSigningContract(false);
+    }
+  }, [activeOrder?.contractId, otpDigits, session]);
+
+  const handleOpenEmailEditor = useCallback(() => {
+    setEmailInputValue(verificationEmail);
+    setEmailEditorVisible(true);
+  }, [verificationEmail]);
+
+  const handleCloseEmailEditor = useCallback(() => {
+    setEmailEditorVisible(false);
+  }, []);
+
+  const handleSubmitEmailUpdate = useCallback(async () => {
+    const success = await requestContractPin({ email: emailInputValue, advanceStep: false });
+
+    if (success) {
+      setEmailEditorVisible(false);
+    }
+  }, [emailInputValue, requestContractPin]);
 
   const handleCardAction = useCallback(
     (order: OrderCard) => {
@@ -340,24 +504,29 @@ export default function OrdersScreen() {
                 style={[
                   styles.primaryButton,
                   styles.buttonFlex,
-                  isAgreementComplete ? styles.primaryButtonEnabled : styles.primaryButtonDisabled,
+                  isAgreementActionDisabled
+                    ? styles.primaryButtonDisabled
+                    : styles.primaryButtonEnabled,
                 ]}
-                onPress={goToNextStep}
-                disabled={!isAgreementComplete}
+                onPress={handleAgreementSubmit}
+                disabled={isAgreementActionDisabled}
               >
                 <Text
                   style={[
                     styles.primaryButtonText,
-                    !isAgreementComplete && styles.primaryButtonTextDisabled,
+                    isAgreementActionDisabled && styles.primaryButtonTextDisabled,
                   ]}
                 >
-                  Next
+                  {isSendingPin ? 'Sending…' : 'Next'}
                 </Text>
               </Pressable>
               <Pressable style={[styles.secondaryButton, styles.buttonFlex]} onPress={resetFlow}>
                 <Text style={styles.secondaryButtonText}>Cancel</Text>
               </Pressable>
             </View>
+            {verificationError ? (
+              <Text style={[styles.statusMessage, styles.statusMessageError]}>{verificationError}</Text>
+            ) : null}
           </View>
         );
       case 2:
@@ -367,7 +536,11 @@ export default function OrdersScreen() {
               <Ionicons name="shield-checkmark-outline" size={32} color="#111" />
             </View>
             <Text style={styles.stepTitle}>Verify Your Signature</Text>
-            <Text style={styles.stepSubtitle}>We&apos;ve sent a 6-digit code to user@gmail.com</Text>
+            <Text style={styles.stepSubtitle}>
+              {verificationEmail
+                ? `We've sent a 6-digit code to ${verificationEmail}`
+                : "We've sent a 6-digit code to your email address"}
+            </Text>
             <View style={styles.otpInputsRow}>
               {otpDigits.map((digit, index) => (
                 <TextInput
@@ -386,29 +559,51 @@ export default function OrdersScreen() {
               ))}
             </View>
             <View style={styles.verificationHelpers}>
-              <Pressable>
-                <Text style={styles.helperLink}>Didn&apos;t receive the code?</Text>
+              <Pressable onPress={handleResendCode} disabled={isSendingPin}>
+                <Text
+                  style={[
+                    styles.helperLink,
+                    isSendingPin && styles.helperLinkDisabled,
+                  ]}
+                >
+                  {isSendingPin ? 'Resending…' : "Didn't receive the code?"}
+                </Text>
               </Pressable>
               <Text style={styles.helperText}>Resend available in 00:45</Text>
             </View>
+            {verificationStatus ? (
+              <Text style={[styles.statusMessage, styles.statusMessageSuccess]}>
+                {verificationStatus}
+              </Text>
+            ) : null}
+            {verificationError ? (
+              <Text style={[styles.statusMessage, styles.statusMessageError]}>
+                {verificationError}
+              </Text>
+            ) : null}
+            {signatureError ? (
+              <Text style={[styles.statusMessage, styles.statusMessageError]}>
+                {signatureError}
+              </Text>
+            ) : null}
             <Pressable
               style={[
                 styles.primaryButton,
-                isOtpComplete ? styles.primaryButtonEnabled : styles.primaryButtonDisabled,
+                isVerifyActionDisabled ? styles.primaryButtonDisabled : styles.primaryButtonEnabled,
               ]}
-              onPress={goToNextStep}
-              disabled={!isOtpComplete}
+              onPress={handleVerifyOtp}
+              disabled={isVerifyActionDisabled}
             >
               <Text
                 style={[
                   styles.primaryButtonText,
-                  !isOtpComplete && styles.primaryButtonTextDisabled,
+                  isVerifyActionDisabled && styles.primaryButtonTextDisabled,
                 ]}
               >
-                Verify Code
+                {isSigningContract ? 'Verifying…' : 'Verify Code'}
               </Text>
             </Pressable>
-            <Pressable style={styles.helperButton}>
+            <Pressable style={styles.helperButton} onPress={handleOpenEmailEditor}>
               <Text style={styles.helperButtonText}>Use a different email</Text>
             </Pressable>
             <Pressable style={styles.secondaryButton} onPress={goToPreviousStep}>
@@ -421,6 +616,11 @@ export default function OrdersScreen() {
         return (
           <View style={styles.stepContent}>
             <Text style={styles.stepTitle}>Review &amp; Pay</Text>
+            {signatureStatus ? (
+              <Text style={[styles.statusMessage, styles.statusMessageSuccess]}>
+                {signatureStatus}
+              </Text>
+            ) : null}
             <View style={styles.summaryCard}>
               <View style={styles.summaryRow}>
                 <Text style={styles.summaryLabel}>Order</Text>
@@ -619,6 +819,59 @@ export default function OrdersScreen() {
               <View style={[styles.progressFill, { width: progressWidth }]} />
             </View>
             {renderStepContent()}
+          </View>
+        </View>
+      </Modal>
+      <Modal
+        animationType="fade"
+        transparent
+        visible={emailEditorVisible}
+        onRequestClose={handleCloseEmailEditor}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.emailModalCard}>
+            <Text style={styles.emailModalTitle}>Update email address</Text>
+            <Text style={styles.emailModalSubtitle}>
+              Enter the email where you would like to receive the verification code.
+            </Text>
+            <TextInput
+              style={styles.emailInput}
+              value={emailInputValue}
+              onChangeText={setEmailInputValue}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoCorrect={false}
+              placeholder="name@example.com"
+              placeholderTextColor="#9ca3af"
+            />
+            {verificationError ? (
+              <Text style={[styles.statusMessage, styles.statusMessageError, { textAlign: 'left' }]}>
+                {verificationError}
+              </Text>
+            ) : null}
+            <View style={styles.emailModalActions}>
+              <Pressable style={styles.emailModalButton} onPress={handleCloseEmailEditor}>
+                <Text style={styles.emailModalButtonText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={[
+                  styles.emailModalButton,
+                  styles.emailModalButtonPrimary,
+                  isSendingPin && styles.primaryButtonDisabled,
+                ]}
+                onPress={handleSubmitEmailUpdate}
+                disabled={isSendingPin}
+              >
+                <Text
+                  style={[
+                    styles.emailModalButtonText,
+                    styles.emailModalButtonTextPrimary,
+                  ]}
+                >
+                  {isSendingPin ? 'Sending…' : 'Send code'}
+                </Text>
+              </Pressable>
+            </View>
           </View>
         </View>
       </Modal>
@@ -825,6 +1078,58 @@ const styles = StyleSheet.create({
     padding: 24,
     gap: 16,
   },
+  emailModalCard: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: '#ffffff',
+    borderRadius: 24,
+    padding: 20,
+    gap: 16,
+  },
+  emailModalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111111',
+  },
+  emailModalSubtitle: {
+    fontSize: 13,
+    color: '#6b7280',
+    lineHeight: 18,
+  },
+  emailInput: {
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: '#111111',
+  },
+  emailModalActions: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  emailModalButton: {
+    flex: 1,
+    borderRadius: 12,
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+  },
+  emailModalButtonPrimary: {
+    backgroundColor: '#111111',
+    borderColor: '#111111',
+  },
+  emailModalButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#111111',
+  },
+  emailModalButtonTextPrimary: {
+    color: '#ffffff',
+  },
   modalHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1009,6 +1314,9 @@ const styles = StyleSheet.create({
     color: '#1f7df4',
     fontWeight: '600',
   },
+  helperLinkDisabled: {
+    color: '#9ca3af',
+  },
   helperText: {
     fontSize: 12,
     color: '#9ca3af',
@@ -1022,6 +1330,17 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#1f7df4',
     fontWeight: '600',
+  },
+  statusMessage: {
+    marginTop: 8,
+    fontSize: 13,
+    textAlign: 'center',
+  },
+  statusMessageSuccess: {
+    color: '#15803d',
+  },
+  statusMessageError: {
+    color: '#b91c1c',
   },
   summaryCard: {
     backgroundColor: '#f9fafb',
