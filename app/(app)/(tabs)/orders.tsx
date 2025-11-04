@@ -25,7 +25,12 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 
 import { useAuth } from '@/contexts/AuthContext';
 import { fetchDeviceModelById } from '@/services/device-models';
-import { fetchContracts, type ContractResponse } from '@/services/contracts';
+import {
+  fetchContracts,
+  sendContractPin,
+  signContract,
+  type ContractResponse,
+} from '@/services/contracts';
 import { fetchRentalOrders, type RentalOrderResponse } from '@/services/rental-orders';
 
 type OrderStatusFilter = 'All' | 'Pending' | 'Delivered' | 'In Use' | 'Completed';
@@ -255,6 +260,20 @@ const formatContractStatus = (status: string | null | undefined): string => {
   return toTitleCase(status);
 };
 
+const isValidEmail = (value: string): boolean => {
+  if (!value) {
+    return false;
+  }
+
+  const trimmed = value.trim();
+
+  if (trimmed.length === 0) {
+    return false;
+  }
+
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed.toLowerCase());
+};
+
 const deriveDeviceSummary = (order: RentalOrderResponse, deviceNames: Map<string, string>): string => {
   if (!order.orderDetails || order.orderDetails.length === 0) {
     return 'No devices listed';
@@ -325,12 +344,13 @@ const PAYMENT_OPTIONS = [
 
 export default function OrdersScreen() {
   const router = useRouter();
-  const { session, ensureSession } = useAuth();
+  const { session, ensureSession, user } = useAuth();
   const { flow, orderId } = useLocalSearchParams<{
     flow?: string | string[];
     orderId?: string | string[];
   }>();
   const listRef = useRef<FlatList<OrderCard>>(null);
+  const defaultVerificationEmail = useMemo(() => user?.email?.trim() ?? '', [user?.email]);
   const [orders, setOrders] = useState<OrderCard[]>([]);
   const [selectedFilter, setSelectedFilter] = useState<OrderStatusFilter>('All');
   const [highlightedOrderId, setHighlightedOrderId] = useState<string | null>(null);
@@ -346,6 +366,13 @@ export default function OrdersScreen() {
   const [isContractLoading, setContractLoading] = useState(false);
   const [contractErrorMessage, setContractErrorMessage] = useState<string | null>(null);
   const [contractRequestId, setContractRequestId] = useState(0);
+  const [verificationEmail, setVerificationEmail] = useState(defaultVerificationEmail);
+  const [pendingEmailInput, setPendingEmailInput] = useState(defaultVerificationEmail);
+  const [isEmailEditorVisible, setEmailEditorVisible] = useState(false);
+  const [emailEditorError, setEmailEditorError] = useState<string | null>(null);
+  const [isSendingPin, setIsSendingPin] = useState(false);
+  const [isSigningContract, setIsSigningContract] = useState(false);
+  const [verificationError, setVerificationError] = useState<string | null>(null);
   const lastContractLoadRef = useRef<{ orderId: number | null; requestId: number }>({
     orderId: null,
     requestId: 0,
@@ -476,19 +503,29 @@ export default function OrdersScreen() {
     return orders.filter((order) => order.statusFilter === selectedFilter);
   }, [orders, selectedFilter]);
 
-  const openFlow = useCallback((order: OrderCard) => {
-    lastContractLoadRef.current = { orderId: null, requestId: 0 };
-    setActiveOrder(order);
-    setActiveContract(null);
-    setContractErrorMessage(null);
-    setContractLoading(false);
-    setModalVisible(true);
-    setCurrentStep(1);
-    setOtpDigits(Array(6).fill(''));
-    setSelectedPayment(PAYMENT_OPTIONS[0].id);
-    setHasAgreed(false);
-    setContractRequestId((previous) => previous + 1);
-  }, []);
+  const openFlow = useCallback(
+    (order: OrderCard) => {
+      lastContractLoadRef.current = { orderId: null, requestId: 0 };
+      setActiveOrder(order);
+      setActiveContract(null);
+      setContractErrorMessage(null);
+      setContractLoading(false);
+      setModalVisible(true);
+      setCurrentStep(1);
+      setOtpDigits(Array(6).fill(''));
+      setSelectedPayment(PAYMENT_OPTIONS[0].id);
+      setHasAgreed(false);
+      setVerificationEmail(defaultVerificationEmail);
+      setPendingEmailInput(defaultVerificationEmail);
+      setVerificationError(null);
+      setIsSendingPin(false);
+      setIsSigningContract(false);
+      setEmailEditorVisible(false);
+      setEmailEditorError(null);
+      setContractRequestId((previous) => previous + 1);
+    },
+    [defaultVerificationEmail],
+  );
 
   const resetFlow = useCallback(() => {
     lastContractLoadRef.current = { orderId: null, requestId: 0 };
@@ -501,7 +538,14 @@ export default function OrdersScreen() {
     setActiveContract(null);
     setContractErrorMessage(null);
     setContractLoading(false);
-  }, []);
+    setVerificationEmail(defaultVerificationEmail);
+    setPendingEmailInput(defaultVerificationEmail);
+    setVerificationError(null);
+    setIsSendingPin(false);
+    setIsSigningContract(false);
+    setEmailEditorVisible(false);
+    setEmailEditorError(null);
+  }, [defaultVerificationEmail]);
 
   const handleRetryContract = useCallback(() => {
     setContractRequestId((previous) => previous + 1);
@@ -668,19 +712,255 @@ export default function OrdersScreen() {
     setPendingScrollOrderId(null);
   }, [filteredOrders, pendingScrollOrderId]);
 
-  const goToNextStep = () => {
+  const goToNextStep = useCallback(() => {
     setCurrentStep((prev) => Math.min(prev + 1, 3));
-  };
+  }, []);
 
-  const goToPreviousStep = () => {
+  const goToPreviousStep = useCallback(() => {
     setCurrentStep((prev) => Math.max(prev - 1, 1));
-  };
+    setVerificationError(null);
+    setIsSigningContract(false);
+  }, []);
+
+  const requestContractPin = useCallback(
+    async ({ skipAdvance = false }: { skipAdvance?: boolean } = {}) => {
+      if (!activeContract?.contractId) {
+        throw new Error('A rental contract must be selected before requesting a verification code.');
+      }
+
+      const trimmedEmail = verificationEmail.trim();
+
+      if (!isValidEmail(trimmedEmail)) {
+        throw new Error('Please provide a valid email address to receive the verification code.');
+      }
+
+      const activeSession = session?.accessToken ? session : await ensureSession();
+
+      if (!activeSession?.accessToken) {
+        throw new Error('You must be signed in to continue the rental agreement.');
+      }
+
+      const result = await sendContractPin(
+        { accessToken: activeSession.accessToken, tokenType: activeSession.tokenType },
+        { contractId: activeContract.contractId, email: trimmedEmail },
+      );
+
+      if (!skipAdvance) {
+        goToNextStep();
+      }
+
+      return result;
+    },
+    [activeContract, ensureSession, goToNextStep, session, verificationEmail],
+  );
+
+  const handleAgreementContinue = useCallback(async () => {
+    if (isSendingPin) {
+      return;
+    }
+
+    const trimmedEmail = verificationEmail.trim();
+
+    if (trimmedEmail.length === 0) {
+      setPendingEmailInput(trimmedEmail);
+      setEmailEditorError('Email is required to receive the verification code.');
+      setEmailEditorVisible(true);
+      return;
+    }
+
+    if (!isValidEmail(trimmedEmail)) {
+      setPendingEmailInput(trimmedEmail);
+      setEmailEditorError('Please enter a valid email address.');
+      setEmailEditorVisible(true);
+      return;
+    }
+
+    setVerificationEmail(trimmedEmail);
+
+    try {
+      setIsSendingPin(true);
+      setVerificationError(null);
+      setOtpDigits(Array(6).fill(''));
+      await requestContractPin();
+    } catch (error) {
+      const fallbackMessage = 'Unable to send the verification code. Please try again.';
+      const normalizedError = error instanceof Error ? error : new Error(fallbackMessage);
+      const message =
+        normalizedError.message && normalizedError.message.trim().length > 0
+          ? normalizedError.message
+          : fallbackMessage;
+      Alert.alert('Unable to send code', message);
+    } finally {
+      setIsSendingPin(false);
+    }
+  }, [
+    isSendingPin,
+    requestContractPin,
+    setEmailEditorError,
+    setEmailEditorVisible,
+    setIsSendingPin,
+    setOtpDigits,
+    setPendingEmailInput,
+    setVerificationEmail,
+    setVerificationError,
+    verificationEmail,
+  ]);
+
+  const handleResendCode = useCallback(async () => {
+    if (isSendingPin) {
+      return;
+    }
+
+    const trimmedEmail = verificationEmail.trim();
+
+    if (!isValidEmail(trimmedEmail)) {
+      setPendingEmailInput(trimmedEmail);
+      setEmailEditorError('Please enter a valid email address.');
+      setEmailEditorVisible(true);
+      return;
+    }
+
+    setVerificationEmail(trimmedEmail);
+
+    try {
+      setIsSendingPin(true);
+      setVerificationError(null);
+      setOtpDigits(Array(6).fill(''));
+      const response = await requestContractPin({ skipAdvance: true });
+      Alert.alert(
+        'Verification code sent',
+        response?.details ??
+          `We sent a new verification code to ${trimmedEmail}. Please check your inbox.`,
+      );
+    } catch (error) {
+      const fallbackMessage = 'Unable to resend the verification code. Please try again.';
+      const normalizedError = error instanceof Error ? error : new Error(fallbackMessage);
+      const message =
+        normalizedError.message && normalizedError.message.trim().length > 0
+          ? normalizedError.message
+          : fallbackMessage;
+      Alert.alert('Unable to resend code', message);
+    } finally {
+      setIsSendingPin(false);
+    }
+  }, [
+    isSendingPin,
+    requestContractPin,
+    setEmailEditorError,
+    setEmailEditorVisible,
+    setIsSendingPin,
+    setOtpDigits,
+    setPendingEmailInput,
+    setVerificationEmail,
+    setVerificationError,
+    verificationEmail,
+  ]);
+
+  const handleVerifyCode = useCallback(async () => {
+    if (isSigningContract) {
+      return;
+    }
+
+    const pinCode = otpDigits.join('');
+
+    if (pinCode.length !== otpDigits.length) {
+      setVerificationError('Please enter the complete 6-digit verification code.');
+      return;
+    }
+
+    if (!activeContract?.contractId) {
+      setVerificationError('A rental contract is required to complete the signature.');
+      return;
+    }
+
+    try {
+      setIsSigningContract(true);
+      setVerificationError(null);
+      const activeSession = session?.accessToken ? session : await ensureSession();
+
+      if (!activeSession?.accessToken) {
+        throw new Error('You must be signed in to complete the electronic signature.');
+      }
+
+      await signContract(
+        { accessToken: activeSession.accessToken, tokenType: activeSession.tokenType },
+        {
+          contractId: activeContract.contractId,
+          digitalSignature: 'string',
+          pinCode,
+          signatureMethod: 'EMAIL_OTP',
+          deviceInfo: 'string',
+          ipAddress: 'string',
+        },
+      );
+
+      goToNextStep();
+    } catch (error) {
+      const fallbackMessage = 'Unable to verify the code. Please try again.';
+      const normalizedError = error instanceof Error ? error : new Error(fallbackMessage);
+      const message =
+        normalizedError.message && normalizedError.message.trim().length > 0
+          ? normalizedError.message
+          : fallbackMessage;
+      setVerificationError(message);
+    } finally {
+      setIsSigningContract(false);
+    }
+  }, [
+    activeContract,
+    ensureSession,
+    goToNextStep,
+    isSigningContract,
+    otpDigits,
+    session,
+    setIsSigningContract,
+    setVerificationError,
+  ]);
+
+  const handleOpenEmailEditor = useCallback(() => {
+    setPendingEmailInput(verificationEmail);
+    setEmailEditorError(null);
+    setEmailEditorVisible(true);
+  }, [setEmailEditorError, setEmailEditorVisible, setPendingEmailInput, verificationEmail]);
+
+  const handleCloseEmailEditor = useCallback(() => {
+    setEmailEditorVisible(false);
+    setEmailEditorError(null);
+  }, [setEmailEditorError, setEmailEditorVisible]);
+
+  const handleSaveEmail = useCallback(() => {
+    const trimmed = pendingEmailInput.trim();
+
+    if (trimmed.length === 0) {
+      setEmailEditorError('Email is required.');
+      return;
+    }
+
+    if (!isValidEmail(trimmed)) {
+      setEmailEditorError('Please enter a valid email address.');
+      return;
+    }
+
+    setVerificationEmail(trimmed);
+    setPendingEmailInput(trimmed);
+    setEmailEditorVisible(false);
+    setEmailEditorError(null);
+  }, [
+    pendingEmailInput,
+    setEmailEditorError,
+    setEmailEditorVisible,
+    setPendingEmailInput,
+    setVerificationEmail,
+  ]);
 
   const handleOtpChange = (value: string, index: number) => {
     const sanitized = value.replace(/[^0-9]/g, '');
     const digits = [...otpDigits];
     digits[index] = sanitized.slice(-1);
     setOtpDigits(digits);
+    if (verificationError) {
+      setVerificationError(null);
+    }
 
     if (sanitized && index < otpRefs.current.length - 1) {
       otpRefs.current[index + 1]?.focus();
@@ -894,17 +1174,21 @@ export default function OrdersScreen() {
                   styles.buttonFlex,
                   isAgreementComplete ? styles.primaryButtonEnabled : styles.primaryButtonDisabled,
                 ]}
-                onPress={goToNextStep}
-                disabled={!isAgreementComplete}
+                onPress={handleAgreementContinue}
+                disabled={!isAgreementComplete || isSendingPin}
               >
-                <Text
-                  style={[
-                    styles.primaryButtonText,
-                    !isAgreementComplete && styles.primaryButtonTextDisabled,
-                  ]}
-                >
-                  Next
-                </Text>
+                {isSendingPin ? (
+                  <ActivityIndicator color="#ffffff" />
+                ) : (
+                  <Text
+                    style={[
+                      styles.primaryButtonText,
+                      !isAgreementComplete && styles.primaryButtonTextDisabled,
+                    ]}
+                  >
+                    Next
+                  </Text>
+                )}
               </Pressable>
               <Pressable style={[styles.secondaryButton, styles.buttonFlex]} onPress={resetFlow}>
                 <Text style={styles.secondaryButtonText}>Cancel</Text>
@@ -920,7 +1204,11 @@ export default function OrdersScreen() {
               <Ionicons name="shield-checkmark-outline" size={32} color="#111" />
             </View>
             <Text style={styles.stepTitle}>Verify Your Signature</Text>
-            <Text style={styles.stepSubtitle}>We&apos;ve sent a 6-digit code to user@gmail.com</Text>
+            <Text style={styles.stepSubtitle}>
+              {verificationEmail
+                ? `We've sent a 6-digit code to ${verificationEmail}`
+                : 'Enter the 6-digit code we sent to your email address'}
+            </Text>
             <View style={styles.otpInputsRow}>
               {otpDigits.map((digit, index) => (
                 <TextInput
@@ -938,9 +1226,18 @@ export default function OrdersScreen() {
                 />
               ))}
             </View>
+            {verificationError ? (
+              <Text style={styles.otpErrorText} accessibilityRole="alert">
+                {verificationError}
+              </Text>
+            ) : null}
             <View style={styles.verificationHelpers}>
-              <Pressable>
-                <Text style={styles.helperLink}>Didn&apos;t receive the code?</Text>
+              <Pressable onPress={handleResendCode} disabled={isSendingPin}>
+                <Text
+                  style={[styles.helperLink, isSendingPin && styles.helperLinkDisabled]}
+                >
+                  Didn&apos;t receive the code?
+                </Text>
               </Pressable>
               <Text style={styles.helperText}>Resend available in 00:45</Text>
             </View>
@@ -949,19 +1246,30 @@ export default function OrdersScreen() {
                 styles.primaryButton,
                 isOtpComplete ? styles.primaryButtonEnabled : styles.primaryButtonDisabled,
               ]}
-              onPress={goToNextStep}
-              disabled={!isOtpComplete}
+              onPress={handleVerifyCode}
+              disabled={!isOtpComplete || isSigningContract}
             >
-              <Text
-                style={[
-                  styles.primaryButtonText,
-                  !isOtpComplete && styles.primaryButtonTextDisabled,
-                ]}
-              >
-                Verify Code
-              </Text>
+              {isSigningContract ? (
+                <ActivityIndicator color="#ffffff" />
+              ) : (
+                <Text
+                  style={[
+                    styles.primaryButtonText,
+                    !isOtpComplete && styles.primaryButtonTextDisabled,
+                  ]}
+                >
+                  Verify Code
+                </Text>
+              )}
             </Pressable>
-            <Pressable style={styles.helperButton}>
+            <Pressable
+              style={[
+                styles.helperButton,
+                (isSigningContract || isSendingPin) && styles.helperButtonDisabled,
+              ]}
+              onPress={handleOpenEmailEditor}
+              disabled={isSigningContract || isSendingPin}
+            >
               <Text style={styles.helperButtonText}>Use a different email</Text>
             </Pressable>
             <Pressable style={styles.secondaryButton} onPress={goToPreviousStep}>
@@ -1204,6 +1512,52 @@ export default function OrdersScreen() {
               <View style={[styles.progressFill, { width: progressWidth }]} />
             </View>
             {renderStepContent()}
+          </View>
+        </View>
+      </Modal>
+      <Modal
+        animationType="fade"
+        transparent
+        visible={isEmailEditorVisible}
+        onRequestClose={handleCloseEmailEditor}
+      >
+        <View style={styles.emailModalOverlay}>
+          <View style={styles.emailModalCard}>
+            <Text style={styles.emailModalTitle}>Update email address</Text>
+            <Text style={styles.emailModalDescription}>
+              Enter the email you want to use to receive the verification code.
+            </Text>
+            <TextInput
+              style={[
+                styles.emailInput,
+                emailEditorError ? styles.emailInputError : null,
+              ]}
+              placeholder="name@example.com"
+              value={pendingEmailInput}
+              onChangeText={(value) => {
+                setPendingEmailInput(value);
+                if (emailEditorError) {
+                  setEmailEditorError(null);
+                }
+              }}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoCorrect={false}
+              inputMode="email"
+            />
+            {emailEditorError ? (
+              <Text style={styles.emailErrorText} accessibilityRole="alert">
+                {emailEditorError}
+              </Text>
+            ) : null}
+            <View style={styles.emailModalActions}>
+              <Pressable style={styles.emailModalCancelButton} onPress={handleCloseEmailEditor}>
+                <Text style={styles.emailModalCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable style={styles.emailModalSaveButton} onPress={handleSaveEmail}>
+                <Text style={styles.emailModalSaveText}>Save</Text>
+              </Pressable>
+            </View>
           </View>
         </View>
       </Modal>
@@ -1688,6 +2042,12 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#111111',
   },
+  otpErrorText: {
+    marginTop: 12,
+    fontSize: 13,
+    color: '#b91c1c',
+    fontWeight: '500',
+  },
   verificationHelpers: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1698,6 +2058,9 @@ const styles = StyleSheet.create({
     color: '#1f7df4',
     fontWeight: '600',
   },
+  helperLinkDisabled: {
+    opacity: 0.5,
+  },
   helperText: {
     fontSize: 12,
     color: '#9ca3af',
@@ -1706,6 +2069,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 10,
+  },
+  helperButtonDisabled: {
+    opacity: 0.6,
   },
   helperButtonText: {
     fontSize: 14,
@@ -1785,6 +2151,75 @@ const styles = StyleSheet.create({
   paymentSecurityText: {
     fontSize: 12,
     color: '#6b7280',
+  },
+  emailModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  emailModalCard: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    padding: 20,
+    gap: 16,
+  },
+  emailModalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111111',
+  },
+  emailModalDescription: {
+    fontSize: 14,
+    color: '#4b5563',
+  },
+  emailInput: {
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: '#111111',
+  },
+  emailInputError: {
+    borderColor: '#b91c1c',
+  },
+  emailErrorText: {
+    fontSize: 12,
+    color: '#b91c1c',
+  },
+  emailModalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 12,
+  },
+  emailModalCancelButton: {
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    backgroundColor: '#ffffff',
+  },
+  emailModalCancelText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111111',
+  },
+  emailModalSaveButton: {
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#111111',
+  },
+  emailModalSaveText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#ffffff',
   },
 });
 
