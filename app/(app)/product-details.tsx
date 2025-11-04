@@ -18,6 +18,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { products, type ProductDetail } from '../../constants/products';
 import { useAuth } from '@/contexts/AuthContext';
+import { useCart } from '@/contexts/CartContext';
 import { useDeviceModel } from '@/hooks/use-device-model';
 
 type NormalizedSpecEntry = {
@@ -245,6 +246,7 @@ export default function ProductDetailsScreen() {
   const [authPromptMode, setAuthPromptMode] = useState<'rent' | 'cart' | null>(null);
   const router = useRouter();
   const { isSignedIn, isHydrating, session, user } = useAuth();
+  const { addItem, setRentalStartDate: setCartStartDate, setRentalEndDate: setCartEndDate } = useCart();
   const { productId: productIdParam, deviceModelId } = useLocalSearchParams<{
     productId?: string;
     deviceModelId?: string;
@@ -395,16 +397,11 @@ export default function ProductDetailsScreen() {
     const destinationProductId = product.id;
 
     if (rentMode === 'cart') {
+      addItem(product, quantity);
+      setCartStartDate(isoStartDate);
+      setCartEndDate(isoEndDate);
       closeRentModal();
-      router.push({
-        pathname: '/(app)/cart',
-        params: {
-          productId: destinationProductId,
-          quantity: String(quantity),
-          startDate: isoStartDate,
-          endDate: isoEndDate,
-        },
-      });
+      router.push('/(app)/cart');
       return;
     }
 
