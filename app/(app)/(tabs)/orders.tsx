@@ -15,7 +15,6 @@ import {
   Platform,
   Pressable,
   ScrollView,
-  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -24,8 +23,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-// eslint-disable-next-line import/no-unresolved
-import RNHTMLtoPDF from 'react-native-html-to-pdf';
+import { cacheDirectory, copyAsync, documentDirectory } from 'expo-file-system';
+import { printToFileAsync } from 'expo-print';
+import * as Sharing from 'expo-sharing';
 
 import { useAuth } from '@/contexts/AuthContext';
 import { fetchDeviceModelById } from '@/services/device-models';
@@ -1311,31 +1311,19 @@ export default function OrdersScreen() {
         }
 
         const html = buildContractPdfHtml(contractDetails, contextLabel);
-        const pdfModule = RNHTMLtoPDF ?? null;
-
-        if (!pdfModule || typeof pdfModule.convert !== 'function') {
-          throw new Error('Contract PDF generation is not supported on this device.');
-        }
-
-        const pdfResult = await pdfModule.convert({
+        const pdfResult = await printToFileAsync({
           html,
           fileName: `contract-${contractId}`,
-          base64: false,
-          directory: 'Documents',
         });
 
-        if (!pdfResult) {
-          throw new Error('Failed to generate the contract PDF. Please try again.');
-        }
-
-        const pdfPath = pdfResult.filePath ?? pdfResult.path;
-
-        if (!pdfPath) {
+        if (!pdfResult?.uri) {
           throw new Error('Failed to generate the contract PDF. Please try again.');
         }
 
         const normalizedPath =
-          Platform.OS === 'android' && !pdfPath.startsWith('file://') ? `file://${pdfPath}` : pdfPath;
+          Platform.OS === 'android' && !pdfResult.uri.startsWith('file://')
+            ? `file://${pdfResult.uri}`
+            : pdfResult.uri;
 
         const shareTitle =
           contextLabel && contextLabel.trim().length > 0
@@ -1343,17 +1331,32 @@ export default function OrdersScreen() {
             : contractDetails.title && contractDetails.title.trim().length > 0
               ? contractDetails.title.trim()
               : `Contract #${contractId}`;
+        const isSharingAvailable = await Sharing.isAvailableAsync();
 
-        const sharePayload =
-          Platform.OS === 'ios'
-            ? { url: normalizedPath, title: shareTitle }
-            : {
-                url: normalizedPath,
-                title: shareTitle,
-                message: `Rental contract PDF: ${normalizedPath}`,
-              };
+        if (!isSharingAvailable) {
+          const fallbackDir = documentDirectory ?? cacheDirectory;
 
-        await Share.share(sharePayload);
+          if (!fallbackDir) {
+            throw new Error('Sharing contracts is not supported on this device.');
+          }
+
+          const timestamp = Date.now();
+          const fallbackPath = `${fallbackDir}contract-${contractId}-${timestamp}.pdf`;
+
+          await copyAsync({ from: normalizedPath, to: fallbackPath });
+
+          Alert.alert(
+            'Contract saved',
+            `Sharing is not available on this device. The contract PDF has been saved to:\n${fallbackPath}`,
+          );
+          return;
+        }
+
+        await Sharing.shareAsync(normalizedPath, {
+          mimeType: 'application/pdf',
+          dialogTitle: shareTitle,
+          UTI: 'com.adobe.pdf',
+        });
       } catch (error) {
         const fallbackMessage = 'Unable to download the contract. Please try again later.';
         const normalizedError = error instanceof Error ? error : new Error(fallbackMessage);
