@@ -32,6 +32,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthenticatedUser | null>(null);
   const [isFetchingProfile, setIsFetchingProfile] = useState(false);
   const isMountedRef = useRef(true);
+  const sessionRef = useRef<AuthSession | null>(null);
+  const hydrationPromiseRef = useRef<Promise<AuthSession | null> | null>(null);
+  const ensureSessionPromiseRef = useRef<Promise<AuthSession | null> | null>(null);
 
   type ApiErrorWithStatus = Error & { status?: number };
 
@@ -40,6 +43,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       isMountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
 
   const persistSession = useCallback(async (nextSession: AuthSession | null) => {
     if (!isStorageAvailable) {
@@ -68,6 +75,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(null);
       setIsFetchingProfile(false);
     }
+
+    sessionRef.current = null;
+    ensureSessionPromiseRef.current = null;
 
     await persistSession(null);
   }, [persistSession]);
@@ -105,11 +115,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } catch (error) {
         const normalizedError =
           error instanceof Error ? error : new Error('Failed to load profile. Please try again.');
+        const status = (normalizedError as ApiErrorWithStatus).status;
 
-        if ((normalizedError as ApiErrorWithStatus).status === 401) {
+        if (status === 401) {
           await clearSessionState();
-        } else if (isMountedRef.current) {
-          setUser(null);
         }
 
         throw normalizedError;
@@ -125,13 +134,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let isActive = true;
 
-    const finishHydration = () => {
-      if (isActive && isMountedRef.current) {
-        setIsHydrating(false);
-      }
-    };
-
-    const hydrate = async () => {
+    const hydrate = async (): Promise<AuthSession | null> => {
       try {
         const storageAvailable =
           typeof SecureStore.isAvailableAsync === 'function'
@@ -143,13 +146,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         if (!storageAvailable) {
-          return;
+          return null;
         }
 
         const storedValue = await SecureStore.getItemAsync(AUTH_SESSION_KEY);
 
         if (!storedValue) {
-          return;
+          return null;
         }
 
         const parsed = JSON.parse(storedValue) as Partial<AuthSession> | null;
@@ -157,6 +160,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (parsed?.accessToken) {
           const tokenType = parsed.tokenType && parsed.tokenType.length > 0 ? parsed.tokenType : 'Bearer';
           const nextSession: AuthSession = { accessToken: parsed.accessToken, tokenType };
+
+          sessionRef.current = nextSession;
 
           if (isActive && isMountedRef.current) {
             setSession(nextSession);
@@ -166,15 +171,43 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             await fetchProfile(nextSession, { silent: true });
           } catch (error) {
             console.warn('Failed to restore user profile', error);
-            await clearSessionState();
+
+            const normalizedError =
+              error instanceof Error
+                ? (error as ApiErrorWithStatus)
+                : ({ message: String(error) } as ApiErrorWithStatus);
+
+            if (normalizedError.status === 401) {
+              await clearSessionState();
+            }
           }
+
+          return nextSession;
         }
       } catch (error) {
         console.warn('Failed to restore auth session', error);
       }
+
+      return null;
     };
 
-    Promise.resolve(hydrate()).finally(finishHydration);
+    const hydrationPromise = Promise.resolve(hydrate());
+    hydrationPromiseRef.current = hydrationPromise;
+
+    hydrationPromise
+      .catch((error) => {
+        console.warn('Failed to hydrate auth session', error);
+        return null;
+      })
+      .finally(() => {
+        if (hydrationPromiseRef.current === hydrationPromise) {
+          hydrationPromiseRef.current = null;
+        }
+
+        if (isActive && isMountedRef.current) {
+          setIsHydrating(false);
+        }
+      });
 
     return () => {
       isActive = false;
@@ -193,6 +226,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         accessToken: response.accessToken,
         tokenType: response.tokenType && response.tokenType.length > 0 ? response.tokenType : 'Bearer',
       };
+
+      sessionRef.current = nextSession;
 
       if (isMountedRef.current) {
         setSession(nextSession);
@@ -223,39 +258,70 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const refreshProfile = useCallback(() => fetchProfile(), [fetchProfile]);
 
   const ensureSession = useCallback(async () => {
-    if (session?.accessToken) {
-      return session;
+    const currentSession = sessionRef.current;
+
+    if (currentSession?.accessToken) {
+      return currentSession;
+    }
+
+    if (hydrationPromiseRef.current) {
+      try {
+        const hydrated = await hydrationPromiseRef.current;
+        if (hydrated?.accessToken) {
+          return hydrated;
+        }
+      } catch (error) {
+        console.warn('Failed to await auth hydration', error);
+      }
     }
 
     if (!isStorageAvailable) {
       return null;
     }
 
-    try {
-      const storedValue = await SecureStore.getItemAsync(AUTH_SESSION_KEY);
-
-      if (!storedValue) {
-        return null;
-      }
-
-      const parsed = JSON.parse(storedValue) as Partial<AuthSession> | null;
-
-      if (parsed?.accessToken) {
-        const tokenType = parsed.tokenType && parsed.tokenType.length > 0 ? parsed.tokenType : 'Bearer';
-        const restoredSession: AuthSession = { accessToken: parsed.accessToken, tokenType };
-
-        if (isMountedRef.current) {
-          setSession(restoredSession);
-        }
-
-        return restoredSession;
-      }
-    } catch (error) {
-      console.warn('Failed to ensure auth session', error);
+    if (ensureSessionPromiseRef.current) {
+      return ensureSessionPromiseRef.current;
     }
 
-    return null;
-  }, [session, isStorageAvailable]);
+    const promise = (async () => {
+      try {
+        const storedValue = await SecureStore.getItemAsync(AUTH_SESSION_KEY);
+
+        if (!storedValue) {
+          return null;
+        }
+
+        const parsed = JSON.parse(storedValue) as Partial<AuthSession> | null;
+
+        if (parsed?.accessToken) {
+          const tokenType = parsed.tokenType && parsed.tokenType.length > 0 ? parsed.tokenType : 'Bearer';
+          const restoredSession: AuthSession = { accessToken: parsed.accessToken, tokenType };
+
+          sessionRef.current = restoredSession;
+
+          if (isMountedRef.current) {
+            setSession(restoredSession);
+          }
+
+          return restoredSession;
+        }
+      } catch (error) {
+        console.warn('Failed to ensure auth session', error);
+      }
+
+      return null;
+    })();
+
+    ensureSessionPromiseRef.current = promise;
+
+    const result = await promise;
+
+    if (ensureSessionPromiseRef.current === promise) {
+      ensureSessionPromiseRef.current = null;
+    }
+
+    return result;
+  }, [isStorageAvailable]);
 
   const value = useMemo(
     () => ({
