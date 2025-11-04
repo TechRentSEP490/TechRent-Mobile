@@ -199,8 +199,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         return profile;
       } catch (error) {
-        const normalizedError =
-          error instanceof Error ? (error as ApiErrorWithStatus) : new Error('Failed to load profile. Please try again.');
+        const normalizedError: ApiErrorWithStatus =
+          error instanceof Error
+            ? (error as ApiErrorWithStatus)
+            : Object.assign(new Error('Failed to load profile. Please try again.'), { status: undefined });
         const status = normalizedError.status;
 
         if (status === 401 && !skipRetry) {
@@ -389,9 +391,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.warn('Reauthentication failed', error);
         return null;
       } finally {
-        if (reauthenticatePromiseRef.current === promise) {
-          reauthenticatePromiseRef.current = null;
-        }
+        reauthenticatePromiseRef.current = null;
       }
     })();
 

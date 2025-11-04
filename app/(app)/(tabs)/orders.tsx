@@ -20,6 +20,7 @@ import {
   TextInput,
   TextInputKeyPressEventData,
   View,
+  type DimensionValue,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -602,7 +603,7 @@ export default function OrdersScreen() {
   const orderDetailsTargetIdRef = useRef<number | null>(null);
   const orderDetailsActiveRequestRef = useRef<{ orderId: number; cancelled: boolean } | null>(null);
 
-  const progressWidth = useMemo(() => `${(currentStep / 3) * 100}%`, [currentStep]);
+  const progressWidth = useMemo<DimensionValue>(() => `${(currentStep / 3) * 100}%`, [currentStep]);
   const isContractAlreadySigned = useMemo(
     () => activeContract?.status?.trim().toUpperCase() === 'SIGNED',
     [activeContract?.status],
