@@ -402,7 +402,8 @@ export default function OrdersScreen() {
   const [orderDetailsData, setOrderDetailsData] = useState<RentalOrderResponse | null>(null);
   const [orderDetailsError, setOrderDetailsError] = useState<string | null>(null);
   const [orderDetailsLoading, setOrderDetailsLoading] = useState(false);
-  const [orderDetailsRequestId, setOrderDetailsRequestId] = useState(0);
+  const orderDetailsTargetIdRef = useRef<number | null>(null);
+  const orderDetailsActiveRequestRef = useRef<{ orderId: number; cancelled: boolean } | null>(null);
 
   const progressWidth = useMemo(() => `${(currentStep / 3) * 100}%`, [currentStep]);
   const isContractAlreadySigned = useMemo(
@@ -1131,11 +1132,92 @@ export default function OrdersScreen() {
     [handleDownloadContract, openFlow],
   );
 
-  const lastOrderDetailsLoadRef = useRef<{ orderId: number | null; requestId: number }>({
-    orderId: null,
-    requestId: 0,
-  });
   const orderDetailsCacheRef = useRef<Record<number, RentalOrderResponse>>({});
+  useEffect(() => {
+    orderDetailsTargetIdRef.current = orderDetailsTargetId;
+  }, [orderDetailsTargetId]);
+
+  useEffect(() => {
+    return () => {
+      if (orderDetailsActiveRequestRef.current) {
+        orderDetailsActiveRequestRef.current.cancelled = true;
+        orderDetailsActiveRequestRef.current = null;
+      }
+    };
+  }, []);
+
+  const loadOrderDetails = useCallback(
+    async (orderId: number, forceRefresh = false) => {
+      if (!forceRefresh) {
+        const cached = orderDetailsCacheRef.current[orderId];
+
+        if (cached) {
+          setOrderDetailsData(cached);
+          setOrderDetailsError(null);
+          setOrderDetailsLoading(false);
+          return;
+        }
+      } else {
+        delete orderDetailsCacheRef.current[orderId];
+      }
+
+      if (orderDetailsActiveRequestRef.current) {
+        orderDetailsActiveRequestRef.current.cancelled = true;
+      }
+
+      const requestMarker = { orderId, cancelled: false };
+      orderDetailsActiveRequestRef.current = requestMarker;
+
+      setOrderDetailsData(null);
+      setOrderDetailsError(null);
+      setOrderDetailsLoading(true);
+
+      try {
+        const activeSession = session?.accessToken ? session : await ensureSession();
+
+        if (requestMarker.cancelled) {
+          return;
+        }
+
+        if (!activeSession?.accessToken) {
+          throw new Error('You must be signed in to view this rental order.');
+        }
+
+        const details = await fetchRentalOrderById(activeSession, orderId);
+
+        if (requestMarker.cancelled || orderDetailsTargetIdRef.current !== orderId) {
+          return;
+        }
+
+        orderDetailsCacheRef.current[orderId] = details;
+        setOrderDetailsData(details);
+        setOrderDetailsError(null);
+      } catch (error) {
+        if (requestMarker.cancelled || orderDetailsTargetIdRef.current !== orderId) {
+          return;
+        }
+
+        const fallbackMessage = 'Failed to load the rental order details. Please try again.';
+        const normalizedError = error instanceof Error ? error : new Error(fallbackMessage);
+
+        setOrderDetailsData(null);
+        setOrderDetailsError(
+          normalizedError.message && normalizedError.message.trim().length > 0
+            ? normalizedError.message
+            : fallbackMessage,
+        );
+      } finally {
+        if (orderDetailsActiveRequestRef.current === requestMarker) {
+          orderDetailsActiveRequestRef.current = null;
+
+          if (orderDetailsTargetIdRef.current === orderId) {
+            setOrderDetailsLoading(false);
+          }
+        }
+      }
+    },
+    [ensureSession, session],
+  );
 
   const handleViewDetails = useCallback(
     (order: OrderCard) => {
@@ -1147,135 +1229,32 @@ export default function OrdersScreen() {
       }
 
       setOrderDetailsTargetId(parsedId);
-      setOrderDetailsError(null);
       setOrderDetailsModalVisible(true);
-
-      const cachedDetails = orderDetailsCacheRef.current[parsedId];
-
-      if (cachedDetails) {
-        lastOrderDetailsLoadRef.current = {
-          orderId: parsedId,
-          requestId: orderDetailsRequestId,
-        };
-        setOrderDetailsData(cachedDetails);
-        setOrderDetailsLoading(false);
-        return;
-      }
-
-      lastOrderDetailsLoadRef.current = { orderId: null, requestId: 0 };
-      setOrderDetailsData(null);
-      setOrderDetailsLoading(true);
-      setOrderDetailsRequestId((previous) => previous + 1);
+      orderDetailsTargetIdRef.current = parsedId;
+      void loadOrderDetails(parsedId);
     },
-    [orderDetailsRequestId],
+    [loadOrderDetails],
   );
 
   const handleCloseOrderDetails = useCallback(() => {
-    lastOrderDetailsLoadRef.current = { orderId: null, requestId: 0 };
+    if (orderDetailsActiveRequestRef.current) {
+      orderDetailsActiveRequestRef.current.cancelled = true;
+      orderDetailsActiveRequestRef.current = null;
+    }
+
     setOrderDetailsModalVisible(false);
     setOrderDetailsData(null);
     setOrderDetailsError(null);
     setOrderDetailsTargetId(null);
     setOrderDetailsLoading(false);
+    orderDetailsTargetIdRef.current = null;
   }, []);
 
   const handleRetryOrderDetails = useCallback(() => {
     if (orderDetailsTargetId) {
-      delete orderDetailsCacheRef.current[orderDetailsTargetId];
-      setOrderDetailsData(null);
-      setOrderDetailsError(null);
-      setOrderDetailsLoading(true);
-      setOrderDetailsRequestId((previous) => previous + 1);
+      void loadOrderDetails(orderDetailsTargetId, true);
     }
-  }, [orderDetailsTargetId]);
-
-  useEffect(() => {
-    if (!isOrderDetailsModalVisible || !orderDetailsTargetId) {
-      return;
-    }
-
-    const lastLoad = lastOrderDetailsLoadRef.current;
-    const hasRequestChanged =
-      orderDetailsRequestId !== lastLoad.requestId || orderDetailsTargetId !== lastLoad.orderId;
-
-    if (!hasRequestChanged) {
-      return;
-    }
-
-    let isMounted = true;
-
-    const requestOrderId = orderDetailsTargetId;
-    const requestKey = orderDetailsRequestId;
-
-    lastOrderDetailsLoadRef.current = {
-      orderId: requestOrderId,
-      requestId: requestKey,
-    };
-    setOrderDetailsLoading(true);
-
-    const loadOrderDetails = async () => {
-      try {
-        const activeSession = session?.accessToken ? session : await ensureSession();
-
-        if (!isMounted) {
-          return;
-        }
-
-        if (!activeSession?.accessToken) {
-          throw new Error('You must be signed in to view this rental order.');
-        }
-
-        const details = await fetchRentalOrderById(activeSession, requestOrderId);
-
-        if (!isMounted) {
-          return;
-        }
-
-        const latestLoad = lastOrderDetailsLoadRef.current;
-
-        if (latestLoad.orderId !== requestOrderId || latestLoad.requestId !== requestKey) {
-          return;
-        }
-
-        orderDetailsCacheRef.current[requestOrderId] = details;
-        setOrderDetailsData(details);
-        setOrderDetailsError(null);
-      } catch (error) {
-        if (!isMounted) {
-          return;
-        }
-
-        const fallbackMessage = 'Failed to load the rental order details. Please try again.';
-        const normalizedError = error instanceof Error ? error : new Error(fallbackMessage);
-        const latestLoad = lastOrderDetailsLoadRef.current;
-
-        if (latestLoad.orderId !== requestOrderId || latestLoad.requestId !== requestKey) {
-          return;
-        }
-
-        setOrderDetailsData(null);
-        setOrderDetailsError(
-          normalizedError.message && normalizedError.message.trim().length > 0
-            ? normalizedError.message
-            : fallbackMessage,
-        );
-      } finally {
-        if (isMounted) {
-          const latestLoad = lastOrderDetailsLoadRef.current;
-
-          if (latestLoad.orderId === requestOrderId && latestLoad.requestId === requestKey) {
-            setOrderDetailsLoading(false);
-          }
-        }
-      }
-    };
-
-    loadOrderDetails();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [ensureSession, isOrderDetailsModalVisible, orderDetailsRequestId, orderDetailsTargetId, session]);
+  }, [loadOrderDetails, orderDetailsTargetId]);
 
   const renderStepContent = () => {
     switch (currentStep) {
