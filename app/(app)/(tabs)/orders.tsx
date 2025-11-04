@@ -1318,7 +1318,11 @@ export default function OrdersScreen() {
           directory: 'Documents',
         });
 
-        const pdfPath = pdfResult?.filePath ?? pdfResult?.path;
+        if (!pdfResult) {
+          throw new Error('Failed to generate the contract PDF. Please try again.');
+        }
+
+        const pdfPath = pdfResult.filePath ?? pdfResult.path;
 
         if (!pdfPath) {
           throw new Error('Failed to generate the contract PDF. Please try again.');
