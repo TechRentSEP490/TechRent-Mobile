@@ -22,8 +22,23 @@ type AuthContextType = {
 };
 
 const AUTH_SESSION_KEY = 'techrent.auth.session';
+const AUTH_CREDENTIALS_KEY = 'techrent.auth.credentials';
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+type ApiErrorWithStatus = Error & { status?: number };
+
+type FetchProfileOptions = { silent?: boolean; skipRetry?: boolean };
+
+type PerformLoginOptions = { persistStoredCredentials?: boolean };
+
+type ClearSessionOptions = { clearCredentials?: boolean };
+
+type StoredCredentials = LoginPayload;
+
+type HydrationResult = AuthSession | null;
+
+type ReauthenticatePromise = Promise<AuthSession | null>;
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<AuthSession | null>(null);
@@ -31,9 +46,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isStorageAvailable, setIsStorageAvailable] = useState(true);
   const [user, setUser] = useState<AuthenticatedUser | null>(null);
   const [isFetchingProfile, setIsFetchingProfile] = useState(false);
-  const isMountedRef = useRef(true);
 
-  type ApiErrorWithStatus = Error & { status?: number };
+  const isMountedRef = useRef(true);
+  const sessionRef = useRef<AuthSession | null>(null);
+  const credentialsRef = useRef<StoredCredentials | null>(null);
+  const hydrationPromiseRef = useRef<Promise<HydrationResult> | null>(null);
+  const ensureSessionPromiseRef = useRef<Promise<AuthSession | null> | null>(null);
+  const reauthenticatePromiseRef = useRef<ReauthenticatePromise | null>(null);
 
   useEffect(() => {
     return () => {
@@ -41,42 +60,119 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  const persistSession = useCallback(async (nextSession: AuthSession | null) => {
-    if (!isStorageAvailable) {
-      return;
-    }
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
 
-    if (!nextSession) {
-      try {
-        await SecureStore.deleteItemAsync(AUTH_SESSION_KEY);
-      } catch (error) {
-        console.warn('Failed to clear auth session', error);
+  const persistSession = useCallback(
+    async (nextSession: AuthSession | null) => {
+      if (!isStorageAvailable) {
+        if (nextSession) {
+          console.warn('Secure storage is unavailable. Session will not persist across restarts.');
+        }
+        return;
       }
-      return;
-    }
 
-    try {
-      await SecureStore.setItemAsync(AUTH_SESSION_KEY, JSON.stringify(nextSession));
-    } catch (error) {
-      console.warn('Failed to persist auth session', error);
-    }
-  }, [isStorageAvailable]);
+      try {
+        if (!nextSession) {
+          await SecureStore.deleteItemAsync(AUTH_SESSION_KEY);
+          return;
+        }
 
-  const clearSessionState = useCallback(async () => {
-    if (isMountedRef.current) {
-      setSession(null);
-      setUser(null);
-      setIsFetchingProfile(false);
-    }
+        await SecureStore.setItemAsync(AUTH_SESSION_KEY, JSON.stringify(nextSession));
+      } catch (error) {
+        console.warn('Failed to persist auth session', error);
+      }
+    },
+    [isStorageAvailable]
+  );
 
-    await persistSession(null);
-  }, [persistSession]);
+  const persistCredentials = useCallback(
+    async (credentials: StoredCredentials | null) => {
+      if (!isStorageAvailable) {
+        if (credentials) {
+          console.warn('Secure storage is unavailable. Credentials will not persist across restarts.');
+        }
+        return;
+      }
 
-  type FetchProfileOptions = { silent?: boolean };
+      try {
+        if (!credentials) {
+          await SecureStore.deleteItemAsync(AUTH_CREDENTIALS_KEY);
+          return;
+        }
+
+        await SecureStore.setItemAsync(AUTH_CREDENTIALS_KEY, JSON.stringify(credentials));
+      } catch (error) {
+        console.warn('Failed to persist auth credentials', error);
+      }
+    },
+    [isStorageAvailable]
+  );
+
+  const applySession = useCallback(
+    async (nextSession: AuthSession | null) => {
+      sessionRef.current = nextSession;
+
+      if (isMountedRef.current) {
+        setSession(nextSession);
+      }
+
+      await persistSession(nextSession);
+    },
+    [persistSession]
+  );
+
+  const clearSessionState = useCallback(
+    async ({ clearCredentials = false }: ClearSessionOptions = {}) => {
+      if (isMountedRef.current) {
+        setUser(null);
+        setIsFetchingProfile(false);
+      }
+
+      ensureSessionPromiseRef.current = null;
+
+      await applySession(null);
+
+      if (clearCredentials) {
+        credentialsRef.current = null;
+        await persistCredentials(null);
+      }
+    },
+    [applySession, persistCredentials]
+  );
+
+  const performLogin = useCallback(
+    async (payload: LoginPayload, options: PerformLoginOptions = {}) => {
+      const { persistStoredCredentials = true } = options;
+
+      const response = await loginUser(payload);
+
+      if (!response.accessToken) {
+        throw new Error('Authentication failed. Please try again.');
+      }
+
+      const nextSession: AuthSession = {
+        accessToken: response.accessToken,
+        tokenType: response.tokenType && response.tokenType.length > 0 ? response.tokenType : 'Bearer',
+      };
+
+      credentialsRef.current = payload;
+
+      if (persistStoredCredentials) {
+        await persistCredentials(payload);
+      }
+
+      await applySession(nextSession);
+
+      return nextSession;
+    },
+    [applySession, persistCredentials]
+  );
 
   const fetchProfile = useCallback(
     async (sessionOverride?: AuthSession, options: FetchProfileOptions = {}) => {
-      const activeSession = sessionOverride ?? session;
+      const activeSession = sessionOverride ?? sessionRef.current;
 
       if (!activeSession?.accessToken) {
         if (isMountedRef.current) {
@@ -85,7 +181,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return null;
       }
 
-      const { silent = false } = options;
+      const { silent = false, skipRetry = false } = options;
 
       if (!silent && isMountedRef.current) {
         setIsFetchingProfile(true);
@@ -104,12 +200,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return profile;
       } catch (error) {
         const normalizedError =
-          error instanceof Error ? error : new Error('Failed to load profile. Please try again.');
+          error instanceof Error ? (error as ApiErrorWithStatus) : new Error('Failed to load profile. Please try again.');
+        const status = normalizedError.status;
 
-        if ((normalizedError as ApiErrorWithStatus).status === 401) {
-          await clearSessionState();
-        } else if (isMountedRef.current) {
-          setUser(null);
+        if (status === 401 && !skipRetry) {
+          const storedCredentials = credentialsRef.current;
+
+          if (storedCredentials) {
+            try {
+              const refreshedSession = await performLogin(storedCredentials, { persistStoredCredentials: true });
+              return fetchProfile(refreshedSession, { ...options, skipRetry: true });
+            } catch (reauthError) {
+              console.warn('Failed to refresh session from stored credentials', reauthError);
+
+              if ((reauthError as ApiErrorWithStatus).status === 401) {
+                await clearSessionState({ clearCredentials: false });
+              }
+            }
+          } else {
+            await clearSessionState({ clearCredentials: false });
+          }
         }
 
         throw normalizedError;
@@ -119,92 +229,123 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       }
     },
-    [session, clearSessionState]
+    [clearSessionState, performLogin]
   );
 
   useEffect(() => {
     let isActive = true;
 
-    const finishHydration = () => {
-      if (isActive && isMountedRef.current) {
-        setIsHydrating(false);
-      }
-    };
-
-    const hydrate = async () => {
+    const hydrate = async (): Promise<HydrationResult> => {
       try {
         const storageAvailable =
-          typeof SecureStore.isAvailableAsync === 'function'
-            ? await SecureStore.isAvailableAsync()
-            : true;
+          typeof SecureStore.isAvailableAsync === 'function' ? await SecureStore.isAvailableAsync() : true;
 
         if (isActive && isMountedRef.current) {
           setIsStorageAvailable(storageAvailable);
         }
 
         if (!storageAvailable) {
-          return;
+          return null;
         }
 
-        const storedValue = await SecureStore.getItemAsync(AUTH_SESSION_KEY);
+        const [storedSessionValue, storedCredentialsValue] = await Promise.all([
+          SecureStore.getItemAsync(AUTH_SESSION_KEY),
+          SecureStore.getItemAsync(AUTH_CREDENTIALS_KEY),
+        ]);
 
-        if (!storedValue) {
-          return;
-        }
-
-        const parsed = JSON.parse(storedValue) as Partial<AuthSession> | null;
-
-        if (parsed?.accessToken) {
-          const tokenType = parsed.tokenType && parsed.tokenType.length > 0 ? parsed.tokenType : 'Bearer';
-          const nextSession: AuthSession = { accessToken: parsed.accessToken, tokenType };
-
-          if (isActive && isMountedRef.current) {
-            setSession(nextSession);
-          }
-
+        if (storedCredentialsValue) {
           try {
-            await fetchProfile(nextSession, { silent: true });
+            const parsedCredentials = JSON.parse(storedCredentialsValue) as Partial<StoredCredentials> | null;
+
+            if (parsedCredentials?.usernameOrEmail && parsedCredentials?.password) {
+              credentialsRef.current = {
+                usernameOrEmail: parsedCredentials.usernameOrEmail,
+                password: parsedCredentials.password,
+              };
+            }
           } catch (error) {
-            console.warn('Failed to restore user profile', error);
-            await clearSessionState();
+            console.warn('Failed to parse stored credentials', error);
+          }
+        }
+
+        if (storedSessionValue) {
+          try {
+            const parsedSession = JSON.parse(storedSessionValue) as Partial<AuthSession> | null;
+
+            if (parsedSession?.accessToken) {
+              const tokenType =
+                parsedSession.tokenType && parsedSession.tokenType.length > 0 ? parsedSession.tokenType : 'Bearer';
+
+              const restoredSession: AuthSession = { accessToken: parsedSession.accessToken, tokenType };
+
+              await applySession(restoredSession);
+
+              try {
+                await fetchProfile(restoredSession, { silent: true });
+              } catch (error) {
+                console.warn('Failed to restore user profile', error);
+              }
+
+              return restoredSession;
+            }
+          } catch (error) {
+            console.warn('Failed to parse stored session', error);
+          }
+        }
+
+        if (credentialsRef.current) {
+          try {
+            const sessionFromCredentials = await performLogin(credentialsRef.current, {
+              persistStoredCredentials: true,
+            });
+
+            try {
+              await fetchProfile(sessionFromCredentials, { silent: true });
+            } catch (error) {
+              console.warn('Failed to load profile after restoring session from credentials', error);
+            }
+
+            return sessionFromCredentials;
+          } catch (error) {
+            console.warn('Failed to restore session from stored credentials', error);
           }
         }
       } catch (error) {
         console.warn('Failed to restore auth session', error);
       }
+
+      return null;
     };
 
-    Promise.resolve(hydrate()).finally(finishHydration);
+    const hydrationPromise = hydrate();
+    hydrationPromiseRef.current = hydrationPromise;
+
+    hydrationPromise
+      .catch((error) => {
+        console.warn('Failed to hydrate auth session', error);
+        return null;
+      })
+      .finally(() => {
+        if (hydrationPromiseRef.current === hydrationPromise) {
+          hydrationPromiseRef.current = null;
+        }
+
+        if (isActive && isMountedRef.current) {
+          setIsHydrating(false);
+        }
+      });
 
     return () => {
       isActive = false;
     };
-  }, [fetchProfile, clearSessionState]);
+  }, [applySession, fetchProfile, performLogin]);
 
   const signIn = useCallback(
     async (payload: LoginPayload) => {
-      const response = await loginUser(payload);
-
-      if (!response.accessToken) {
-        throw new Error('Authentication failed. Please try again.');
-      }
-
-      const nextSession: AuthSession = {
-        accessToken: response.accessToken,
-        tokenType: response.tokenType && response.tokenType.length > 0 ? response.tokenType : 'Bearer',
-      };
-
-      if (isMountedRef.current) {
-        setSession(nextSession);
-      }
-      if (!isStorageAvailable) {
-        console.warn('Secure storage is unavailable. Session will not persist across restarts.');
-      } else {
-        await persistSession(nextSession);
-      }
+      const sessionResult = await performLogin(payload, { persistStoredCredentials: true });
 
       try {
-        await fetchProfile(nextSession);
+        await fetchProfile(sessionResult);
       } catch (error) {
         if ((error as ApiErrorWithStatus).status === 401) {
           throw error;
@@ -213,49 +354,133 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.warn('Sign in succeeded but loading the user profile failed.', error);
       }
     },
-    [fetchProfile, isStorageAvailable, persistSession]
+    [fetchProfile, performLogin]
   );
 
   const signOut = useCallback(async () => {
-    await clearSessionState();
+    await clearSessionState({ clearCredentials: true });
   }, [clearSessionState]);
 
   const refreshProfile = useCallback(() => fetchProfile(), [fetchProfile]);
 
-  const ensureSession = useCallback(async () => {
-    if (session?.accessToken) {
-      return session;
+  const attemptReauthenticate = useCallback(async () => {
+    if (reauthenticatePromiseRef.current) {
+      return reauthenticatePromiseRef.current;
     }
 
-    if (!isStorageAvailable) {
+    const storedCredentials = credentialsRef.current;
+
+    if (!storedCredentials) {
       return null;
     }
 
-    try {
-      const storedValue = await SecureStore.getItemAsync(AUTH_SESSION_KEY);
+    const promise: ReauthenticatePromise = (async () => {
+      try {
+        const refreshed = await performLogin(storedCredentials, { persistStoredCredentials: true });
 
-      if (!storedValue) {
-        return null;
-      }
-
-      const parsed = JSON.parse(storedValue) as Partial<AuthSession> | null;
-
-      if (parsed?.accessToken) {
-        const tokenType = parsed.tokenType && parsed.tokenType.length > 0 ? parsed.tokenType : 'Bearer';
-        const restoredSession: AuthSession = { accessToken: parsed.accessToken, tokenType };
-
-        if (isMountedRef.current) {
-          setSession(restoredSession);
+        try {
+          await fetchProfile(refreshed, { silent: true, skipRetry: true });
+        } catch (error) {
+          console.warn('Failed to load profile after reauthentication', error);
         }
 
-        return restoredSession;
+        return refreshed;
+      } catch (error) {
+        console.warn('Reauthentication failed', error);
+        return null;
+      } finally {
+        if (reauthenticatePromiseRef.current === promise) {
+          reauthenticatePromiseRef.current = null;
+        }
       }
-    } catch (error) {
-      console.warn('Failed to ensure auth session', error);
+    })();
+
+    reauthenticatePromiseRef.current = promise;
+
+    return promise;
+  }, [fetchProfile, performLogin]);
+
+  const ensureSession = useCallback(async () => {
+    const currentSession = sessionRef.current;
+
+    if (currentSession?.accessToken) {
+      return currentSession;
     }
 
-    return null;
-  }, [session, isStorageAvailable]);
+    if (hydrationPromiseRef.current) {
+      try {
+        const hydrated = await hydrationPromiseRef.current;
+
+        if (hydrated?.accessToken) {
+          return hydrated;
+        }
+      } catch (error) {
+        console.warn('Failed to await auth hydration', error);
+      }
+    }
+
+    if (!isStorageAvailable) {
+      return attemptReauthenticate();
+    }
+
+    if (ensureSessionPromiseRef.current) {
+      return ensureSessionPromiseRef.current;
+    }
+
+    const promise = (async () => {
+      try {
+        const storedValue = await SecureStore.getItemAsync(AUTH_SESSION_KEY);
+
+        if (storedValue) {
+          const parsed = JSON.parse(storedValue) as Partial<AuthSession> | null;
+
+          if (parsed?.accessToken) {
+            const tokenType = parsed.tokenType && parsed.tokenType.length > 0 ? parsed.tokenType : 'Bearer';
+            const restoredSession: AuthSession = { accessToken: parsed.accessToken, tokenType };
+
+            await applySession(restoredSession);
+
+            return restoredSession;
+          }
+        }
+
+        if (!credentialsRef.current) {
+          try {
+            const storedCredentialsValue = await SecureStore.getItemAsync(AUTH_CREDENTIALS_KEY);
+
+            if (storedCredentialsValue) {
+              const parsedCredentials = JSON.parse(storedCredentialsValue) as Partial<StoredCredentials> | null;
+
+              if (parsedCredentials?.usernameOrEmail && parsedCredentials?.password) {
+                credentialsRef.current = {
+                  usernameOrEmail: parsedCredentials.usernameOrEmail,
+                  password: parsedCredentials.password,
+                };
+              }
+            }
+          } catch (credentialsError) {
+            console.warn('Failed to read stored credentials while ensuring session', credentialsError);
+          }
+        }
+
+        return attemptReauthenticate();
+      } catch (error) {
+        console.warn('Failed to ensure auth session', error);
+      }
+
+      return null;
+    })();
+
+    ensureSessionPromiseRef.current = promise;
+
+    const result = await promise;
+
+    if (ensureSessionPromiseRef.current === promise) {
+      ensureSessionPromiseRef.current = null;
+    }
+
+    return result;
+  }, [applySession, attemptReauthenticate, isStorageAvailable]);
 
   const value = useMemo(
     () => ({

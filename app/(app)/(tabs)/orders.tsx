@@ -12,6 +12,7 @@ import {
   FlatList,
   Modal,
   NativeSyntheticEvent,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -22,11 +23,24 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { cacheDirectory, copyAsync, documentDirectory } from 'expo-file-system';
+import { printToFileAsync } from 'expo-print';
+import * as Sharing from 'expo-sharing';
 
 import { useAuth } from '@/contexts/AuthContext';
 import { fetchDeviceModelById } from '@/services/device-models';
-import { fetchContracts, type ContractResponse } from '@/services/contracts';
-import { fetchRentalOrders, type RentalOrderResponse } from '@/services/rental-orders';
+import {
+  fetchContractById,
+  fetchContracts,
+  sendContractPin,
+  signContract,
+  type ContractResponse,
+} from '@/services/contracts';
+import {
+  fetchRentalOrderById,
+  fetchRentalOrders,
+  type RentalOrderResponse,
+} from '@/services/rental-orders';
 
 type OrderStatusFilter = 'All' | 'Pending' | 'Delivered' | 'In Use' | 'Completed';
 type OrderStatus = Exclude<OrderStatusFilter, 'All'>;
@@ -35,7 +49,8 @@ type OrderActionType =
   | 'extendRental'
   | 'confirmReceipt'
   | 'cancelOrder'
-  | 'rentAgain';
+  | 'rentAgain'
+  | 'downloadContract';
 
 type OrderCard = {
   id: string;
@@ -51,6 +66,7 @@ type OrderCard = {
     label: string;
     type: OrderActionType;
   };
+  contract?: ContractResponse | null;
 };
 
 type ApiErrorWithStatus = Error & { status?: number };
@@ -255,6 +271,213 @@ const formatContractStatus = (status: string | null | undefined): string => {
   return toTitleCase(status);
 };
 
+const escapeHtml = (value: string): string =>
+  value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+const sanitizeRichHtml = (value: string | null | undefined): string => {
+  if (!value) {
+    return '';
+  }
+
+  const trimmed = value.trim();
+
+  if (trimmed.length === 0) {
+    return '';
+  }
+
+  return trimmed
+    .replace(/<!DOCTYPE[^>]*>/gi, '')
+    .replace(/<\/?html[^>]*>/gi, '')
+    .replace(/<\/?head[^>]*>.*?<\/?head>/gis, '')
+    .replace(/<\/?body[^>]*>/gi, '')
+    .trim();
+};
+
+const buildContractPdfHtml = (
+  contract: ContractResponse,
+  contextLabel?: string,
+): string => {
+  const fallbackTitle = contextLabel ? `${contextLabel} Contract` : `Contract #${contract.contractId}`;
+  const contractTitle = contract.title && contract.title.trim().length > 0 ? contract.title.trim() : fallbackTitle;
+  const contractNumber =
+    contract.contractNumber && contract.contractNumber.trim().length > 0
+      ? contract.contractNumber.trim()
+      : contract.contractId
+        ? `#${contract.contractId}`
+        : '';
+  const contractStatusLabel = formatContractStatus(contract.status);
+  const totalAmountLabel =
+    typeof contract.totalAmount === 'number' ? formatCurrency(contract.totalAmount) : undefined;
+  const depositAmountLabel =
+    typeof contract.depositAmount === 'number' ? formatCurrency(contract.depositAmount) : undefined;
+
+  const metadata: { label: string; value: string }[] = [];
+
+  if (contractNumber) {
+    metadata.push({ label: 'Contract Number', value: contractNumber });
+  }
+
+  if (contractStatusLabel && contractStatusLabel !== 'Unknown') {
+    metadata.push({ label: 'Status', value: contractStatusLabel });
+  }
+
+  if (contract.startDate) {
+    metadata.push({ label: 'Start Date', value: formatDateTime(contract.startDate) });
+  }
+
+  if (contract.endDate) {
+    metadata.push({ label: 'End Date', value: formatDateTime(contract.endDate) });
+  }
+
+  if (contract.signedAt) {
+    metadata.push({ label: 'Signed At', value: formatDateTime(contract.signedAt) });
+  }
+
+  if (totalAmountLabel) {
+    metadata.push({ label: 'Total Amount', value: totalAmountLabel });
+  }
+
+  if (depositAmountLabel) {
+    metadata.push({ label: 'Deposit Amount', value: depositAmountLabel });
+  }
+
+  const sanitizedContent = sanitizeRichHtml(contract.contractContent);
+  const sanitizedTerms = sanitizeRichHtml(contract.termsAndConditions);
+
+  const sections: string[] = [];
+
+  if (sanitizedContent.length > 0) {
+    sections.push(`<section><h2>Agreement</h2>${sanitizedContent}</section>`);
+  }
+
+  if (sanitizedTerms.length > 0) {
+    sections.push(`<section><h2>Terms &amp; Conditions</h2>${sanitizedTerms}</section>`);
+  }
+
+  if (sections.length === 0) {
+    sections.push('<section><p>No contract content is available at this time.</p></section>');
+  }
+
+  const metadataHtml = metadata
+    .map(
+      (item) =>
+        `<div class="meta-row"><span class="meta-label">${escapeHtml(item.label)}:</span><span class="meta-value">${escapeHtml(item.value)}</span></div>`,
+    )
+    .join('');
+
+  const contextHeading = contextLabel ? `<p class="context">${escapeHtml(contextLabel)}</p>` : '';
+
+  return `<!DOCTYPE html>
+  <html>
+    <head>
+      <meta charset="utf-8" />
+      <style>
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+          padding: 32px;
+          color: #111111;
+          line-height: 1.6;
+          font-size: 14px;
+        }
+
+        h1 {
+          font-size: 24px;
+          margin-bottom: 8px;
+        }
+
+        h2 {
+          font-size: 18px;
+          margin-bottom: 8px;
+          margin-top: 24px;
+        }
+
+        p {
+          margin: 0 0 12px 0;
+        }
+
+        .context {
+          color: #4b5563;
+          margin-bottom: 16px;
+        }
+
+        .meta-row {
+          display: flex;
+          justify-content: space-between;
+          border-bottom: 1px solid #e5e7eb;
+          padding: 6px 0;
+        }
+
+        .meta-label {
+          font-weight: 600;
+          color: #374151;
+        }
+
+        .meta-value {
+          color: #111827;
+        }
+
+        section {
+          margin-top: 16px;
+        }
+
+        section:first-of-type {
+          margin-top: 24px;
+        }
+
+        ul {
+          padding-left: 20px;
+        }
+
+        li {
+          margin-bottom: 8px;
+        }
+
+        table {
+          width: 100%;
+          border-collapse: collapse;
+          margin-bottom: 16px;
+        }
+
+        th,
+        td {
+          border: 1px solid #d1d5db;
+          padding: 8px;
+          text-align: left;
+        }
+
+        strong {
+          font-weight: 600;
+        }
+      </style>
+    </head>
+    <body>
+      <h1>${escapeHtml(contractTitle)}</h1>
+      ${contextHeading}
+      ${metadataHtml}
+      ${sections.join('\n')}
+    </body>
+  </html>`;
+};
+
+const isValidEmail = (value: string): boolean => {
+  if (!value) {
+    return false;
+  }
+
+  const trimmed = value.trim();
+
+  if (trimmed.length === 0) {
+    return false;
+  }
+
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed.toLowerCase());
+};
+
 const deriveDeviceSummary = (order: RentalOrderResponse, deviceNames: Map<string, string>): string => {
   if (!order.orderDetails || order.orderDetails.length === 0) {
     return 'No devices listed';
@@ -291,8 +514,14 @@ const deriveDeviceSummary = (order: RentalOrderResponse, deviceNames: Map<string
 const mapOrderResponseToCard = (
   order: RentalOrderResponse,
   deviceNames: Map<string, string>,
+  contract?: ContractResponse | null,
 ): OrderCard => {
   const statusMeta = mapStatusToMeta(order.orderStatus);
+  const normalizedContractStatus = contract?.status?.trim().toUpperCase();
+  const isContractSigned = normalizedContractStatus === 'SIGNED';
+  const action = isContractSigned
+    ? { label: 'Download Contract', type: 'downloadContract' as const }
+    : statusMeta.action;
 
   return {
     id: String(order.orderId),
@@ -304,7 +533,8 @@ const mapOrderResponseToCard = (
     statusLabel: statusMeta.label,
     statusColor: statusMeta.color,
     statusBackground: statusMeta.background,
-    action: statusMeta.action,
+    action,
+    contract: contract ?? null,
   };
 };
 
@@ -325,13 +555,16 @@ const PAYMENT_OPTIONS = [
 
 export default function OrdersScreen() {
   const router = useRouter();
-  const { session, ensureSession } = useAuth();
+  const { session, ensureSession, user } = useAuth();
   const { flow, orderId } = useLocalSearchParams<{
     flow?: string | string[];
     orderId?: string | string[];
   }>();
   const listRef = useRef<FlatList<OrderCard>>(null);
+  const defaultVerificationEmail = useMemo(() => user?.email?.trim() ?? '', [user?.email]);
   const [orders, setOrders] = useState<OrderCard[]>([]);
+  const [contractsByOrderId, setContractsByOrderId] = useState<Record<string, ContractResponse>>({});
+  const [deviceNameLookup, setDeviceNameLookup] = useState<Record<string, string>>({});
   const [selectedFilter, setSelectedFilter] = useState<OrderStatusFilter>('All');
   const [highlightedOrderId, setHighlightedOrderId] = useState<string | null>(null);
   const [pendingScrollOrderId, setPendingScrollOrderId] = useState<string | null>(null);
@@ -346,6 +579,14 @@ export default function OrdersScreen() {
   const [isContractLoading, setContractLoading] = useState(false);
   const [contractErrorMessage, setContractErrorMessage] = useState<string | null>(null);
   const [contractRequestId, setContractRequestId] = useState(0);
+  const [verificationEmail, setVerificationEmail] = useState(defaultVerificationEmail);
+  const [pendingEmailInput, setPendingEmailInput] = useState(defaultVerificationEmail);
+  const [isEmailEditorVisible, setEmailEditorVisible] = useState(false);
+  const [emailEditorError, setEmailEditorError] = useState<string | null>(null);
+  const [isSendingPin, setIsSendingPin] = useState(false);
+  const [isSigningContract, setIsSigningContract] = useState(false);
+  const [activeContractDownloadId, setActiveContractDownloadId] = useState<number | null>(null);
+  const [verificationError, setVerificationError] = useState<string | null>(null);
   const lastContractLoadRef = useRef<{ orderId: number | null; requestId: number }>({
     orderId: null,
     requestId: 0,
@@ -353,11 +594,37 @@ export default function OrdersScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isOrderDetailsModalVisible, setOrderDetailsModalVisible] = useState(false);
+  const [orderDetailsTargetId, setOrderDetailsTargetId] = useState<number | null>(null);
+  const [orderDetailsData, setOrderDetailsData] = useState<RentalOrderResponse | null>(null);
+  const [orderDetailsError, setOrderDetailsError] = useState<string | null>(null);
+  const [orderDetailsLoading, setOrderDetailsLoading] = useState(false);
+  const orderDetailsTargetIdRef = useRef<number | null>(null);
+  const orderDetailsActiveRequestRef = useRef<{ orderId: number; cancelled: boolean } | null>(null);
 
   const progressWidth = useMemo(() => `${(currentStep / 3) * 100}%`, [currentStep]);
+  const isContractAlreadySigned = useMemo(
+    () => activeContract?.status?.trim().toUpperCase() === 'SIGNED',
+    [activeContract?.status],
+  );
+  const contractForSelectedOrder = useMemo(
+    () => (orderDetailsTargetId ? contractsByOrderId[String(orderDetailsTargetId)] ?? null : null),
+    [contractsByOrderId, orderDetailsTargetId],
+  );
   const isAgreementComplete = useMemo(
-    () => hasAgreed && Boolean(activeContract) && !isContractLoading && !contractErrorMessage,
-    [hasAgreed, activeContract, isContractLoading, contractErrorMessage],
+    () =>
+      hasAgreed &&
+      Boolean(activeContract) &&
+      !isContractLoading &&
+      !contractErrorMessage &&
+      !isContractAlreadySigned,
+    [
+      activeContract,
+      contractErrorMessage,
+      hasAgreed,
+      isContractAlreadySigned,
+      isContractLoading,
+    ],
   );
   const isOtpComplete = useMemo(
     () => otpDigits.every((digit) => digit.length === 1),
@@ -411,6 +678,21 @@ export default function OrdersScreen() {
           );
         }
 
+        let contractLookup: Record<string, ContractResponse> = {};
+
+        try {
+          const contracts = await fetchContracts(activeSession);
+          contractLookup = contracts.reduce<Record<string, ContractResponse>>((accumulator, contract) => {
+            if (typeof contract?.orderId === 'number') {
+              accumulator[String(contract.orderId)] = contract;
+            }
+            return accumulator;
+          }, {});
+        } catch (contractError) {
+          console.warn('Failed to load contracts for rental orders', contractError);
+          contractLookup = {};
+        }
+
         const sorted = [...response].sort((a, b) => {
           const aTime = new Date(a.createdAt ?? a.startDate).getTime();
           const bTime = new Date(b.createdAt ?? b.startDate).getTime();
@@ -428,7 +710,18 @@ export default function OrdersScreen() {
           return bTime - aTime;
         });
 
-        setOrders(sorted.map((order) => mapOrderResponseToCard(order, deviceNameMap)));
+        const deviceNameRecord: Record<string, string> = {};
+        deviceNameMap.forEach((label, key) => {
+          deviceNameRecord[key] = label;
+        });
+
+        setOrders(
+          sorted.map((order) =>
+            mapOrderResponseToCard(order, deviceNameMap, contractLookup[String(order.orderId)]),
+          ),
+        );
+        setContractsByOrderId(contractLookup);
+        setDeviceNameLookup(deviceNameRecord);
         setErrorMessage(null);
       } catch (error) {
         const fallbackMessage = 'Failed to load rental orders. Please try again.';
@@ -476,19 +769,29 @@ export default function OrdersScreen() {
     return orders.filter((order) => order.statusFilter === selectedFilter);
   }, [orders, selectedFilter]);
 
-  const openFlow = useCallback((order: OrderCard) => {
-    lastContractLoadRef.current = { orderId: null, requestId: 0 };
-    setActiveOrder(order);
-    setActiveContract(null);
-    setContractErrorMessage(null);
-    setContractLoading(false);
-    setModalVisible(true);
-    setCurrentStep(1);
-    setOtpDigits(Array(6).fill(''));
-    setSelectedPayment(PAYMENT_OPTIONS[0].id);
-    setHasAgreed(false);
-    setContractRequestId((previous) => previous + 1);
-  }, []);
+  const openFlow = useCallback(
+    (order: OrderCard) => {
+      lastContractLoadRef.current = { orderId: null, requestId: 0 };
+      setActiveOrder(order);
+      setActiveContract(order.contract ?? null);
+      setContractErrorMessage(null);
+      setContractLoading(false);
+      setModalVisible(true);
+      setCurrentStep(1);
+      setOtpDigits(Array(6).fill(''));
+      setSelectedPayment(PAYMENT_OPTIONS[0].id);
+      setHasAgreed(false);
+      setVerificationEmail(defaultVerificationEmail);
+      setPendingEmailInput(defaultVerificationEmail);
+      setVerificationError(null);
+      setIsSendingPin(false);
+      setIsSigningContract(false);
+      setEmailEditorVisible(false);
+      setEmailEditorError(null);
+      setContractRequestId((previous) => previous + 1);
+    },
+    [defaultVerificationEmail],
+  );
 
   const resetFlow = useCallback(() => {
     lastContractLoadRef.current = { orderId: null, requestId: 0 };
@@ -501,7 +804,14 @@ export default function OrdersScreen() {
     setActiveContract(null);
     setContractErrorMessage(null);
     setContractLoading(false);
-  }, []);
+    setVerificationEmail(defaultVerificationEmail);
+    setPendingEmailInput(defaultVerificationEmail);
+    setVerificationError(null);
+    setIsSendingPin(false);
+    setIsSigningContract(false);
+    setEmailEditorVisible(false);
+    setEmailEditorError(null);
+  }, [defaultVerificationEmail]);
 
   const handleRetryContract = useCallback(() => {
     setContractRequestId((previous) => previous + 1);
@@ -668,19 +978,255 @@ export default function OrdersScreen() {
     setPendingScrollOrderId(null);
   }, [filteredOrders, pendingScrollOrderId]);
 
-  const goToNextStep = () => {
+  const goToNextStep = useCallback(() => {
     setCurrentStep((prev) => Math.min(prev + 1, 3));
-  };
+  }, []);
 
-  const goToPreviousStep = () => {
+  const goToPreviousStep = useCallback(() => {
     setCurrentStep((prev) => Math.max(prev - 1, 1));
-  };
+    setVerificationError(null);
+    setIsSigningContract(false);
+  }, []);
+
+  const requestContractPin = useCallback(
+    async ({ skipAdvance = false }: { skipAdvance?: boolean } = {}) => {
+      if (!activeContract?.contractId) {
+        throw new Error('A rental contract must be selected before requesting a verification code.');
+      }
+
+      const trimmedEmail = verificationEmail.trim();
+
+      if (!isValidEmail(trimmedEmail)) {
+        throw new Error('Please provide a valid email address to receive the verification code.');
+      }
+
+      const activeSession = session?.accessToken ? session : await ensureSession();
+
+      if (!activeSession?.accessToken) {
+        throw new Error('You must be signed in to continue the rental agreement.');
+      }
+
+      const result = await sendContractPin(
+        { accessToken: activeSession.accessToken, tokenType: activeSession.tokenType },
+        { contractId: activeContract.contractId, email: trimmedEmail },
+      );
+
+      if (!skipAdvance) {
+        goToNextStep();
+      }
+
+      return result;
+    },
+    [activeContract, ensureSession, goToNextStep, session, verificationEmail],
+  );
+
+  const handleAgreementContinue = useCallback(async () => {
+    if (isSendingPin) {
+      return;
+    }
+
+    const trimmedEmail = verificationEmail.trim();
+
+    if (trimmedEmail.length === 0) {
+      setPendingEmailInput(trimmedEmail);
+      setEmailEditorError('Email is required to receive the verification code.');
+      setEmailEditorVisible(true);
+      return;
+    }
+
+    if (!isValidEmail(trimmedEmail)) {
+      setPendingEmailInput(trimmedEmail);
+      setEmailEditorError('Please enter a valid email address.');
+      setEmailEditorVisible(true);
+      return;
+    }
+
+    setVerificationEmail(trimmedEmail);
+
+    try {
+      setIsSendingPin(true);
+      setVerificationError(null);
+      setOtpDigits(Array(6).fill(''));
+      await requestContractPin();
+    } catch (error) {
+      const fallbackMessage = 'Unable to send the verification code. Please try again.';
+      const normalizedError = error instanceof Error ? error : new Error(fallbackMessage);
+      const message =
+        normalizedError.message && normalizedError.message.trim().length > 0
+          ? normalizedError.message
+          : fallbackMessage;
+      Alert.alert('Unable to send code', message);
+    } finally {
+      setIsSendingPin(false);
+    }
+  }, [
+    isSendingPin,
+    requestContractPin,
+    setEmailEditorError,
+    setEmailEditorVisible,
+    setIsSendingPin,
+    setOtpDigits,
+    setPendingEmailInput,
+    setVerificationEmail,
+    setVerificationError,
+    verificationEmail,
+  ]);
+
+  const handleResendCode = useCallback(async () => {
+    if (isSendingPin) {
+      return;
+    }
+
+    const trimmedEmail = verificationEmail.trim();
+
+    if (!isValidEmail(trimmedEmail)) {
+      setPendingEmailInput(trimmedEmail);
+      setEmailEditorError('Please enter a valid email address.');
+      setEmailEditorVisible(true);
+      return;
+    }
+
+    setVerificationEmail(trimmedEmail);
+
+    try {
+      setIsSendingPin(true);
+      setVerificationError(null);
+      setOtpDigits(Array(6).fill(''));
+      const response = await requestContractPin({ skipAdvance: true });
+      Alert.alert(
+        'Verification code sent',
+        response?.details ??
+          `We sent a new verification code to ${trimmedEmail}. Please check your inbox.`,
+      );
+    } catch (error) {
+      const fallbackMessage = 'Unable to resend the verification code. Please try again.';
+      const normalizedError = error instanceof Error ? error : new Error(fallbackMessage);
+      const message =
+        normalizedError.message && normalizedError.message.trim().length > 0
+          ? normalizedError.message
+          : fallbackMessage;
+      Alert.alert('Unable to resend code', message);
+    } finally {
+      setIsSendingPin(false);
+    }
+  }, [
+    isSendingPin,
+    requestContractPin,
+    setEmailEditorError,
+    setEmailEditorVisible,
+    setIsSendingPin,
+    setOtpDigits,
+    setPendingEmailInput,
+    setVerificationEmail,
+    setVerificationError,
+    verificationEmail,
+  ]);
+
+  const handleVerifyCode = useCallback(async () => {
+    if (isSigningContract) {
+      return;
+    }
+
+    const pinCode = otpDigits.join('');
+
+    if (pinCode.length !== otpDigits.length) {
+      setVerificationError('Please enter the complete 6-digit verification code.');
+      return;
+    }
+
+    if (!activeContract?.contractId) {
+      setVerificationError('A rental contract is required to complete the signature.');
+      return;
+    }
+
+    try {
+      setIsSigningContract(true);
+      setVerificationError(null);
+      const activeSession = session?.accessToken ? session : await ensureSession();
+
+      if (!activeSession?.accessToken) {
+        throw new Error('You must be signed in to complete the electronic signature.');
+      }
+
+      await signContract(
+        { accessToken: activeSession.accessToken, tokenType: activeSession.tokenType },
+        {
+          contractId: activeContract.contractId,
+          digitalSignature: 'string',
+          pinCode,
+          signatureMethod: 'EMAIL_OTP',
+          deviceInfo: 'string',
+          ipAddress: 'string',
+        },
+      );
+
+      goToNextStep();
+    } catch (error) {
+      const fallbackMessage = 'Unable to verify the code. Please try again.';
+      const normalizedError = error instanceof Error ? error : new Error(fallbackMessage);
+      const message =
+        normalizedError.message && normalizedError.message.trim().length > 0
+          ? normalizedError.message
+          : fallbackMessage;
+      setVerificationError(message);
+    } finally {
+      setIsSigningContract(false);
+    }
+  }, [
+    activeContract,
+    ensureSession,
+    goToNextStep,
+    isSigningContract,
+    otpDigits,
+    session,
+    setIsSigningContract,
+    setVerificationError,
+  ]);
+
+  const handleOpenEmailEditor = useCallback(() => {
+    setPendingEmailInput(verificationEmail);
+    setEmailEditorError(null);
+    setEmailEditorVisible(true);
+  }, [setEmailEditorError, setEmailEditorVisible, setPendingEmailInput, verificationEmail]);
+
+  const handleCloseEmailEditor = useCallback(() => {
+    setEmailEditorVisible(false);
+    setEmailEditorError(null);
+  }, [setEmailEditorError, setEmailEditorVisible]);
+
+  const handleSaveEmail = useCallback(() => {
+    const trimmed = pendingEmailInput.trim();
+
+    if (trimmed.length === 0) {
+      setEmailEditorError('Email is required.');
+      return;
+    }
+
+    if (!isValidEmail(trimmed)) {
+      setEmailEditorError('Please enter a valid email address.');
+      return;
+    }
+
+    setVerificationEmail(trimmed);
+    setPendingEmailInput(trimmed);
+    setEmailEditorVisible(false);
+    setEmailEditorError(null);
+  }, [
+    pendingEmailInput,
+    setEmailEditorError,
+    setEmailEditorVisible,
+    setPendingEmailInput,
+    setVerificationEmail,
+  ]);
 
   const handleOtpChange = (value: string, index: number) => {
     const sanitized = value.replace(/[^0-9]/g, '');
     const digits = [...otpDigits];
     digits[index] = sanitized.slice(-1);
     setOtpDigits(digits);
+    if (verificationError) {
+      setVerificationError(null);
+    }
 
     if (sanitized && index < otpRefs.current.length - 1) {
       otpRefs.current[index + 1]?.focus();
@@ -695,6 +1241,137 @@ export default function OrdersScreen() {
       otpRefs.current[index - 1]?.focus();
     }
   };
+
+  const handleDownloadContract = useCallback(
+    async (contract: ContractResponse | null, contextLabel?: string) => {
+      const contractId = contract?.contractId;
+      const normalizedStatus = contract?.status?.trim().toUpperCase();
+
+      if (!contractId) {
+        Alert.alert(
+          'Contract unavailable',
+          contextLabel
+            ? `A downloadable contract for ${contextLabel} is not available yet.`
+            : 'This rental does not have a downloadable contract yet.',
+        );
+        return;
+      }
+
+      if (normalizedStatus !== 'SIGNED') {
+        Alert.alert(
+          'Contract pending',
+          contextLabel
+            ? `The contract for ${contextLabel} must be signed before it can be downloaded.`
+            : 'The contract must be signed before it can be downloaded.',
+        );
+        return;
+      }
+
+      try {
+        if (Platform.OS === 'web') {
+          Alert.alert(
+            'Download unavailable',
+            'Contract downloads are only supported from the mobile application.',
+          );
+          return;
+        }
+
+        setActiveContractDownloadId(contractId);
+
+        const activeSession = session?.accessToken ? session : await ensureSession();
+
+        if (!activeSession?.accessToken) {
+          throw new Error('You must be signed in to download the contract.');
+        }
+
+        const sessionCredentials = {
+          accessToken: activeSession.accessToken,
+          tokenType: activeSession.tokenType,
+        };
+
+        let contractDetails: ContractResponse | null = contract ?? null;
+        const hasExistingContent = Boolean(
+          contractDetails &&
+            ((contractDetails.contractContent && contractDetails.contractContent.trim().length > 0) ||
+              (contractDetails.termsAndConditions && contractDetails.termsAndConditions.trim().length > 0)),
+        );
+
+        if (!hasExistingContent) {
+          contractDetails = await fetchContractById(sessionCredentials, contractId);
+        }
+
+        const hasDownloadableContent = Boolean(
+          contractDetails &&
+            ((contractDetails.contractContent && contractDetails.contractContent.trim().length > 0) ||
+              (contractDetails.termsAndConditions && contractDetails.termsAndConditions.trim().length > 0)),
+        );
+
+        if (!hasDownloadableContent || !contractDetails) {
+          throw new Error('The contract details are not yet available for download.');
+        }
+
+        const html = buildContractPdfHtml(contractDetails, contextLabel);
+        const pdfResult = await printToFileAsync({
+          html,
+          fileName: `contract-${contractId}`,
+        });
+
+        if (!pdfResult?.uri) {
+          throw new Error('Failed to generate the contract PDF. Please try again.');
+        }
+
+        const normalizedPath =
+          Platform.OS === 'android' && !pdfResult.uri.startsWith('file://')
+            ? `file://${pdfResult.uri}`
+            : pdfResult.uri;
+
+        const shareTitle =
+          contextLabel && contextLabel.trim().length > 0
+            ? `${contextLabel} Contract`
+            : contractDetails.title && contractDetails.title.trim().length > 0
+              ? contractDetails.title.trim()
+              : `Contract #${contractId}`;
+        const isSharingAvailable = await Sharing.isAvailableAsync();
+
+        if (!isSharingAvailable) {
+          const fallbackDir = documentDirectory ?? cacheDirectory;
+
+          if (!fallbackDir) {
+            throw new Error('Sharing contracts is not supported on this device.');
+          }
+
+          const timestamp = Date.now();
+          const fallbackPath = `${fallbackDir}contract-${contractId}-${timestamp}.pdf`;
+
+          await copyAsync({ from: normalizedPath, to: fallbackPath });
+
+          Alert.alert(
+            'Contract saved',
+            `Sharing is not available on this device. The contract PDF has been saved to:\n${fallbackPath}`,
+          );
+          return;
+        }
+
+        await Sharing.shareAsync(normalizedPath, {
+          mimeType: 'application/pdf',
+          dialogTitle: shareTitle,
+          UTI: 'com.adobe.pdf',
+        });
+      } catch (error) {
+        const fallbackMessage = 'Unable to download the contract. Please try again later.';
+        const normalizedError = error instanceof Error ? error : new Error(fallbackMessage);
+        Alert.alert(
+          'Download contract',
+          normalizedError.message && normalizedError.message.trim().length > 0
+            ? normalizedError.message
+            : fallbackMessage,
+        );
+      } finally {
+        setActiveContractDownloadId((current) => (current === contractId ? null : current));
+      }
+    },
+    [ensureSession, session],
+  );
 
   const handleCardAction = useCallback(
     (order: OrderCard) => {
@@ -718,21 +1395,146 @@ export default function OrdersScreen() {
         case 'rentAgain':
           Alert.alert('Rent Again', 'We\'ll move this device to your cart so you can rent it again.');
           break;
+        case 'downloadContract':
+          handleDownloadContract(order.contract ?? null, order.title);
+          break;
         default:
           break;
       }
     },
-    [openFlow],
+    [handleDownloadContract, openFlow],
   );
 
-  const handleViewDetails = useCallback((order: OrderCard) => {
-    Alert.alert('View Details', `Detailed tracking for ${order.title} is coming soon.`);
+  const orderDetailsCacheRef = useRef<Record<number, RentalOrderResponse>>({});
+  useEffect(() => {
+    orderDetailsTargetIdRef.current = orderDetailsTargetId;
+  }, [orderDetailsTargetId]);
+
+  useEffect(() => {
+    return () => {
+      if (orderDetailsActiveRequestRef.current) {
+        orderDetailsActiveRequestRef.current.cancelled = true;
+        orderDetailsActiveRequestRef.current = null;
+      }
+    };
   }, []);
+
+  const loadOrderDetails = useCallback(
+    async (orderId: number, forceRefresh = false) => {
+      if (!forceRefresh) {
+        const cached = orderDetailsCacheRef.current[orderId];
+
+        if (cached) {
+          setOrderDetailsData(cached);
+          setOrderDetailsError(null);
+          setOrderDetailsLoading(false);
+          return;
+        }
+      } else {
+        delete orderDetailsCacheRef.current[orderId];
+      }
+
+      if (orderDetailsActiveRequestRef.current) {
+        orderDetailsActiveRequestRef.current.cancelled = true;
+      }
+
+      const requestMarker = { orderId, cancelled: false };
+      orderDetailsActiveRequestRef.current = requestMarker;
+
+      setOrderDetailsData(null);
+      setOrderDetailsError(null);
+      setOrderDetailsLoading(true);
+
+      try {
+        const activeSession = session?.accessToken ? session : await ensureSession();
+
+        if (requestMarker.cancelled) {
+          return;
+        }
+
+        if (!activeSession?.accessToken) {
+          throw new Error('You must be signed in to view this rental order.');
+        }
+
+        const details = await fetchRentalOrderById(activeSession, orderId);
+
+        if (requestMarker.cancelled || orderDetailsTargetIdRef.current !== orderId) {
+          return;
+        }
+
+        orderDetailsCacheRef.current[orderId] = details;
+        setOrderDetailsData(details);
+        setOrderDetailsError(null);
+      } catch (error) {
+        if (requestMarker.cancelled || orderDetailsTargetIdRef.current !== orderId) {
+          return;
+        }
+
+        const fallbackMessage = 'Failed to load the rental order details. Please try again.';
+        const normalizedError = error instanceof Error ? error : new Error(fallbackMessage);
+
+        setOrderDetailsData(null);
+        setOrderDetailsError(
+          normalizedError.message && normalizedError.message.trim().length > 0
+            ? normalizedError.message
+            : fallbackMessage,
+        );
+      } finally {
+        if (orderDetailsActiveRequestRef.current === requestMarker) {
+          orderDetailsActiveRequestRef.current = null;
+
+          if (orderDetailsTargetIdRef.current === orderId) {
+            setOrderDetailsLoading(false);
+          }
+        }
+      }
+    },
+    [ensureSession, session],
+  );
+
+  const handleViewDetails = useCallback(
+    (order: OrderCard) => {
+      const parsedId = Number.parseInt(order.id, 10);
+
+      if (Number.isNaN(parsedId) || parsedId <= 0) {
+        Alert.alert('Order unavailable', 'Unable to load details for this rental order.');
+        return;
+      }
+
+      setOrderDetailsTargetId(parsedId);
+      setOrderDetailsModalVisible(true);
+      orderDetailsTargetIdRef.current = parsedId;
+      void loadOrderDetails(parsedId);
+    },
+    [loadOrderDetails],
+  );
+
+  const handleCloseOrderDetails = useCallback(() => {
+    if (orderDetailsActiveRequestRef.current) {
+      orderDetailsActiveRequestRef.current.cancelled = true;
+      orderDetailsActiveRequestRef.current = null;
+    }
+
+    setOrderDetailsModalVisible(false);
+    setOrderDetailsData(null);
+    setOrderDetailsError(null);
+    setOrderDetailsTargetId(null);
+    setOrderDetailsLoading(false);
+    orderDetailsTargetIdRef.current = null;
+  }, []);
+
+  const handleRetryOrderDetails = useCallback(() => {
+    if (orderDetailsTargetId) {
+      void loadOrderDetails(orderDetailsTargetId, true);
+    }
+  }, [loadOrderDetails, orderDetailsTargetId]);
 
   const renderStepContent = () => {
     switch (currentStep) {
       case 1: {
-        const canAgreeToContract = Boolean(activeContract) && !isContractLoading && !contractErrorMessage;
+        const isSignedContract = isContractAlreadySigned;
+        const canAgreeToContract =
+          Boolean(activeContract) && !isContractLoading && !contractErrorMessage && !isSignedContract;
         const contractTitle = activeContract
           ? activeContract.title && activeContract.title.trim().length > 0
             ? activeContract.title.trim()
@@ -755,6 +1557,9 @@ export default function OrdersScreen() {
           typeof activeContract?.depositAmount === 'number'
             ? formatCurrency(activeContract.depositAmount)
             : '—';
+        const isDownloadingActiveContract = Boolean(
+          activeContract?.contractId && activeContractDownloadId === activeContract.contractId,
+        );
         const contractRentalDays =
           typeof activeContract?.rentalPeriodDays === 'number'
             ? `${activeContract.rentalPeriodDays} day${activeContract.rentalPeriodDays === 1 ? '' : 's'}`
@@ -837,14 +1642,23 @@ export default function OrdersScreen() {
                       <Text style={styles.contractMetaLabel}>Created</Text>
                       <Text style={styles.contractMetaValue}>{contractCreated}</Text>
                     </View>
-                    <View style={styles.contractMetaRow}>
-                      <Text style={styles.contractMetaLabel}>Updated</Text>
-                      <Text style={styles.contractMetaValue}>{contractUpdated}</Text>
-                    </View>
+                  <View style={styles.contractMetaRow}>
+                    <Text style={styles.contractMetaLabel}>Updated</Text>
+                    <Text style={styles.contractMetaValue}>{contractUpdated}</Text>
                   </View>
-                  {contractDescription.length > 0 && (
-                    <Text style={styles.contractBody}>{contractDescription}</Text>
-                  )}
+                </View>
+                {isSignedContract ? (
+                  <View style={styles.contractSignedBanner}>
+                    <Ionicons name="checkmark-circle" size={16} color="#15803d" />
+                    <Text style={styles.contractSignedText}>
+                      This contract has already been signed. Use the download button below to keep a copy for your
+                      records.
+                    </Text>
+                  </View>
+                ) : null}
+                {contractDescription.length > 0 && (
+                  <Text style={styles.contractBody}>{contractDescription}</Text>
+                )}
                   {contractBody.length > 0 && (
                     <View style={styles.contractSection}>
                       <Text style={styles.contractSectionHeading}>Contract Content</Text>
@@ -888,24 +1702,50 @@ export default function OrdersScreen() {
               </View>
             </Pressable>
             <View style={styles.primaryActions}>
-              <Pressable
-                style={[
-                  styles.primaryButton,
-                  styles.buttonFlex,
-                  isAgreementComplete ? styles.primaryButtonEnabled : styles.primaryButtonDisabled,
-                ]}
-                onPress={goToNextStep}
-                disabled={!isAgreementComplete}
-              >
-                <Text
+              {isSignedContract ? (
+                <Pressable
                   style={[
-                    styles.primaryButtonText,
-                    !isAgreementComplete && styles.primaryButtonTextDisabled,
+                    styles.primaryButton,
+                    styles.buttonFlex,
+                    styles.primaryButtonEnabled,
+                    isDownloadingActiveContract && styles.primaryButtonBusy,
                   ]}
+                  onPress={() =>
+                    !isDownloadingActiveContract &&
+                    handleDownloadContract(activeContract, activeOrder?.title)
+                  }
+                  disabled={isDownloadingActiveContract}
                 >
-                  Next
-                </Text>
-              </Pressable>
+                  {isDownloadingActiveContract ? (
+                    <ActivityIndicator color="#ffffff" />
+                  ) : (
+                    <Text style={styles.primaryButtonText}>Download Contract</Text>
+                  )}
+                </Pressable>
+              ) : (
+                <Pressable
+                  style={[
+                    styles.primaryButton,
+                    styles.buttonFlex,
+                    isAgreementComplete ? styles.primaryButtonEnabled : styles.primaryButtonDisabled,
+                  ]}
+                  onPress={handleAgreementContinue}
+                  disabled={!isAgreementComplete || isSendingPin}
+                >
+                  {isSendingPin ? (
+                    <ActivityIndicator color="#ffffff" />
+                  ) : (
+                    <Text
+                      style={[
+                        styles.primaryButtonText,
+                        !isAgreementComplete && styles.primaryButtonTextDisabled,
+                      ]}
+                    >
+                      Next
+                    </Text>
+                  )}
+                </Pressable>
+              )}
               <Pressable style={[styles.secondaryButton, styles.buttonFlex]} onPress={resetFlow}>
                 <Text style={styles.secondaryButtonText}>Cancel</Text>
               </Pressable>
@@ -920,7 +1760,11 @@ export default function OrdersScreen() {
               <Ionicons name="shield-checkmark-outline" size={32} color="#111" />
             </View>
             <Text style={styles.stepTitle}>Verify Your Signature</Text>
-            <Text style={styles.stepSubtitle}>We&apos;ve sent a 6-digit code to user@gmail.com</Text>
+            <Text style={styles.stepSubtitle}>
+              {verificationEmail
+                ? `We've sent a 6-digit code to ${verificationEmail}`
+                : 'Enter the 6-digit code we sent to your email address'}
+            </Text>
             <View style={styles.otpInputsRow}>
               {otpDigits.map((digit, index) => (
                 <TextInput
@@ -938,9 +1782,18 @@ export default function OrdersScreen() {
                 />
               ))}
             </View>
+            {verificationError ? (
+              <Text style={styles.otpErrorText} accessibilityRole="alert">
+                {verificationError}
+              </Text>
+            ) : null}
             <View style={styles.verificationHelpers}>
-              <Pressable>
-                <Text style={styles.helperLink}>Didn&apos;t receive the code?</Text>
+              <Pressable onPress={handleResendCode} disabled={isSendingPin}>
+                <Text
+                  style={[styles.helperLink, isSendingPin && styles.helperLinkDisabled]}
+                >
+                  Didn&apos;t receive the code?
+                </Text>
               </Pressable>
               <Text style={styles.helperText}>Resend available in 00:45</Text>
             </View>
@@ -949,19 +1802,30 @@ export default function OrdersScreen() {
                 styles.primaryButton,
                 isOtpComplete ? styles.primaryButtonEnabled : styles.primaryButtonDisabled,
               ]}
-              onPress={goToNextStep}
-              disabled={!isOtpComplete}
+              onPress={handleVerifyCode}
+              disabled={!isOtpComplete || isSigningContract}
             >
-              <Text
-                style={[
-                  styles.primaryButtonText,
-                  !isOtpComplete && styles.primaryButtonTextDisabled,
-                ]}
-              >
-                Verify Code
-              </Text>
+              {isSigningContract ? (
+                <ActivityIndicator color="#ffffff" />
+              ) : (
+                <Text
+                  style={[
+                    styles.primaryButtonText,
+                    !isOtpComplete && styles.primaryButtonTextDisabled,
+                  ]}
+                >
+                  Verify Code
+                </Text>
+              )}
             </Pressable>
-            <Pressable style={styles.helperButton}>
+            <Pressable
+              style={[
+                styles.helperButton,
+                (isSigningContract || isSendingPin) && styles.helperButtonDisabled,
+              ]}
+              onPress={handleOpenEmailEditor}
+              disabled={isSigningContract || isSendingPin}
+            >
               <Text style={styles.helperButtonText}>Use a different email</Text>
             </Pressable>
             <Pressable style={styles.secondaryButton} onPress={goToPreviousStep}>
@@ -1053,6 +1917,12 @@ export default function OrdersScreen() {
         onRefresh={handleRefresh}
         renderItem={({ item }) => {
           const isHighlighted = highlightedOrderId === item.id;
+          const isDownloadAction = item.action?.type === 'downloadContract';
+          const isDownloadingCardContract = Boolean(
+            isDownloadAction &&
+              item.contract?.contractId &&
+              activeContractDownloadId === item.contract.contractId,
+          );
           return (
             <View
               style={[
@@ -1098,10 +1968,22 @@ export default function OrdersScreen() {
                   </Pressable>
                   {item.action ? (
                     <Pressable
-                      style={styles.cardActionButton}
-                      onPress={() => handleCardAction(item)}
+                      style={[
+                        styles.cardActionButton,
+                        isDownloadingCardContract && styles.cardActionButtonDisabled,
+                      ]}
+                      onPress={() => {
+                        if (!isDownloadingCardContract) {
+                          handleCardAction(item);
+                        }
+                      }}
+                      disabled={isDownloadingCardContract}
                     >
-                      <Text style={styles.cardActionLabel}>{item.action.label}</Text>
+                      {isDownloadingCardContract ? (
+                        <ActivityIndicator color="#ffffff" size="small" />
+                      ) : (
+                        <Text style={styles.cardActionLabel}>{item.action.label}</Text>
+                      )}
                     </Pressable>
                   ) : null}
                 </View>
@@ -1204,6 +2086,215 @@ export default function OrdersScreen() {
               <View style={[styles.progressFill, { width: progressWidth }]} />
             </View>
             {renderStepContent()}
+          </View>
+        </View>
+      </Modal>
+      <Modal
+        animationType="fade"
+        transparent
+        visible={isEmailEditorVisible}
+        onRequestClose={handleCloseEmailEditor}
+      >
+        <View style={styles.emailModalOverlay}>
+          <View style={styles.emailModalCard}>
+            <Text style={styles.emailModalTitle}>Update email address</Text>
+            <Text style={styles.emailModalDescription}>
+              Enter the email you want to use to receive the verification code.
+            </Text>
+            <TextInput
+              style={[
+                styles.emailInput,
+                emailEditorError ? styles.emailInputError : null,
+              ]}
+              placeholder="name@example.com"
+              value={pendingEmailInput}
+              onChangeText={(value) => {
+                setPendingEmailInput(value);
+                if (emailEditorError) {
+                  setEmailEditorError(null);
+                }
+              }}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoCorrect={false}
+              inputMode="email"
+            />
+            {emailEditorError ? (
+              <Text style={styles.emailErrorText} accessibilityRole="alert">
+                {emailEditorError}
+              </Text>
+            ) : null}
+            <View style={styles.emailModalActions}>
+              <Pressable style={styles.emailModalCancelButton} onPress={handleCloseEmailEditor}>
+                <Text style={styles.emailModalCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable style={styles.emailModalSaveButton} onPress={handleSaveEmail}>
+                <Text style={styles.emailModalSaveText}>Save</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+      <Modal
+        animationType="slide"
+        transparent
+        visible={isOrderDetailsModalVisible}
+        onRequestClose={handleCloseOrderDetails}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.orderDetailsCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Order Details</Text>
+              <Pressable style={styles.closeButton} onPress={handleCloseOrderDetails}>
+                <Ionicons name="close" size={20} color="#111" />
+              </Pressable>
+            </View>
+            {orderDetailsLoading ? (
+              <View style={styles.orderDetailsState}>
+                <ActivityIndicator color="#111111" />
+                <Text style={styles.orderDetailsStateText}>Loading order details…</Text>
+              </View>
+            ) : orderDetailsError ? (
+              <View style={styles.orderDetailsState}>
+                <Text style={[styles.orderDetailsStateText, styles.orderDetailsErrorText]}>
+                  {orderDetailsError}
+                </Text>
+                <Pressable style={styles.contractRetryButton} onPress={handleRetryOrderDetails}>
+                  <Text style={styles.contractRetryButtonText}>Try Again</Text>
+                </Pressable>
+              </View>
+            ) : orderDetailsData ? (
+              <ScrollView style={styles.orderDetailsScroll} showsVerticalScrollIndicator={false}>
+                <View style={styles.detailSection}>
+                  <Text style={styles.detailSectionHeading}>Summary</Text>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Order ID</Text>
+                    <Text style={styles.detailValue}>#{orderDetailsData.orderId}</Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Status</Text>
+                    <Text style={styles.detailValue}>{toTitleCase(orderDetailsData.orderStatus)}</Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Created</Text>
+                    <Text style={styles.detailValue}>{formatDateTime(orderDetailsData.createdAt)}</Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Rental Period</Text>
+                    <Text style={styles.detailValue}>
+                      {formatRentalPeriod(orderDetailsData.startDate, orderDetailsData.endDate)}
+                    </Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Shipping Address</Text>
+                    <Text style={[styles.detailValue, styles.detailValueMultiline]}>
+                      {orderDetailsData.shippingAddress || '—'}
+                    </Text>
+                  </View>
+                </View>
+                <View style={styles.detailSection}>
+                  <Text style={styles.detailSectionHeading}>Payment</Text>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Total Price</Text>
+                    <Text style={styles.detailValue}>{formatCurrency(orderDetailsData.totalPrice)}</Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Price / Day</Text>
+                    <Text style={styles.detailValue}>{formatCurrency(orderDetailsData.pricePerDay)}</Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Deposit Due</Text>
+                    <Text style={styles.detailValue}>{formatCurrency(orderDetailsData.depositAmount)}</Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Deposit Held</Text>
+                    <Text style={styles.detailValue}>{formatCurrency(orderDetailsData.depositAmountHeld)}</Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Deposit Used</Text>
+                    <Text style={styles.detailValue}>{formatCurrency(orderDetailsData.depositAmountUsed)}</Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Deposit Refunded</Text>
+                    <Text style={styles.detailValue}>{formatCurrency(orderDetailsData.depositAmountRefunded)}</Text>
+                  </View>
+                </View>
+                <View style={styles.detailSection}>
+                  <Text style={styles.detailSectionHeading}>Items</Text>
+                  {orderDetailsData.orderDetails && orderDetailsData.orderDetails.length > 0 ? (
+                    orderDetailsData.orderDetails.map((item) => {
+                      const deviceName =
+                        deviceNameLookup[String(item.deviceModelId)] ?? `Device Model ${item.deviceModelId}`;
+                      return (
+                        <View key={item.orderDetailId} style={styles.detailItemRow}>
+                          <View style={styles.detailItemHeader}>
+                            <Text style={styles.detailItemName}>{deviceName}</Text>
+                            <Text style={styles.detailItemQty}>×{item.quantity}</Text>
+                          </View>
+                          <Text style={styles.detailItemMeta}>
+                            Price / Day: {formatCurrency(item.pricePerDay)}
+                          </Text>
+                          <Text style={styles.detailItemMeta}>
+                            Deposit / Unit: {formatCurrency(item.depositAmountPerUnit)}
+                          </Text>
+                        </View>
+                      );
+                    })
+                  ) : (
+                    <Text style={styles.detailEmptyText}>No devices were found for this rental.</Text>
+                  )}
+                </View>
+                {contractForSelectedOrder ? (
+                  <View style={styles.detailSection}>
+                    <Text style={styles.detailSectionHeading}>Contract</Text>
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>Status</Text>
+                      <Text style={styles.detailValue}>
+                        {formatContractStatus(contractForSelectedOrder.status)}
+                      </Text>
+                    </View>
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>Contract Number</Text>
+                      <Text style={styles.detailValue}>
+                        {contractForSelectedOrder.contractNumber &&
+                        contractForSelectedOrder.contractNumber.trim().length > 0
+                          ? contractForSelectedOrder.contractNumber.trim()
+                          : `#${contractForSelectedOrder.contractId}`}
+                      </Text>
+                    </View>
+                    <Pressable
+                      style={[
+                        styles.detailDownloadButton,
+                        activeContractDownloadId === contractForSelectedOrder.contractId &&
+                          styles.detailDownloadButtonDisabled,
+                      ]}
+                      onPress={() => {
+                        if (activeContractDownloadId !== contractForSelectedOrder.contractId) {
+                          handleDownloadContract(
+                            contractForSelectedOrder,
+                            `Order #${orderDetailsData.orderId}`,
+                          );
+                        }
+                      }}
+                      disabled={activeContractDownloadId === contractForSelectedOrder.contractId}
+                    >
+                      {activeContractDownloadId === contractForSelectedOrder.contractId ? (
+                        <ActivityIndicator color="#1f7df4" />
+                      ) : (
+                        <>
+                          <Ionicons name="download-outline" size={18} color="#1f7df4" />
+                          <Text style={styles.detailDownloadLabel}>Download Contract</Text>
+                        </>
+                      )}
+                    </Pressable>
+                  </View>
+                ) : null}
+              </ScrollView>
+            ) : (
+              <View style={styles.orderDetailsState}>
+                <Text style={styles.orderDetailsStateText}>No additional details are available.</Text>
+              </View>
+            )}
           </View>
         </View>
       </Modal>
@@ -1389,6 +2480,9 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 16,
     paddingVertical: 10,
+  },
+  cardActionButtonDisabled: {
+    opacity: 0.6,
   },
   cardActionLabel: {
     fontSize: 13,
@@ -1583,6 +2677,21 @@ const styles = StyleSheet.create({
     textAlign: 'right',
     flexShrink: 1,
   },
+  contractSignedBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: '#dcfce7',
+    marginBottom: 12,
+  },
+  contractSignedText: {
+    flex: 1,
+    color: '#166534',
+    fontSize: 13,
+    lineHeight: 18,
+  },
   contractTermsSection: {
     marginTop: 16,
     gap: 8,
@@ -1633,6 +2742,9 @@ const styles = StyleSheet.create({
   },
   primaryButtonEnabled: {
     opacity: 1,
+  },
+  primaryButtonBusy: {
+    opacity: 0.7,
   },
   primaryButtonDisabled: {
     backgroundColor: '#d1d5db',
@@ -1688,6 +2800,12 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#111111',
   },
+  otpErrorText: {
+    marginTop: 12,
+    fontSize: 13,
+    color: '#b91c1c',
+    fontWeight: '500',
+  },
   verificationHelpers: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1698,6 +2816,9 @@ const styles = StyleSheet.create({
     color: '#1f7df4',
     fontWeight: '600',
   },
+  helperLinkDisabled: {
+    opacity: 0.5,
+  },
   helperText: {
     fontSize: 12,
     color: '#9ca3af',
@@ -1706,6 +2827,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 10,
+  },
+  helperButtonDisabled: {
+    opacity: 0.6,
   },
   helperButtonText: {
     fontSize: 14,
@@ -1785,6 +2909,190 @@ const styles = StyleSheet.create({
   paymentSecurityText: {
     fontSize: 12,
     color: '#6b7280',
+  },
+  emailModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  emailModalCard: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    padding: 20,
+    gap: 16,
+  },
+  emailModalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111111',
+  },
+  emailModalDescription: {
+    fontSize: 14,
+    color: '#4b5563',
+  },
+  emailInput: {
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: '#111111',
+  },
+  emailInputError: {
+    borderColor: '#b91c1c',
+  },
+  emailErrorText: {
+    fontSize: 12,
+    color: '#b91c1c',
+  },
+  emailModalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 12,
+  },
+  emailModalCancelButton: {
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    backgroundColor: '#ffffff',
+  },
+  emailModalCancelText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111111',
+  },
+  emailModalSaveButton: {
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#111111',
+  },
+  emailModalSaveText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  orderDetailsCard: {
+    width: '90%',
+    maxWidth: 420,
+    maxHeight: '85%',
+    borderRadius: 24,
+    backgroundColor: '#ffffff',
+    padding: 20,
+    gap: 16,
+  },
+  orderDetailsScroll: {
+    marginHorizontal: -4,
+    paddingHorizontal: 4,
+  },
+  detailSection: {
+    marginBottom: 20,
+    gap: 8,
+  },
+  detailSectionHeading: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#111111',
+  },
+  detailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 16,
+    alignItems: 'flex-start',
+  },
+  detailLabel: {
+    fontSize: 13,
+    color: '#6b7280',
+    flex: 0.5,
+  },
+  detailValue: {
+    fontSize: 13,
+    color: '#111111',
+    fontWeight: '600',
+    flex: 0.5,
+    textAlign: 'right',
+  },
+  detailValueMultiline: {
+    textAlign: 'right',
+    flex: 1,
+  },
+  detailItemRow: {
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 12,
+    padding: 12,
+    backgroundColor: '#f9fafb',
+    marginBottom: 12,
+    gap: 4,
+  },
+  detailItemHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  detailItemName: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111111',
+    marginRight: 8,
+  },
+  detailItemQty: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#1f2937',
+  },
+  detailItemMeta: {
+    fontSize: 12,
+    color: '#6b7280',
+  },
+  detailEmptyText: {
+    fontSize: 13,
+    color: '#6b7280',
+  },
+  detailDownloadButton: {
+    marginTop: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#1f7df4',
+    backgroundColor: '#eef4ff',
+    alignSelf: 'flex-start',
+  },
+  detailDownloadButtonDisabled: {
+    opacity: 0.6,
+  },
+  detailDownloadLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1f7df4',
+  },
+  orderDetailsState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 32,
+    gap: 12,
+  },
+  orderDetailsStateText: {
+    fontSize: 13,
+    color: '#4b5563',
+    textAlign: 'center',
+  },
+  orderDetailsErrorText: {
+    color: '#b91c1c',
+    fontWeight: '600',
   },
 });
 
