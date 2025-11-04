@@ -105,11 +105,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } catch (error) {
         const normalizedError =
           error instanceof Error ? error : new Error('Failed to load profile. Please try again.');
+        const status = (normalizedError as ApiErrorWithStatus).status;
 
-        if ((normalizedError as ApiErrorWithStatus).status === 401) {
+        if (status === 401) {
           await clearSessionState();
-        } else if (isMountedRef.current) {
-          setUser(null);
         }
 
         throw normalizedError;
@@ -166,7 +165,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             await fetchProfile(nextSession, { silent: true });
           } catch (error) {
             console.warn('Failed to restore user profile', error);
-            await clearSessionState();
+
+            const normalizedError =
+              error instanceof Error
+                ? (error as ApiErrorWithStatus)
+                : ({ message: String(error) } as ApiErrorWithStatus);
+
+            if (normalizedError.status === 401) {
+              await clearSessionState();
+            }
           }
         }
       } catch (error) {
