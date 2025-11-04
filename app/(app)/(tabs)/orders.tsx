@@ -1135,6 +1135,7 @@ export default function OrdersScreen() {
     orderId: null,
     requestId: 0,
   });
+  const orderDetailsCacheRef = useRef<Record<number, RentalOrderResponse>>({});
 
   const handleViewDetails = useCallback(
     (order: OrderCard) => {
@@ -1145,14 +1146,28 @@ export default function OrdersScreen() {
         return;
       }
 
-      lastOrderDetailsLoadRef.current = { orderId: null, requestId: 0 };
       setOrderDetailsTargetId(parsedId);
-      setOrderDetailsData(null);
       setOrderDetailsError(null);
       setOrderDetailsModalVisible(true);
+
+      const cachedDetails = orderDetailsCacheRef.current[parsedId];
+
+      if (cachedDetails) {
+        lastOrderDetailsLoadRef.current = {
+          orderId: parsedId,
+          requestId: orderDetailsRequestId,
+        };
+        setOrderDetailsData(cachedDetails);
+        setOrderDetailsLoading(false);
+        return;
+      }
+
+      lastOrderDetailsLoadRef.current = { orderId: null, requestId: 0 };
+      setOrderDetailsData(null);
+      setOrderDetailsLoading(true);
       setOrderDetailsRequestId((previous) => previous + 1);
     },
-    [],
+    [orderDetailsRequestId],
   );
 
   const handleCloseOrderDetails = useCallback(() => {
@@ -1166,6 +1181,9 @@ export default function OrdersScreen() {
 
   const handleRetryOrderDetails = useCallback(() => {
     if (orderDetailsTargetId) {
+      delete orderDetailsCacheRef.current[orderDetailsTargetId];
+      setOrderDetailsData(null);
+      setOrderDetailsError(null);
       setOrderDetailsLoading(true);
       setOrderDetailsRequestId((previous) => previous + 1);
     }
@@ -1186,9 +1204,12 @@ export default function OrdersScreen() {
 
     let isMounted = true;
 
+    const requestOrderId = orderDetailsTargetId;
+    const requestKey = orderDetailsRequestId;
+
     lastOrderDetailsLoadRef.current = {
-      orderId: orderDetailsTargetId,
-      requestId: orderDetailsRequestId,
+      orderId: requestOrderId,
+      requestId: requestKey,
     };
     setOrderDetailsLoading(true);
 
@@ -1204,12 +1225,19 @@ export default function OrdersScreen() {
           throw new Error('You must be signed in to view this rental order.');
         }
 
-        const details = await fetchRentalOrderById(activeSession, orderDetailsTargetId);
+        const details = await fetchRentalOrderById(activeSession, requestOrderId);
 
         if (!isMounted) {
           return;
         }
 
+        const latestLoad = lastOrderDetailsLoadRef.current;
+
+        if (latestLoad.orderId !== requestOrderId || latestLoad.requestId !== requestKey) {
+          return;
+        }
+
+        orderDetailsCacheRef.current[requestOrderId] = details;
         setOrderDetailsData(details);
         setOrderDetailsError(null);
       } catch (error) {
@@ -1219,6 +1247,12 @@ export default function OrdersScreen() {
 
         const fallbackMessage = 'Failed to load the rental order details. Please try again.';
         const normalizedError = error instanceof Error ? error : new Error(fallbackMessage);
+        const latestLoad = lastOrderDetailsLoadRef.current;
+
+        if (latestLoad.orderId !== requestOrderId || latestLoad.requestId !== requestKey) {
+          return;
+        }
+
         setOrderDetailsData(null);
         setOrderDetailsError(
           normalizedError.message && normalizedError.message.trim().length > 0
@@ -1227,7 +1261,11 @@ export default function OrdersScreen() {
         );
       } finally {
         if (isMounted) {
-          setOrderDetailsLoading(false);
+          const latestLoad = lastOrderDetailsLoadRef.current;
+
+          if (latestLoad.orderId === requestOrderId && latestLoad.requestId === requestKey) {
+            setOrderDetailsLoading(false);
+          }
         }
       }
     };
