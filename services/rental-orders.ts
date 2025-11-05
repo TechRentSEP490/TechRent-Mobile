@@ -1,4 +1,4 @@
-import { buildApiUrl } from './api';
+import { buildApiUrl, fetchWithRetry } from './api';
 
 export type RentalOrderDetailPayload = {
   quantity: number;
@@ -9,8 +9,8 @@ export type CreateRentalOrderPayload = {
   startDate: string;
   endDate: string;
   shippingAddress: string;
-  customerId: number;
   orderDetails: RentalOrderDetailPayload[];
+  customerId?: number | null;
 };
 
 export type RentalOrderDetailResponse = {
@@ -54,6 +54,14 @@ export type FetchRentalOrdersResult = {
   data: RentalOrderResponse[] | null;
 };
 
+export type FetchRentalOrderDetailResult = {
+  status: string;
+  message: string;
+  details: string;
+  code: number;
+  data: RentalOrderResponse | null;
+};
+
 type SessionCredentials = {
   accessToken: string;
   tokenType?: string | null;
@@ -89,16 +97,51 @@ export async function createRentalOrder(
     throw new Error('An access token is required to create a rental order.');
   }
 
-  const response = await fetch(buildApiUrl('rental-orders'), {
-    method: 'POST',
-    headers: {
-      ...jsonHeaders,
-      Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
-        session.accessToken
-      }`,
-    },
-    body: JSON.stringify(payload),
-  });
+  const { startDate, endDate, shippingAddress, orderDetails, customerId } = payload;
+
+  if (!startDate || !endDate) {
+    throw new Error('A rental window is required to create an order.');
+  }
+
+  if (!Array.isArray(orderDetails) || orderDetails.length === 0) {
+    throw new Error('At least one device must be included in the rental order.');
+  }
+
+  const requestBody: Record<string, unknown> = {
+    startDate,
+    endDate,
+    shippingAddress,
+    orderDetails,
+  };
+
+  if (typeof customerId === 'number' && Number.isFinite(customerId)) {
+    requestBody.customerId = customerId;
+  }
+
+  const endpointUrl = buildApiUrl('rental-orders');
+  let response: Response;
+
+  try {
+    response = await fetchWithRetry(endpointUrl, {
+      method: 'POST',
+      headers: {
+        ...jsonHeaders,
+        Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
+          session.accessToken
+        }`,
+      },
+      body: JSON.stringify(requestBody),
+    }, {
+      onRetry: (nextUrl, networkError) => {
+        console.warn('Failed to reach rental order endpoint, retrying with HTTPS', networkError, {
+          retryUrl: nextUrl,
+        });
+      },
+    });
+  } catch (networkError) {
+    console.warn('Failed to reach rental order endpoint', networkError);
+    throw networkError;
+  }
 
   if (!response.ok) {
     const apiMessage = await parseErrorMessage(response);
@@ -127,15 +170,29 @@ export async function fetchRentalOrders(session: SessionCredentials): Promise<Re
     throw new Error('An access token is required to load rental orders.');
   }
 
-  const response = await fetch(buildApiUrl('rental-orders'), {
-    method: 'GET',
-    headers: {
-      Accept: 'application/json',
-      Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
-        session.accessToken
-      }`,
-    },
-  });
+  const endpointUrl = buildApiUrl('rental-orders');
+  let response: Response;
+
+  try {
+    response = await fetchWithRetry(endpointUrl, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
+          session.accessToken
+        }`,
+      },
+    }, {
+      onRetry: (nextUrl, networkError) => {
+        console.warn('Failed to reach rental order endpoint, retrying with HTTPS', networkError, {
+          retryUrl: nextUrl,
+        });
+      },
+    });
+  } catch (networkError) {
+    console.warn('Failed to reach rental order endpoint', networkError);
+    throw networkError;
+  }
 
   if (!response.ok) {
     const apiMessage = await parseErrorMessage(response);
@@ -151,6 +208,68 @@ export async function fetchRentalOrders(session: SessionCredentials): Promise<Re
   if (!json || json.status !== 'SUCCESS' || !Array.isArray(json.data)) {
     const error = new Error(
       json?.message ?? 'Failed to load rental orders. Please try again.'
+    ) as ApiErrorWithStatus;
+    if (typeof json?.code === 'number') {
+      error.status = json.code;
+    }
+    throw error;
+  }
+
+  return json.data;
+}
+
+export async function fetchRentalOrderById(
+  session: SessionCredentials,
+  orderId: number | string,
+): Promise<RentalOrderResponse> {
+  if (!session?.accessToken) {
+    throw new Error('An access token is required to view the rental order.');
+  }
+
+  const normalizedId = typeof orderId === 'string' ? Number.parseInt(orderId, 10) : Number(orderId);
+
+  if (!Number.isFinite(normalizedId) || normalizedId <= 0) {
+    throw new Error('A valid rental order identifier is required.');
+  }
+
+  const endpointUrl = buildApiUrl('rental-orders', normalizedId);
+  let response: Response;
+
+  try {
+    response = await fetchWithRetry(endpointUrl, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
+          session.accessToken
+        }`,
+      },
+    }, {
+      onRetry: (nextUrl, networkError) => {
+        console.warn('Failed to reach rental order endpoint, retrying with HTTPS', networkError, {
+          retryUrl: nextUrl,
+        });
+      },
+    });
+  } catch (networkError) {
+    console.warn('Failed to reach rental order endpoint', networkError);
+    throw networkError;
+  }
+
+  if (!response.ok) {
+    const apiMessage = await parseErrorMessage(response);
+    const error = new Error(
+      apiMessage ?? `Unable to load rental order ${normalizedId} (status ${response.status}).`,
+    ) as ApiErrorWithStatus;
+    error.status = response.status;
+    throw error;
+  }
+
+  const json = (await response.json()) as FetchRentalOrderDetailResult | null;
+
+  if (!json || json.status !== 'SUCCESS' || !json.data) {
+    const error = new Error(
+      json?.message ?? 'Failed to load the rental order details. Please try again.',
     ) as ApiErrorWithStatus;
     if (typeof json?.code === 'number') {
       error.status = json.code;

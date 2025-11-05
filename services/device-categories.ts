@@ -1,4 +1,4 @@
-import { buildApiUrl } from './api';
+import { buildApiUrl, fetchWithRetry } from './api';
 
 export type DeviceCategory = {
   id: string;
@@ -50,7 +50,21 @@ export async function fetchDeviceCategories(forceRefresh = false): Promise<Devic
     return cachedCategories;
   }
 
-  const response = await fetch(buildApiUrl('device-categories'));
+  const endpointUrl = buildApiUrl('device-categories');
+  let response: Response;
+
+  try {
+    response = await fetchWithRetry(endpointUrl, undefined, {
+      onRetry: (nextUrl, networkError) => {
+        console.warn('Failed to reach device categories endpoint, retrying with HTTPS', networkError, {
+          retryUrl: nextUrl,
+        });
+      },
+    });
+  } catch (networkError) {
+    console.warn('Failed to reach device categories endpoint', networkError);
+    throw networkError;
+  }
 
   if (!response.ok) {
     throw new Error(`Failed to load device categories (status ${response.status}).`);
@@ -87,7 +101,21 @@ export async function fetchDeviceCategoryById(
     return detailCache.get(categoryId)!;
   }
 
-  const response = await fetch(buildApiUrl('device-categories', categoryId));
+  const endpointUrl = buildApiUrl('device-categories', categoryId);
+  let response: Response;
+
+  try {
+    response = await fetchWithRetry(endpointUrl, undefined, {
+      onRetry: (nextUrl, networkError) => {
+        console.warn('Failed to reach device category endpoint, retrying with HTTPS', networkError, {
+          retryUrl: nextUrl,
+        });
+      },
+    });
+  } catch (networkError) {
+    console.warn('Failed to reach device category endpoint', networkError);
+    throw networkError;
+  }
 
   if (!response.ok) {
     throw new Error(`Failed to load device category (status ${response.status}).`);
