@@ -9,8 +9,8 @@ export type CreateRentalOrderPayload = {
   startDate: string;
   endDate: string;
   shippingAddress: string;
-  customerId: number;
   orderDetails: RentalOrderDetailPayload[];
+  customerId?: number | null;
 };
 
 export type RentalOrderDetailResponse = {
@@ -97,16 +97,44 @@ export async function createRentalOrder(
     throw new Error('An access token is required to create a rental order.');
   }
 
-  const response = await fetch(buildApiUrl('rental-orders'), {
-    method: 'POST',
-    headers: {
-      ...jsonHeaders,
-      Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
-        session.accessToken
-      }`,
-    },
-    body: JSON.stringify(payload),
-  });
+  const { startDate, endDate, shippingAddress, orderDetails, customerId } = payload;
+
+  if (!startDate || !endDate) {
+    throw new Error('A rental window is required to create an order.');
+  }
+
+  if (!Array.isArray(orderDetails) || orderDetails.length === 0) {
+    throw new Error('At least one device must be included in the rental order.');
+  }
+
+  const requestBody: Record<string, unknown> = {
+    startDate,
+    endDate,
+    shippingAddress,
+    orderDetails,
+  };
+
+  if (typeof customerId === 'number' && Number.isFinite(customerId)) {
+    requestBody.customerId = customerId;
+  }
+
+  let response: Response;
+
+  try {
+    response = await fetch(buildApiUrl('rental-orders'), {
+      method: 'POST',
+      headers: {
+        ...jsonHeaders,
+        Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
+          session.accessToken
+        }`,
+      },
+      body: JSON.stringify(requestBody),
+    });
+  } catch (networkError) {
+    console.warn('Failed to reach rental order endpoint', networkError);
+    throw new Error('Unable to reach the rental service. Please check your connection and try again.');
+  }
 
   if (!response.ok) {
     const apiMessage = await parseErrorMessage(response);

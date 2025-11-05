@@ -77,14 +77,72 @@ const buildDepositSummary = (items: ReturnType<typeof useCart>['items']) =>
     {} as Partial<Record<'USD' | 'VND', number>>,
   );
 
+const extractShippingAddress = (user: ReturnType<typeof useAuth>['user']) => {
+  if (!user || !Array.isArray(user.shippingAddresses) || user.shippingAddresses.length === 0) {
+    return null;
+  }
+
+  const primary = user.shippingAddresses[0];
+
+  if (!primary || typeof primary !== 'object') {
+    return null;
+  }
+
+  const record = primary as Record<string, unknown>;
+  const preferredKeys = [
+    'addressLine1',
+    'addressLine2',
+    'street',
+    'ward',
+    'district',
+    'city',
+    'province',
+    'state',
+    'country',
+    'postalCode',
+  ];
+
+  const parts: string[] = [];
+
+  preferredKeys.forEach((key) => {
+    const value = record[key];
+
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+
+      if (trimmed.length > 0 && !parts.includes(trimmed)) {
+        parts.push(trimmed);
+      }
+    }
+  });
+
+  if (parts.length > 0) {
+    return parts.join(', ');
+  }
+
+  const fallbackValue = Object.values(record).find((value) => typeof value === 'string' && value.trim().length > 0);
+  return typeof fallbackValue === 'string' ? fallbackValue.trim() : null;
+};
+
+const normalizeIsoDate = (input: string) => {
+  const parsed = new Date(input);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  return parsed.toISOString();
+};
+
 export default function CheckoutScreen() {
   const router = useRouter();
-  const { session, user, signOut } = useAuth();
+  const { session, user, signOut, ensureSession } = useAuth();
   const { items, rentalStartDate, rentalEndDate, clearCart } = useCart();
   const [orderError, setOrderError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const customerId = typeof user?.customerId === 'number' ? user.customerId : null;
+  const derivedShippingAddress = useMemo(() => extractShippingAddress(user), [user]);
   const rentalRangeLabel = useMemo(() => {
     if (!rentalStartDate) {
       return 'Not selected';
@@ -151,10 +209,6 @@ export default function CheckoutScreen() {
       reasons.push('Missing access token — user is not authenticated');
     }
 
-    if (customerId === null) {
-      reasons.push('Authenticated user is missing a customer ID');
-    }
-
     if (!rentalStartDate) {
       reasons.push('Rental start date has not been selected');
     }
@@ -168,15 +222,7 @@ export default function CheckoutScreen() {
     }
 
     return reasons;
-  }, [
-    customerId,
-    invalidItemCount,
-    isSubmitting,
-    items.length,
-    rentalEndDate,
-    rentalStartDate,
-    session?.accessToken,
-  ]);
+  }, [invalidItemCount, isSubmitting, items.length, rentalEndDate, rentalStartDate, session?.accessToken]);
 
   const handleOrder = async () => {
     if (isSubmitting) {
@@ -188,14 +234,21 @@ export default function CheckoutScreen() {
       return;
     }
 
-    if (!session?.accessToken || customerId === null) {
-      Alert.alert('Authentication required', 'Please sign in again to complete your rental order.');
-      router.replace('/(auth)/sign-in');
+    if (!rentalStartDate || !rentalEndDate) {
+      setOrderError('Rental dates are missing. Return to the cart to select a rental window.');
       return;
     }
 
-    if (!rentalStartDate || !rentalEndDate) {
-      setOrderError('Rental dates are missing. Return to the cart to select a rental window.');
+    const normalizedStart = normalizeIsoDate(rentalStartDate);
+    const normalizedEnd = normalizeIsoDate(rentalEndDate);
+
+    if (!normalizedStart || !normalizedEnd) {
+      setOrderError('Selected rental dates are invalid. Please reselect your rental window in the cart.');
+      return;
+    }
+
+    if (new Date(normalizedEnd).getTime() <= new Date(normalizedStart).getTime()) {
+      setOrderError('Rental end date must be after the start date. Please adjust your rental window.');
       return;
     }
 
@@ -208,15 +261,23 @@ export default function CheckoutScreen() {
     setIsSubmitting(true);
 
     try {
+      const activeSession = await ensureSession();
+
+      if (!activeSession?.accessToken) {
+        Alert.alert('Authentication required', 'Please sign in again to complete your rental order.');
+        router.replace('/(auth)/sign-in');
+        return;
+      }
+
       await createRentalOrder(
         {
-          startDate: rentalStartDate,
-          endDate: rentalEndDate,
-          shippingAddress: 'Pending confirmation',
-          customerId,
+          startDate: normalizedStart,
+          endDate: normalizedEnd,
+          shippingAddress: derivedShippingAddress ?? 'Pending confirmation',
           orderDetails,
+          customerId,
         },
-        session,
+        activeSession,
       );
 
       clearCart();
@@ -356,6 +417,12 @@ export default function CheckoutScreen() {
             <Text style={styles.summaryLabel}>Phone</Text>
             <Text style={styles.summaryValue}>{user?.phoneNumber ?? 'Not provided'}</Text>
           </View>
+          <View style={styles.summaryRow}>
+            <Text style={styles.summaryLabel}>Shipping address</Text>
+            <Text style={[styles.summaryValue, styles.summaryValueMultiline]}>
+              {derivedShippingAddress ?? 'Pending confirmation'}
+            </Text>
+          </View>
         </View>
       </ScrollView>
 
@@ -478,6 +545,10 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#111111',
+  },
+  summaryValueMultiline: {
+    flex: 1,
+    textAlign: 'right',
   },
   itemRow: {
     flexDirection: 'row',
