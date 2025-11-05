@@ -11,6 +11,51 @@ const normalizeBaseUrl = (value: string) => {
   return normalized.replace(/\/+$/, '');
 };
 
+const HTTP_PROTOCOL_REGEX = /^http:\/\//i;
+
+const upgradeHttpToHttps = (url: string) => {
+  try {
+    const parsed = new URL(url);
+
+    if (parsed.protocol === 'http:') {
+      parsed.protocol = 'https:';
+      return parsed.toString();
+    }
+  } catch (error) {
+    console.warn('Failed to parse URL for HTTPS upgrade', error);
+  }
+
+  if (HTTP_PROTOCOL_REGEX.test(url)) {
+    return url.replace(HTTP_PROTOCOL_REGEX, 'https://');
+  }
+
+  return url;
+};
+
+let preferHttps = false;
+let cachedRawBaseUrl: string | null = null;
+let cachedNormalizedBaseUrl: string | null = null;
+
+const applyHttpsPreference = (url: string) => {
+  if (!preferHttps || !HTTP_PROTOCOL_REGEX.test(url)) {
+    return url;
+  }
+
+  return url.replace(HTTP_PROTOCOL_REGEX, 'https://');
+};
+
+const rememberHttpsPreference = () => {
+  if (preferHttps) {
+    return;
+  }
+
+  preferHttps = true;
+
+  if (cachedNormalizedBaseUrl && HTTP_PROTOCOL_REGEX.test(cachedNormalizedBaseUrl)) {
+    cachedNormalizedBaseUrl = cachedNormalizedBaseUrl.replace(HTTP_PROTOCOL_REGEX, 'https://');
+  }
+};
+
 const describeEndpoint = (url: string) => {
   try {
     const parsed = new URL(url);
@@ -48,7 +93,16 @@ export const ensureApiUrl = () => {
     throw new Error('API URL is not configured. Please set EXPO_PUBLIC_API_URL.');
   }
 
-  return normalizeBaseUrl(url);
+  if (cachedRawBaseUrl === url && cachedNormalizedBaseUrl) {
+    return cachedNormalizedBaseUrl;
+  }
+
+  const normalized = applyHttpsPreference(normalizeBaseUrl(url));
+
+  cachedRawBaseUrl = url;
+  cachedNormalizedBaseUrl = normalized;
+
+  return normalized;
 };
 
 export const buildApiUrl = (...segments: Array<string | number>) => {
@@ -59,4 +113,39 @@ export const buildApiUrl = (...segments: Array<string | number>) => {
     .join('/');
 
   return path.length > 0 ? `${baseUrl}/${path}` : baseUrl;
+};
+
+type FetchWithRetryOptions = {
+  retryHttpToHttps?: boolean;
+  onRetry?: (nextUrl: string, previousError: unknown) => void;
+};
+
+export const fetchWithRetry = async (
+  url: string,
+  init?: RequestInit,
+  options: FetchWithRetryOptions = {}
+) => {
+  const { retryHttpToHttps = true, onRetry } = options;
+
+  try {
+    return await fetch(url, init);
+  } catch (error) {
+    if (retryHttpToHttps && isNetworkRequestFailed(error) && HTTP_PROTOCOL_REGEX.test(url)) {
+      const upgradedUrl = upgradeHttpToHttps(url);
+
+      if (upgradedUrl !== url) {
+        onRetry?.(upgradedUrl, error);
+
+        try {
+          const response = await fetch(upgradedUrl, init);
+          rememberHttpsPreference();
+          return response;
+        } catch (retryError) {
+          throw enhanceNetworkError(retryError, upgradedUrl);
+        }
+      }
+    }
+
+    throw enhanceNetworkError(error, url);
+  }
 };

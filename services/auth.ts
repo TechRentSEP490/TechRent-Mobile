@@ -1,4 +1,4 @@
-import { buildApiUrl, enhanceNetworkError } from './api';
+import { buildApiUrl, fetchWithRetry } from './api';
 
 export type RegisterPayload = {
   username: string;
@@ -101,13 +101,24 @@ export async function registerUser(payload: RegisterPayload) {
   let response: Response;
 
   try {
-    response = await fetch(endpointUrl, {
-      method: 'POST',
-      headers: jsonHeaders,
-      body: JSON.stringify(payload),
-    });
+    response = await fetchWithRetry(
+      endpointUrl,
+      {
+        method: 'POST',
+        headers: jsonHeaders,
+        body: JSON.stringify(payload),
+      },
+      {
+        onRetry: (nextUrl, networkError) => {
+          console.warn('Failed to reach registration endpoint, retrying with HTTPS', networkError, {
+            retryUrl: nextUrl,
+          });
+        },
+      },
+    );
   } catch (networkError) {
-    throw enhanceNetworkError(networkError, endpointUrl);
+    console.warn('Failed to reach registration endpoint', networkError);
+    throw networkError;
   }
 
   if (!response.ok) {
@@ -136,12 +147,23 @@ export async function verifyEmail({ email, code }: { email: string; code: string
   let response: Response;
 
   try {
-    response = await fetch(url.toString(), {
-      method: 'POST',
-      headers: jsonHeaders,
-    });
+    response = await fetchWithRetry(
+      url.toString(),
+      {
+        method: 'POST',
+        headers: jsonHeaders,
+      },
+      {
+        onRetry: (nextUrl, networkError) => {
+          console.warn('Failed to reach email verification endpoint, retrying with HTTPS', networkError, {
+            retryUrl: nextUrl,
+          });
+        },
+      },
+    );
   } catch (networkError) {
-    throw enhanceNetworkError(networkError, url.toString());
+    console.warn('Failed to reach email verification endpoint', networkError);
+    throw networkError;
   }
 
   if (!response.ok) {
@@ -163,13 +185,24 @@ export async function loginUser(payload: LoginPayload) {
   let response: Response;
 
   try {
-    response = await fetch(endpointUrl, {
-      method: 'POST',
-      headers: jsonHeaders,
-      body: JSON.stringify(payload),
-    });
+    response = await fetchWithRetry(
+      endpointUrl,
+      {
+        method: 'POST',
+        headers: jsonHeaders,
+        body: JSON.stringify(payload),
+      },
+      {
+        onRetry: (nextUrl, networkError) => {
+          console.warn('Failed to reach login endpoint, retrying with HTTPS', networkError, {
+            retryUrl: nextUrl,
+          });
+        },
+      },
+    );
   } catch (networkError) {
-    throw enhanceNetworkError(networkError, endpointUrl);
+    console.warn('Failed to reach login endpoint', networkError);
+    throw networkError;
   }
 
   if (!response.ok) {
@@ -308,15 +341,26 @@ export async function getCurrentUser({
   let response: Response;
 
   try {
-    response = await fetch(endpointUrl, {
-      method: 'GET',
-      headers: {
-        Accept: 'application/json',
-        Authorization: `${tokenType && tokenType.length > 0 ? tokenType : 'Bearer'} ${accessToken}`,
+    response = await fetchWithRetry(
+      endpointUrl,
+      {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+          Authorization: `${tokenType && tokenType.length > 0 ? tokenType : 'Bearer'} ${accessToken}`,
+        },
       },
-    });
+      {
+        onRetry: (nextUrl, networkError) => {
+          console.warn('Failed to reach profile endpoint, retrying with HTTPS', networkError, {
+            retryUrl: nextUrl,
+          });
+        },
+      },
+    );
   } catch (networkError) {
-    throw enhanceNetworkError(networkError, endpointUrl);
+    console.warn('Failed to reach profile endpoint', networkError);
+    throw networkError;
   }
 
   if (!response.ok) {

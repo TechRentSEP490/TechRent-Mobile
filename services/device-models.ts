@@ -1,6 +1,6 @@
 import type { ProductDetail, ProductSpecsPayload } from '@/constants/products';
 import { products as fallbackProducts } from '@/constants/products';
-import { buildApiUrl, enhanceNetworkError } from './api';
+import { buildApiUrl, fetchWithRetry } from './api';
 
 type DeviceModelResponse = {
   status: string;
@@ -124,9 +124,16 @@ export async function fetchDeviceModels(forceRefresh = false): Promise<ProductDe
   let response: Response;
 
   try {
-    response = await fetch(endpointUrl);
+    response = await fetchWithRetry(endpointUrl, undefined, {
+      onRetry: (nextUrl, networkError) => {
+        console.warn('Failed to reach device models endpoint, retrying with HTTPS', networkError, {
+          retryUrl: nextUrl,
+        });
+      },
+    });
   } catch (networkError) {
-    throw enhanceNetworkError(networkError, endpointUrl);
+    console.warn('Failed to reach device models endpoint', networkError);
+    throw networkError;
   }
 
   if (!response.ok) {

@@ -1,4 +1,4 @@
-import { buildApiUrl, enhanceNetworkError } from './api';
+import { buildApiUrl, fetchWithRetry } from './api';
 
 export type RentalOrderDetailPayload = {
   quantity: number;
@@ -122,7 +122,7 @@ export async function createRentalOrder(
   let response: Response;
 
   try {
-    response = await fetch(endpointUrl, {
+    response = await fetchWithRetry(endpointUrl, {
       method: 'POST',
       headers: {
         ...jsonHeaders,
@@ -131,10 +131,16 @@ export async function createRentalOrder(
         }`,
       },
       body: JSON.stringify(requestBody),
+    }, {
+      onRetry: (nextUrl, networkError) => {
+        console.warn('Failed to reach rental order endpoint, retrying with HTTPS', networkError, {
+          retryUrl: nextUrl,
+        });
+      },
     });
   } catch (networkError) {
     console.warn('Failed to reach rental order endpoint', networkError);
-    throw enhanceNetworkError(networkError, endpointUrl);
+    throw networkError;
   }
 
   if (!response.ok) {
@@ -168,7 +174,7 @@ export async function fetchRentalOrders(session: SessionCredentials): Promise<Re
   let response: Response;
 
   try {
-    response = await fetch(endpointUrl, {
+    response = await fetchWithRetry(endpointUrl, {
       method: 'GET',
       headers: {
         Accept: 'application/json',
@@ -176,10 +182,16 @@ export async function fetchRentalOrders(session: SessionCredentials): Promise<Re
           session.accessToken
         }`,
       },
+    }, {
+      onRetry: (nextUrl, networkError) => {
+        console.warn('Failed to reach rental order endpoint, retrying with HTTPS', networkError, {
+          retryUrl: nextUrl,
+        });
+      },
     });
   } catch (networkError) {
     console.warn('Failed to reach rental order endpoint', networkError);
-    throw enhanceNetworkError(networkError, endpointUrl);
+    throw networkError;
   }
 
   if (!response.ok) {
@@ -224,7 +236,7 @@ export async function fetchRentalOrderById(
   let response: Response;
 
   try {
-    response = await fetch(endpointUrl, {
+    response = await fetchWithRetry(endpointUrl, {
       method: 'GET',
       headers: {
         Accept: 'application/json',
@@ -232,10 +244,16 @@ export async function fetchRentalOrderById(
           session.accessToken
         }`,
       },
+    }, {
+      onRetry: (nextUrl, networkError) => {
+        console.warn('Failed to reach rental order endpoint, retrying with HTTPS', networkError, {
+          retryUrl: nextUrl,
+        });
+      },
     });
   } catch (networkError) {
     console.warn('Failed to reach rental order endpoint', networkError);
-    throw enhanceNetworkError(networkError, endpointUrl);
+    throw networkError;
   }
 
   if (!response.ok) {

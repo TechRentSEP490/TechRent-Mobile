@@ -1,4 +1,4 @@
-import { buildApiUrl, enhanceNetworkError } from './api';
+import { buildApiUrl, fetchWithRetry } from './api';
 
 type SessionCredentials = {
   accessToken: string;
@@ -101,17 +101,28 @@ export async function fetchContracts(session: SessionCredentials): Promise<Contr
   let response: Response;
 
   try {
-    response = await fetch(endpointUrl, {
-      method: 'GET',
-      headers: {
-        Accept: 'application/json',
-        Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
-          session.accessToken
-        }`,
+    response = await fetchWithRetry(
+      endpointUrl,
+      {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+          Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
+            session.accessToken
+          }`,
+        },
       },
-    });
+      {
+        onRetry: (nextUrl, networkError) => {
+          console.warn('Failed to reach contracts endpoint, retrying with HTTPS', networkError, {
+            retryUrl: nextUrl,
+          });
+        },
+      },
+    );
   } catch (networkError) {
-    throw enhanceNetworkError(networkError, endpointUrl);
+    console.warn('Failed to reach contracts endpoint', networkError);
+    throw networkError;
   }
 
   if (!response.ok) {
@@ -154,17 +165,28 @@ export async function fetchContractById(
   let response: Response;
 
   try {
-    response = await fetch(endpointUrl, {
-      method: 'GET',
-      headers: {
-        Accept: 'application/json',
-        Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
-          session.accessToken
-        }`,
+    response = await fetchWithRetry(
+      endpointUrl,
+      {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+          Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
+            session.accessToken
+          }`,
+        },
       },
-    });
+      {
+        onRetry: (nextUrl, networkError) => {
+          console.warn('Failed to reach contract details endpoint, retrying with HTTPS', networkError, {
+            retryUrl: nextUrl,
+          });
+        },
+      },
+    );
   } catch (networkError) {
-    throw enhanceNetworkError(networkError, endpointUrl);
+    console.warn('Failed to reach contract details endpoint', networkError);
+    throw networkError;
   }
 
   if (!response.ok) {
@@ -218,19 +240,30 @@ export async function sendContractPin(
   let response: Response;
 
   try {
-    response = await fetch(endpointUrl, {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
-          session.accessToken
-        }`,
+    response = await fetchWithRetry(
+      endpointUrl,
+      {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
+            session.accessToken
+          }`,
+        },
+        body: JSON.stringify({ email: trimmedEmail }),
       },
-      body: JSON.stringify({ email: trimmedEmail }),
-    });
+      {
+        onRetry: (nextUrl, networkError) => {
+          console.warn('Failed to reach contract PIN endpoint, retrying with HTTPS', networkError, {
+            retryUrl: nextUrl,
+          });
+        },
+      },
+    );
   } catch (networkError) {
-    throw enhanceNetworkError(networkError, endpointUrl);
+    console.warn('Failed to reach contract PIN endpoint', networkError);
+    throw networkError;
   }
 
   if (!response.ok) {
@@ -286,19 +319,30 @@ export async function signContract(
   let response: Response;
 
   try {
-    response = await fetch(endpointUrl, {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
-          session.accessToken
-        }`,
+    response = await fetchWithRetry(
+      endpointUrl,
+      {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
+            session.accessToken
+          }`,
+        },
+        body: JSON.stringify(payload),
       },
-      body: JSON.stringify(payload),
-    });
+      {
+        onRetry: (nextUrl, networkError) => {
+          console.warn('Failed to reach contract signing endpoint, retrying with HTTPS', networkError, {
+            retryUrl: nextUrl,
+          });
+        },
+      },
+    );
   } catch (networkError) {
-    throw enhanceNetworkError(networkError, endpointUrl);
+    console.warn('Failed to reach contract signing endpoint', networkError);
+    throw networkError;
   }
 
   if (!response.ok) {

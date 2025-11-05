@@ -1,4 +1,4 @@
-import { buildApiUrl, enhanceNetworkError } from './api';
+import { buildApiUrl, fetchWithRetry } from './api';
 
 export type DeviceCategory = {
   id: string;
@@ -54,9 +54,16 @@ export async function fetchDeviceCategories(forceRefresh = false): Promise<Devic
   let response: Response;
 
   try {
-    response = await fetch(endpointUrl);
+    response = await fetchWithRetry(endpointUrl, undefined, {
+      onRetry: (nextUrl, networkError) => {
+        console.warn('Failed to reach device categories endpoint, retrying with HTTPS', networkError, {
+          retryUrl: nextUrl,
+        });
+      },
+    });
   } catch (networkError) {
-    throw enhanceNetworkError(networkError, endpointUrl);
+    console.warn('Failed to reach device categories endpoint', networkError);
+    throw networkError;
   }
 
   if (!response.ok) {
@@ -98,9 +105,16 @@ export async function fetchDeviceCategoryById(
   let response: Response;
 
   try {
-    response = await fetch(endpointUrl);
+    response = await fetchWithRetry(endpointUrl, undefined, {
+      onRetry: (nextUrl, networkError) => {
+        console.warn('Failed to reach device category endpoint, retrying with HTTPS', networkError, {
+          retryUrl: nextUrl,
+        });
+      },
+    });
   } catch (networkError) {
-    throw enhanceNetworkError(networkError, endpointUrl);
+    console.warn('Failed to reach device category endpoint', networkError);
+    throw networkError;
   }
 
   if (!response.ok) {
