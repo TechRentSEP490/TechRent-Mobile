@@ -1,4 +1,4 @@
-import { buildApiUrl } from './api';
+import { buildApiUrl, enhanceNetworkError } from './api';
 
 type SessionCredentials = {
   accessToken: string;
@@ -97,15 +97,22 @@ export async function fetchContracts(session: SessionCredentials): Promise<Contr
     throw new Error('An access token is required to load rental contracts.');
   }
 
-  const response = await fetch(buildApiUrl('contracts', 'my-contracts'), {
-    method: 'GET',
-    headers: {
-      Accept: 'application/json',
-      Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
-        session.accessToken
-      }`,
-    },
-  });
+  const endpointUrl = buildApiUrl('contracts', 'my-contracts');
+  let response: Response;
+
+  try {
+    response = await fetch(endpointUrl, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
+          session.accessToken
+        }`,
+      },
+    });
+  } catch (networkError) {
+    throw enhanceNetworkError(networkError, endpointUrl);
+  }
 
   if (!response.ok) {
     const apiMessage = await parseErrorMessage(response);
@@ -143,15 +150,22 @@ export async function fetchContractById(
     throw new Error('A valid contract identifier is required to load the contract.');
   }
 
-  const response = await fetch(buildApiUrl('contracts', contractId), {
-    method: 'GET',
-    headers: {
-      Accept: 'application/json',
-      Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
-        session.accessToken
-      }`,
-    },
-  });
+  const endpointUrl = buildApiUrl('contracts', contractId);
+  let response: Response;
+
+  try {
+    response = await fetch(endpointUrl, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
+          session.accessToken
+        }`,
+      },
+    });
+  } catch (networkError) {
+    throw enhanceNetworkError(networkError, endpointUrl);
+  }
 
   if (!response.ok) {
     const apiMessage = await parseErrorMessage(response);
@@ -200,17 +214,24 @@ export async function sendContractPin(
     throw new Error('An email address is required to send the verification code.');
   }
 
-  const response = await fetch(buildApiUrl('contracts', contractId, 'send-pin', 'email'), {
-    method: 'POST',
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-      Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
-        session.accessToken
-      }`,
-    },
-    body: JSON.stringify({ email: trimmedEmail }),
-  });
+  const endpointUrl = buildApiUrl('contracts', contractId, 'send-pin', 'email');
+  let response: Response;
+
+  try {
+    response = await fetch(endpointUrl, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
+          session.accessToken
+        }`,
+      },
+      body: JSON.stringify({ email: trimmedEmail }),
+    });
+  } catch (networkError) {
+    throw enhanceNetworkError(networkError, endpointUrl);
+  }
 
   if (!response.ok) {
     const apiMessage = await parseErrorMessage(response);
@@ -261,17 +282,24 @@ export async function signContract(
     throw new Error('A verification code is required to sign the contract.');
   }
 
-  const response = await fetch(buildApiUrl('contracts', payload.contractId, 'sign'), {
-    method: 'POST',
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-      Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
-        session.accessToken
-      }`,
-    },
-    body: JSON.stringify(payload),
-  });
+  const endpointUrl = buildApiUrl('contracts', payload.contractId, 'sign');
+  let response: Response;
+
+  try {
+    response = await fetch(endpointUrl, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
+          session.accessToken
+        }`,
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (networkError) {
+    throw enhanceNetworkError(networkError, endpointUrl);
+  }
 
   if (!response.ok) {
     const apiMessage = await parseErrorMessage(response);

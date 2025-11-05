@@ -11,6 +11,36 @@ const normalizeBaseUrl = (value: string) => {
   return normalized.replace(/\/+$/, '');
 };
 
+const describeEndpoint = (url: string) => {
+  try {
+    const parsed = new URL(url);
+    return parsed.origin;
+  } catch {
+    return url;
+  }
+};
+
+const isNetworkRequestFailed = (error: unknown) =>
+  error instanceof TypeError && /network request failed/i.test(error.message);
+
+export const enhanceNetworkError = (error: unknown, url: string) => {
+  const baseDescription = describeEndpoint(url);
+  const hint =
+    ' Ensure the device can reach the API host and that cleartext HTTP traffic is enabled (set `usesCleartextTraffic` to true or use HTTPS).';
+
+  if (isNetworkRequestFailed(error)) {
+    const enhanced = new Error(`Unable to reach ${baseDescription}.${hint}`);
+    (enhanced as Error & { cause?: unknown }).cause = error;
+    return enhanced;
+  }
+
+  if (error instanceof Error) {
+    return error;
+  }
+
+  return new Error(`Failed to reach ${baseDescription}.${hint}`);
+};
+
 export const ensureApiUrl = () => {
   const url = process.env.EXPO_PUBLIC_API_URL;
 

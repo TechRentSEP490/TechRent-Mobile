@@ -1,4 +1,4 @@
-import { buildApiUrl } from './api';
+import { buildApiUrl, enhanceNetworkError } from './api';
 
 export type RentalOrderDetailPayload = {
   quantity: number;
@@ -118,10 +118,11 @@ export async function createRentalOrder(
     requestBody.customerId = customerId;
   }
 
+  const endpointUrl = buildApiUrl('rental-orders');
   let response: Response;
 
   try {
-    response = await fetch(buildApiUrl('rental-orders'), {
+    response = await fetch(endpointUrl, {
       method: 'POST',
       headers: {
         ...jsonHeaders,
@@ -133,7 +134,7 @@ export async function createRentalOrder(
     });
   } catch (networkError) {
     console.warn('Failed to reach rental order endpoint', networkError);
-    throw new Error('Unable to reach the rental service. Please check your connection and try again.');
+    throw enhanceNetworkError(networkError, endpointUrl);
   }
 
   if (!response.ok) {
@@ -163,15 +164,23 @@ export async function fetchRentalOrders(session: SessionCredentials): Promise<Re
     throw new Error('An access token is required to load rental orders.');
   }
 
-  const response = await fetch(buildApiUrl('rental-orders'), {
-    method: 'GET',
-    headers: {
-      Accept: 'application/json',
-      Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
-        session.accessToken
-      }`,
-    },
-  });
+  const endpointUrl = buildApiUrl('rental-orders');
+  let response: Response;
+
+  try {
+    response = await fetch(endpointUrl, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
+          session.accessToken
+        }`,
+      },
+    });
+  } catch (networkError) {
+    console.warn('Failed to reach rental order endpoint', networkError);
+    throw enhanceNetworkError(networkError, endpointUrl);
+  }
 
   if (!response.ok) {
     const apiMessage = await parseErrorMessage(response);
@@ -211,15 +220,23 @@ export async function fetchRentalOrderById(
     throw new Error('A valid rental order identifier is required.');
   }
 
-  const response = await fetch(buildApiUrl('rental-orders', normalizedId), {
-    method: 'GET',
-    headers: {
-      Accept: 'application/json',
-      Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
-        session.accessToken
-      }`,
-    },
-  });
+  const endpointUrl = buildApiUrl('rental-orders', normalizedId);
+  let response: Response;
+
+  try {
+    response = await fetch(endpointUrl, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
+          session.accessToken
+        }`,
+      },
+    });
+  } catch (networkError) {
+    console.warn('Failed to reach rental order endpoint', networkError);
+    throw enhanceNetworkError(networkError, endpointUrl);
+  }
 
   if (!response.ok) {
     const apiMessage = await parseErrorMessage(response);

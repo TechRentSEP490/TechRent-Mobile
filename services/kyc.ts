@@ -1,4 +1,4 @@
-import { buildApiUrl } from './api';
+import { buildApiUrl, enhanceNetworkError } from './api';
 
 export type KycDocumentSlot = 'front' | 'back' | 'selfie';
 
@@ -141,16 +141,20 @@ export async function fetchKycDocuments({
     throw new Error('Access token is required to load KYC documents.');
   }
 
-  const response = await fetch(
-    buildApiUrl('operator', 'kyc', 'api', 'customers', 'me', 'kyc'),
-    {
+  const endpointUrl = buildApiUrl('operator', 'kyc', 'api', 'customers', 'me', 'kyc');
+  let response: Response;
+
+  try {
+    response = await fetch(endpointUrl, {
       method: 'GET',
       headers: {
         Accept: 'application/json',
         Authorization: getAuthorizationHeader({ accessToken, tokenType }),
       },
-    }
-  );
+    });
+  } catch (networkError) {
+    throw enhanceNetworkError(networkError, endpointUrl);
+  }
 
   if (response.status === 404) {
     return null;
@@ -195,17 +199,21 @@ export async function uploadKycDocuments({
     }
   );
 
-  const response = await fetch(
-    buildApiUrl('operator', 'kyc', 'api', 'customers', 'me', 'kyc', 'documents', 'batch'),
-    {
+  const endpointUrl = buildApiUrl('operator', 'kyc', 'api', 'customers', 'me', 'kyc', 'documents', 'batch');
+  let response: Response;
+
+  try {
+    response = await fetch(endpointUrl, {
       method: 'POST',
       headers: {
         Accept: 'application/json',
         Authorization: getAuthorizationHeader({ accessToken, tokenType }),
       },
       body: formData,
-    }
-  );
+    });
+  } catch (networkError) {
+    throw enhanceNetworkError(networkError, endpointUrl);
+  }
 
   if (!response.ok) {
     throw new Error(`Failed to upload KYC documents (status ${response.status}).`);

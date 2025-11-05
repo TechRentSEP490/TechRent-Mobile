@@ -1,4 +1,4 @@
-import { buildApiUrl } from './api';
+import { buildApiUrl, enhanceNetworkError } from './api';
 
 export type RegisterPayload = {
   username: string;
@@ -97,11 +97,18 @@ const parseErrorMessage = async (response: Response) => {
 };
 
 export async function registerUser(payload: RegisterPayload) {
-  const response = await fetch(buildApiUrl('auth', 'register'), {
-    method: 'POST',
-    headers: jsonHeaders,
-    body: JSON.stringify(payload),
-  });
+  const endpointUrl = buildApiUrl('auth', 'register');
+  let response: Response;
+
+  try {
+    response = await fetch(endpointUrl, {
+      method: 'POST',
+      headers: jsonHeaders,
+      body: JSON.stringify(payload),
+    });
+  } catch (networkError) {
+    throw enhanceNetworkError(networkError, endpointUrl);
+  }
 
   if (!response.ok) {
     const apiMessage = await parseErrorMessage(response);
@@ -126,10 +133,16 @@ export async function verifyEmail({ email, code }: { email: string; code: string
   url.searchParams.append('email', email);
   url.searchParams.append('code', code);
 
-  const response = await fetch(url.toString(), {
-    method: 'POST',
-    headers: jsonHeaders,
-  });
+  let response: Response;
+
+  try {
+    response = await fetch(url.toString(), {
+      method: 'POST',
+      headers: jsonHeaders,
+    });
+  } catch (networkError) {
+    throw enhanceNetworkError(networkError, url.toString());
+  }
 
   if (!response.ok) {
     const apiMessage = await parseErrorMessage(response);
@@ -146,11 +159,18 @@ export async function verifyEmail({ email, code }: { email: string; code: string
 }
 
 export async function loginUser(payload: LoginPayload) {
-  const response = await fetch(buildApiUrl('auth', 'login'), {
-    method: 'POST',
-    headers: jsonHeaders,
-    body: JSON.stringify(payload),
-  });
+  const endpointUrl = buildApiUrl('auth', 'login');
+  let response: Response;
+
+  try {
+    response = await fetch(endpointUrl, {
+      method: 'POST',
+      headers: jsonHeaders,
+      body: JSON.stringify(payload),
+    });
+  } catch (networkError) {
+    throw enhanceNetworkError(networkError, endpointUrl);
+  }
 
   if (!response.ok) {
     const apiMessage = await parseErrorMessage(response);
@@ -284,13 +304,20 @@ export async function getCurrentUser({
     throw new Error('Access token is required to load the current user.');
   }
 
-  const response = await fetch(buildApiUrl('customer', 'profile'), {
-    method: 'GET',
-    headers: {
-      Accept: 'application/json',
-      Authorization: `${tokenType && tokenType.length > 0 ? tokenType : 'Bearer'} ${accessToken}`,
-    },
-  });
+  const endpointUrl = buildApiUrl('customer', 'profile');
+  let response: Response;
+
+  try {
+    response = await fetch(endpointUrl, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `${tokenType && tokenType.length > 0 ? tokenType : 'Bearer'} ${accessToken}`,
+      },
+    });
+  } catch (networkError) {
+    throw enhanceNetworkError(networkError, endpointUrl);
+  }
 
   if (!response.ok) {
     const apiMessage = await parseErrorMessage(response);

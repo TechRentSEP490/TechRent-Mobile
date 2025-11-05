@@ -1,6 +1,6 @@
 import type { ProductDetail, ProductSpecsPayload } from '@/constants/products';
 import { products as fallbackProducts } from '@/constants/products';
-import { buildApiUrl } from './api';
+import { buildApiUrl, enhanceNetworkError } from './api';
 
 type DeviceModelResponse = {
   status: string;
@@ -120,7 +120,14 @@ export async function fetchDeviceModels(forceRefresh = false): Promise<ProductDe
     return cachedDeviceModels;
   }
 
-  const response = await fetch(buildApiUrl('device-models'));
+  const endpointUrl = buildApiUrl('device-models');
+  let response: Response;
+
+  try {
+    response = await fetch(endpointUrl);
+  } catch (networkError) {
+    throw enhanceNetworkError(networkError, endpointUrl);
+  }
 
   if (!response.ok) {
     throw new Error(`Failed to load device models (status ${response.status}).`);
