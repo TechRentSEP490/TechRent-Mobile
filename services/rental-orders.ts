@@ -1,4 +1,4 @@
-import { buildApiUrl, fetchWithRetry } from './api';
+import { buildApiUrl, fetchWithRetry, postJsonWithRetry } from './api';
 
 export type RentalOrderDetailPayload = {
   quantity: number;
@@ -67,11 +67,6 @@ type SessionCredentials = {
   tokenType?: string | null;
 };
 
-const jsonHeaders = {
-  'Content-Type': 'application/json',
-  Accept: 'application/json',
-};
-
 const parseErrorMessage = async (response: Response) => {
   try {
     const json = (await response.json()) as Partial<{
@@ -119,29 +114,16 @@ export async function createRentalOrder(
   }
 
   const endpointUrl = buildApiUrl('rental-orders');
-  let response: Response;
+  const authorizationHeader = `${
+    session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'
+  } ${session.accessToken}`;
 
-  try {
-    response = await fetchWithRetry(endpointUrl, {
-      method: 'POST',
-      headers: {
-        ...jsonHeaders,
-        Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
-          session.accessToken
-        }`,
-      },
-      body: JSON.stringify(requestBody),
-    }, {
-      onRetry: (nextUrl, networkError) => {
-        console.warn('Failed to reach rental order endpoint, retrying with HTTPS', networkError, {
-          retryUrl: nextUrl,
-        });
-      },
-    });
-  } catch (networkError) {
-    console.warn('Failed to reach rental order endpoint', networkError);
-    throw networkError;
-  }
+  const response = await postJsonWithRetry(endpointUrl, requestBody, {
+    description: 'rental order endpoint',
+    headers: {
+      Authorization: authorizationHeader,
+    },
+  });
 
   if (!response.ok) {
     const apiMessage = await parseErrorMessage(response);

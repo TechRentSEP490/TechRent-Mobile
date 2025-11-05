@@ -32,29 +32,8 @@ const upgradeHttpToHttps = (url: string) => {
   return url;
 };
 
-let preferHttps = false;
 let cachedRawBaseUrl: string | null = null;
 let cachedNormalizedBaseUrl: string | null = null;
-
-const applyHttpsPreference = (url: string) => {
-  if (!preferHttps || !HTTP_PROTOCOL_REGEX.test(url)) {
-    return url;
-  }
-
-  return url.replace(HTTP_PROTOCOL_REGEX, 'https://');
-};
-
-const rememberHttpsPreference = () => {
-  if (preferHttps) {
-    return;
-  }
-
-  preferHttps = true;
-
-  if (cachedNormalizedBaseUrl && HTTP_PROTOCOL_REGEX.test(cachedNormalizedBaseUrl)) {
-    cachedNormalizedBaseUrl = cachedNormalizedBaseUrl.replace(HTTP_PROTOCOL_REGEX, 'https://');
-  }
-};
 
 const describeEndpoint = (url: string) => {
   try {
@@ -97,7 +76,7 @@ export const ensureApiUrl = () => {
     return cachedNormalizedBaseUrl;
   }
 
-  const normalized = applyHttpsPreference(normalizeBaseUrl(url));
+  const normalized = normalizeBaseUrl(url);
 
   cachedRawBaseUrl = url;
   cachedNormalizedBaseUrl = normalized;
@@ -137,9 +116,7 @@ export const fetchWithRetry = async (
         onRetry?.(upgradedUrl, error);
 
         try {
-          const response = await fetch(upgradedUrl, init);
-          rememberHttpsPreference();
-          return response;
+          return await fetch(upgradedUrl, init);
         } catch (retryError) {
           throw enhanceNetworkError(retryError, upgradedUrl);
         }
@@ -147,5 +124,44 @@ export const fetchWithRetry = async (
     }
 
     throw enhanceNetworkError(error, url);
+  }
+};
+
+const defaultJsonHeaders = {
+  'Content-Type': 'application/json',
+  Accept: 'application/json',
+};
+
+type PostJsonWithRetryOptions = {
+  description?: string;
+  headers?: Record<string, string>;
+};
+
+export const postJsonWithRetry = async (
+  url: string,
+  body: unknown,
+  { description = 'API endpoint', headers = {} }: PostJsonWithRetryOptions = {},
+) => {
+  const label = description.trim().length > 0 ? description : 'API endpoint';
+  const requestInit: RequestInit = {
+    method: 'POST',
+    headers: {
+      ...defaultJsonHeaders,
+      ...headers,
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  };
+
+  try {
+    return await fetchWithRetry(url, requestInit, {
+      onRetry: (nextUrl, networkError) => {
+        console.warn(`Failed to reach ${label}, retrying with HTTPS`, networkError, {
+          retryUrl: nextUrl,
+        });
+      },
+    });
+  } catch (networkError) {
+    console.warn(`Failed to reach ${label}`, networkError);
+    throw networkError;
   }
 };
