@@ -13,6 +13,17 @@ const normalizeBaseUrl = (value: string) => {
 
 const HTTP_PROTOCOL_REGEX = /^http:\/\//i;
 
+const hasCustomPort = (value: string) => {
+  const match = value.match(/^https?:\/\/[^/]+:(\d+)/i);
+
+  if (!match) {
+    return false;
+  }
+
+  const port = match[1];
+  return port.length > 0 && port !== '80';
+};
+
 const upgradeHttpToHttps = (url: string) => {
   try {
     const parsed = new URL(url);
@@ -29,9 +40,17 @@ const upgradeHttpToHttps = (url: string) => {
     }
   } catch (error) {
     console.warn('Failed to parse URL for HTTPS upgrade', error);
+
+    if (HTTP_PROTOCOL_REGEX.test(url) && hasCustomPort(url)) {
+      return url;
+    }
   }
 
   if (HTTP_PROTOCOL_REGEX.test(url)) {
+    if (hasCustomPort(url)) {
+      return url;
+    }
+
     return url.replace(HTTP_PROTOCOL_REGEX, 'https://');
   }
 
