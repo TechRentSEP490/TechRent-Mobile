@@ -1,4 +1,4 @@
-import { buildApiUrl } from './api';
+import { buildApiUrl, fetchWithRetry } from './api';
 
 export type KycDocumentSlot = 'front' | 'back' | 'selfie';
 
@@ -141,16 +141,31 @@ export async function fetchKycDocuments({
     throw new Error('Access token is required to load KYC documents.');
   }
 
-  const response = await fetch(
-    buildApiUrl('operator', 'kyc', 'api', 'customers', 'me', 'kyc'),
-    {
-      method: 'GET',
-      headers: {
-        Accept: 'application/json',
-        Authorization: getAuthorizationHeader({ accessToken, tokenType }),
+  const endpointUrl = buildApiUrl('operator', 'kyc', 'api', 'customers', 'me', 'kyc');
+  let response: Response;
+
+  try {
+    response = await fetchWithRetry(
+      endpointUrl,
+      {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+          Authorization: getAuthorizationHeader({ accessToken, tokenType }),
+        },
       },
-    }
-  );
+      {
+        onRetry: (nextUrl, networkError) => {
+          console.warn('Failed to reach KYC documents endpoint, retrying with HTTPS', networkError, {
+            retryUrl: nextUrl,
+          });
+        },
+      },
+    );
+  } catch (networkError) {
+    console.warn('Failed to reach KYC documents endpoint', networkError);
+    throw networkError;
+  }
 
   if (response.status === 404) {
     return null;
@@ -195,17 +210,32 @@ export async function uploadKycDocuments({
     }
   );
 
-  const response = await fetch(
-    buildApiUrl('operator', 'kyc', 'api', 'customers', 'me', 'kyc', 'documents', 'batch'),
-    {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        Authorization: getAuthorizationHeader({ accessToken, tokenType }),
+  const endpointUrl = buildApiUrl('operator', 'kyc', 'api', 'customers', 'me', 'kyc', 'documents', 'batch');
+  let response: Response;
+
+  try {
+    response = await fetchWithRetry(
+      endpointUrl,
+      {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          Authorization: getAuthorizationHeader({ accessToken, tokenType }),
+        },
+        body: formData,
       },
-      body: formData,
-    }
-  );
+      {
+        onRetry: (nextUrl, networkError) => {
+          console.warn('Failed to reach KYC upload endpoint, retrying with HTTPS', networkError, {
+            retryUrl: nextUrl,
+          });
+        },
+      },
+    );
+  } catch (networkError) {
+    console.warn('Failed to reach KYC upload endpoint', networkError);
+    throw networkError;
+  }
 
   if (!response.ok) {
     throw new Error(`Failed to upload KYC documents (status ${response.status}).`);

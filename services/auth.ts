@@ -1,4 +1,4 @@
-import { buildApiUrl } from './api';
+import { buildApiUrl, fetchWithRetry } from './api';
 
 export type RegisterPayload = {
   username: string;
@@ -97,11 +97,29 @@ const parseErrorMessage = async (response: Response) => {
 };
 
 export async function registerUser(payload: RegisterPayload) {
-  const response = await fetch(buildApiUrl('auth', 'register'), {
-    method: 'POST',
-    headers: jsonHeaders,
-    body: JSON.stringify(payload),
-  });
+  const endpointUrl = buildApiUrl('auth', 'register');
+  let response: Response;
+
+  try {
+    response = await fetchWithRetry(
+      endpointUrl,
+      {
+        method: 'POST',
+        headers: jsonHeaders,
+        body: JSON.stringify(payload),
+      },
+      {
+        onRetry: (nextUrl, networkError) => {
+          console.warn('Failed to reach registration endpoint, retrying with HTTPS', networkError, {
+            retryUrl: nextUrl,
+          });
+        },
+      },
+    );
+  } catch (networkError) {
+    console.warn('Failed to reach registration endpoint', networkError);
+    throw networkError;
+  }
 
   if (!response.ok) {
     const apiMessage = await parseErrorMessage(response);
@@ -126,10 +144,27 @@ export async function verifyEmail({ email, code }: { email: string; code: string
   url.searchParams.append('email', email);
   url.searchParams.append('code', code);
 
-  const response = await fetch(url.toString(), {
-    method: 'POST',
-    headers: jsonHeaders,
-  });
+  let response: Response;
+
+  try {
+    response = await fetchWithRetry(
+      url.toString(),
+      {
+        method: 'POST',
+        headers: jsonHeaders,
+      },
+      {
+        onRetry: (nextUrl, networkError) => {
+          console.warn('Failed to reach email verification endpoint, retrying with HTTPS', networkError, {
+            retryUrl: nextUrl,
+          });
+        },
+      },
+    );
+  } catch (networkError) {
+    console.warn('Failed to reach email verification endpoint', networkError);
+    throw networkError;
+  }
 
   if (!response.ok) {
     const apiMessage = await parseErrorMessage(response);
@@ -146,11 +181,29 @@ export async function verifyEmail({ email, code }: { email: string; code: string
 }
 
 export async function loginUser(payload: LoginPayload) {
-  const response = await fetch(buildApiUrl('auth', 'login'), {
-    method: 'POST',
-    headers: jsonHeaders,
-    body: JSON.stringify(payload),
-  });
+  const endpointUrl = buildApiUrl('auth', 'login');
+  let response: Response;
+
+  try {
+    response = await fetchWithRetry(
+      endpointUrl,
+      {
+        method: 'POST',
+        headers: jsonHeaders,
+        body: JSON.stringify(payload),
+      },
+      {
+        onRetry: (nextUrl, networkError) => {
+          console.warn('Failed to reach login endpoint, retrying with HTTPS', networkError, {
+            retryUrl: nextUrl,
+          });
+        },
+      },
+    );
+  } catch (networkError) {
+    console.warn('Failed to reach login endpoint', networkError);
+    throw networkError;
+  }
 
   if (!response.ok) {
     const apiMessage = await parseErrorMessage(response);
@@ -284,13 +337,31 @@ export async function getCurrentUser({
     throw new Error('Access token is required to load the current user.');
   }
 
-  const response = await fetch(buildApiUrl('customer', 'profile'), {
-    method: 'GET',
-    headers: {
-      Accept: 'application/json',
-      Authorization: `${tokenType && tokenType.length > 0 ? tokenType : 'Bearer'} ${accessToken}`,
-    },
-  });
+  const endpointUrl = buildApiUrl('customer', 'profile');
+  let response: Response;
+
+  try {
+    response = await fetchWithRetry(
+      endpointUrl,
+      {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+          Authorization: `${tokenType && tokenType.length > 0 ? tokenType : 'Bearer'} ${accessToken}`,
+        },
+      },
+      {
+        onRetry: (nextUrl, networkError) => {
+          console.warn('Failed to reach profile endpoint, retrying with HTTPS', networkError, {
+            retryUrl: nextUrl,
+          });
+        },
+      },
+    );
+  } catch (networkError) {
+    console.warn('Failed to reach profile endpoint', networkError);
+    throw networkError;
+  }
 
   if (!response.ok) {
     const apiMessage = await parseErrorMessage(response);

@@ -74,6 +74,15 @@ export default function KycDocumentsScreen() {
   const [hasSeededFromParams, setHasSeededFromParams] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  const hasAllAssets = useMemo(
+    () =>
+      KYC_DOCUMENT_SLOTS.every((slot) => {
+        const asset = documents[slot].asset;
+        return Boolean(asset?.uri && asset.uri.length > 0);
+      }),
+    [documents]
+  );
+
   useEffect(() => {
     if (hasSeededFromParams) {
       return;
@@ -245,15 +254,6 @@ export default function KycDocumentsScreen() {
     setErrorMessage(null);
     resetDocument(slot);
   };
-
-  const hasAllAssets = useMemo(
-    () =>
-      KYC_DOCUMENT_SLOTS.every((slot) => {
-        const asset = documents[slot].asset;
-        return Boolean(asset?.uri && asset.uri.length > 0);
-      }),
-    [documents]
-  );
 
   const canContinue = hasAllAssets && !isLoadingDocuments;
 
