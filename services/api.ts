@@ -1,4 +1,15 @@
-const normalizeBaseUrl = (value: string) => value.replace(/\/$/, '');
+const normalizeBaseUrl = (value: string) => {
+  const trimmed = value.trim();
+
+  if (trimmed.length === 0 || trimmed.toLowerCase() === 'undefined') {
+    throw new Error('API URL is not configured. Please set EXPO_PUBLIC_API_URL.');
+  }
+
+  const hasProtocol = /^https?:\/\//i.test(trimmed);
+  const normalized = hasProtocol ? trimmed : `http://${trimmed}`;
+
+  return normalized.replace(/\/+$/, '');
+};
 
 export const ensureApiUrl = () => {
   const url = process.env.EXPO_PUBLIC_API_URL;
