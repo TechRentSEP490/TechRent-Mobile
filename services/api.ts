@@ -18,6 +18,12 @@ const upgradeHttpToHttps = (url: string) => {
     const parsed = new URL(url);
 
     if (parsed.protocol === 'http:') {
+      if (parsed.port && parsed.port !== '80') {
+        // Non-standard ports are frequently exposed only over HTTP. Skip upgrading
+        // to HTTPS so requests to hosts like 160.191.245.242:8080 continue to work.
+        return url;
+      }
+
       parsed.protocol = 'https:';
       return parsed.toString();
     }
