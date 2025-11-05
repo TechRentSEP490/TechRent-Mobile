@@ -1,12 +1,13 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useMemo, useState } from 'react';
+import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
+
 import type { ProductDetail } from '@/constants/products';
-import { useDeviceModel } from '@/hooks/use-device-model';
 import { useAuth } from '@/contexts/AuthContext';
-import { createRentalOrder } from '@/services/rental-orders';
+import { useCart } from '@/contexts/CartContext';
+import { createRentalOrder, type RentalOrderDetailPayload } from '@/services/rental-orders';
 
 const formatCurrencyValue = (value: number, currency: 'USD' | 'VND') =>
   new Intl.NumberFormat(currency === 'USD' ? 'en-US' : 'vi-VN', {
@@ -24,8 +25,8 @@ const determineCurrency = (product: ProductDetail): 'USD' | 'VND' => {
 };
 
 const getDailyRate = (product: ProductDetail) => {
-  if (typeof product.pricePerDay === 'number' && product.pricePerDay > 0) {
-    return product.pricePerDay;
+  if (typeof product.pricePerDay === 'number' && Number.isFinite(product.pricePerDay)) {
+    return Math.max(product.pricePerDay, 0);
   }
 
   const sanitized = product.price.replace(/[^0-9.,]/g, '').replace(/,/g, '');
@@ -33,10 +34,14 @@ const getDailyRate = (product: ProductDetail) => {
   return Number.isNaN(parsed) ? 0 : parsed;
 };
 
-const formatDisplayDate = (value: string) => {
-  const parsed = new Date(value);
+const formatDisplayDate = (isoDate: string | null | undefined) => {
+  if (!isoDate) {
+    return 'Not selected';
+  }
+
+  const parsed = new Date(isoDate);
   if (Number.isNaN(parsed.getTime())) {
-    return value;
+    return 'Not selected';
   }
 
   return parsed.toLocaleDateString('en-US', {
@@ -46,75 +51,148 @@ const formatDisplayDate = (value: string) => {
   });
 };
 
-const parseDateParam = (value: string | string[] | undefined): Date | null => {
-  const raw = Array.isArray(value) ? value[0] : value;
-
-  if (!raw || typeof raw !== 'string') {
-    return null;
-  }
-
-  const trimmed = raw.trim();
-
-  if (!trimmed) {
-    return null;
-  }
-
-  const attemptParse = (input: string) => {
-    const parsed = new Date(input);
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
-  };
-
-  return (
-    attemptParse(trimmed) ??
-    attemptParse(`${trimmed}T00:00:00.000Z`) ??
-    attemptParse(`${trimmed}T00:00:00`)
+const buildCurrencySummary = (items: ReturnType<typeof useCart>['items']) =>
+  items.reduce(
+    (accumulator, item) => {
+      const currency = determineCurrency(item.product);
+      const amount = getDailyRate(item.product) * item.quantity;
+      accumulator[currency] = (accumulator[currency] ?? 0) + amount;
+      return accumulator;
+    },
+    {} as Partial<Record<'USD' | 'VND', number>>,
   );
+
+const buildDepositSummary = (items: ReturnType<typeof useCart>['items']) =>
+  items.reduce(
+    (accumulator, item) => {
+      const currency = determineCurrency(item.product);
+      const depositPercent =
+        typeof item.product.depositPercent === 'number' && item.product.depositPercent > 0
+          ? item.product.depositPercent
+          : 0.12;
+      const amount = getDailyRate(item.product) * item.quantity * depositPercent;
+      accumulator[currency] = (accumulator[currency] ?? 0) + amount;
+      return accumulator;
+    },
+    {} as Partial<Record<'USD' | 'VND', number>>,
+  );
+
+const extractShippingAddress = (user: ReturnType<typeof useAuth>['user']) => {
+  if (!user || !Array.isArray(user.shippingAddresses) || user.shippingAddresses.length === 0) {
+    return null;
+  }
+
+  const primary = user.shippingAddresses[0];
+
+  if (!primary || typeof primary !== 'object') {
+    return null;
+  }
+
+  const record = primary as Record<string, unknown>;
+  const preferredKeys = [
+    'addressLine1',
+    'addressLine2',
+    'street',
+    'ward',
+    'district',
+    'city',
+    'province',
+    'state',
+    'country',
+    'postalCode',
+  ];
+
+  const parts: string[] = [];
+
+  preferredKeys.forEach((key) => {
+    const value = record[key];
+
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+
+      if (trimmed.length > 0 && !parts.includes(trimmed)) {
+        parts.push(trimmed);
+      }
+    }
+  });
+
+  if (parts.length > 0) {
+    return parts.join(', ');
+  }
+
+  const fallbackValue = Object.values(record).find((value) => typeof value === 'string' && value.trim().length > 0);
+  return typeof fallbackValue === 'string' ? fallbackValue.trim() : null;
+};
+
+const normalizeIsoDate = (input: string) => {
+  const parsed = new Date(input);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  return parsed.toISOString();
 };
 
 export default function CheckoutScreen() {
   const router = useRouter();
-  const { productId: productIdParam, quantity: quantityParam, startDate: startParam, endDate: endParam } =
-    useLocalSearchParams();
-  const productId = Array.isArray(productIdParam) ? productIdParam[0] : productIdParam;
-  const { data: product, loading, error } = useDeviceModel(productId);
-  const { session, user, signOut } = useAuth();
+  const { session, user, signOut, ensureSession } = useAuth();
+  const { items, rentalStartDate, rentalEndDate, clearCart } = useCart();
+  const [orderError, setOrderError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
   const customerId = typeof user?.customerId === 'number' ? user.customerId : null;
-
-  const quantity = useMemo(() => {
-    const raw = Array.isArray(quantityParam) ? quantityParam[0] : quantityParam;
-    const parsed = Number.parseInt(typeof raw === 'string' ? raw : '1', 10);
-    return Number.isNaN(parsed) || parsed <= 0 ? 1 : parsed;
-  }, [quantityParam]);
-
-  const rentalStartDate = useMemo(() => parseDateParam(startParam), [startParam]);
-
-  const rentalEndDate = useMemo(() => {
-    const parsed = parseDateParam(endParam);
-
-    if (!parsed || !rentalStartDate) {
-      return parsed;
-    }
-
-    return parsed.getTime() < rentalStartDate.getTime() ? rentalStartDate : parsed;
-  }, [endParam, rentalStartDate]);
-
-  const rentalStartIso = rentalStartDate?.toISOString();
-  const rentalEndIso = rentalEndDate?.toISOString();
-
+  const derivedShippingAddress = useMemo(() => extractShippingAddress(user), [user]);
   const rentalRangeLabel = useMemo(() => {
-    if (!rentalStartDate || !rentalStartIso) {
+    if (!rentalStartDate) {
       return 'Not selected';
     }
 
-    if (!rentalEndDate || !rentalEndIso || rentalEndDate.getTime() === rentalStartDate.getTime()) {
-      return formatDisplayDate(rentalStartIso);
+    const start = new Date(rentalStartDate);
+
+    if (Number.isNaN(start.getTime())) {
+      return 'Not selected';
     }
 
-    return `${formatDisplayDate(rentalStartIso)} - ${formatDisplayDate(rentalEndIso)}`;
-  }, [rentalEndDate, rentalEndIso, rentalStartDate, rentalStartIso]);
+    if (!rentalEndDate) {
+      return formatDisplayDate(rentalStartDate);
+    }
 
-  const [orderError, setOrderError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+    const end = new Date(rentalEndDate);
+
+    if (Number.isNaN(end.getTime()) || end.getTime() === start.getTime()) {
+      return formatDisplayDate(rentalStartDate);
+    }
+
+    return `${formatDisplayDate(rentalStartDate)} - ${formatDisplayDate(rentalEndDate)}`;
+  }, [rentalEndDate, rentalStartDate]);
+
+  const orderDetails = useMemo(() => {
+    const details: RentalOrderDetailPayload[] = [];
+
+    items.forEach((item) => {
+      const deviceModelId = Number.parseInt(item.product.id, 10);
+
+      if (!Number.isFinite(deviceModelId) || deviceModelId <= 0) {
+        return;
+      }
+
+      details.push({
+        quantity: item.quantity,
+        deviceModelId,
+      });
+    });
+
+    return details;
+  }, [items]);
+
+  const invalidItemCount = items.length - orderDetails.length;
+  const totalsByCurrency = useMemo(() => buildCurrencySummary(items), [items]);
+  const depositByCurrency = useMemo(() => buildDepositSummary(items), [items]);
+  const totalQuantity = useMemo(
+    () => items.reduce((sum, item) => sum + item.quantity, 0),
+    [items],
+  );
 
   const orderBlockers = useMemo(() => {
     const reasons: string[] = [];
@@ -123,94 +201,59 @@ export default function CheckoutScreen() {
       reasons.push('Submission already in progress');
     }
 
-    if (!product) {
-      reasons.push('Device information is still loading');
+    if (items.length === 0) {
+      reasons.push('Your cart is empty');
     }
 
     if (!session?.accessToken) {
       reasons.push('Missing access token — user is not authenticated');
     }
 
-    if (customerId === null) {
-      reasons.push('Authenticated user is missing a customer ID');
+    if (!rentalStartDate) {
+      reasons.push('Rental start date has not been selected');
     }
 
-    if (!rentalStartDate || !rentalStartIso) {
-      reasons.push('Rental start date has not been selected or parsed');
+    if (!rentalEndDate) {
+      reasons.push('Rental end date has not been selected');
     }
 
-    if (!rentalEndDate || !rentalEndIso) {
-      reasons.push('Rental end date has not been selected or parsed');
+    if (invalidItemCount > 0) {
+      reasons.push('Some items are missing a valid device identifier');
     }
 
     return reasons;
-  }, [
-    customerId,
-    isSubmitting,
-    product,
-    rentalEndDate,
-    rentalEndIso,
-    rentalStartDate,
-    rentalStartIso,
-    session?.accessToken,
-  ]);
-
-  useEffect(() => {
-    if (orderBlockers.length === 0) {
-      console.log('[Checkout] Order button enabled. All rental requirements satisfied.');
-      return;
-    }
-
-    console.log('[Checkout] Order button disabled. Outstanding requirements:', orderBlockers);
-  }, [orderBlockers]);
-
-  if (!product) {
-    return (
-      <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
-        <View style={styles.loadingState}>
-          {loading ? (
-            <ActivityIndicator size="large" color="#111111" />
-          ) : (
-            <Text style={styles.loadingStateText}>Device not found.</Text>
-          )}
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  const currency = determineCurrency(product);
-  const dailyRate = getDailyRate(product);
-  const totalAmount = dailyRate * quantity;
-  const formattedTotal = formatCurrencyValue(totalAmount, currency);
-  const depositPercent = typeof product.depositPercent === 'number' ? product.depositPercent : 0.12;
-  const depositHeldValue = totalAmount * depositPercent;
-  const depositHeld = formatCurrencyValue(depositHeldValue, currency);
+  }, [invalidItemCount, isSubmitting, items.length, rentalEndDate, rentalStartDate, session?.accessToken]);
 
   const handleOrder = async () => {
     if (isSubmitting) {
       return;
     }
 
-    if (!product) {
-      setOrderError('Device information is unavailable. Please try again.');
+    if (items.length === 0) {
+      setOrderError('Your cart is empty. Add devices before placing an order.');
       return;
     }
 
-    if (!session?.accessToken || customerId === null) {
-      Alert.alert('Authentication required', 'Please sign in again to place your rental order.');
-      router.replace('/(auth)/sign-in');
+    if (!rentalStartDate || !rentalEndDate) {
+      setOrderError('Rental dates are missing. Return to the cart to select a rental window.');
       return;
     }
 
-    const deviceModelId = Number.parseInt(product.id, 10);
+    const normalizedStart = normalizeIsoDate(rentalStartDate);
+    const normalizedEnd = normalizeIsoDate(rentalEndDate);
 
-    if (Number.isNaN(deviceModelId)) {
-      setOrderError('Unable to determine the selected device. Please try another model.');
+    if (!normalizedStart || !normalizedEnd) {
+      setOrderError('Selected rental dates are invalid. Please reselect your rental window in the cart.');
       return;
     }
 
-    if (!rentalStartDate || !rentalEndDate || !rentalStartIso || !rentalEndIso) {
-      setOrderError('Rental dates are missing. Please return to the product screen and try again.');
+    if (new Date(normalizedEnd).getTime() <= new Date(normalizedStart).getTime()) {
+      setOrderError('Rental end date must be after the start date. Please adjust your rental window.');
+      return;
+    }
+
+    if (orderDetails.length === 0) {
+      setOrderError('No valid devices found in your cart. Please try adding them again.');
       return;
     }
 
@@ -218,34 +261,35 @@ export default function CheckoutScreen() {
     setIsSubmitting(true);
 
     try {
+      const activeSession = await ensureSession();
+
+      if (!activeSession?.accessToken) {
+        Alert.alert('Authentication required', 'Please sign in again to complete your rental order.');
+        router.replace('/(auth)/sign-in');
+        return;
+      }
+
       await createRentalOrder(
         {
-          startDate: rentalStartIso,
-          endDate: rentalEndIso,
-          shippingAddress: 'Pending confirmation',
+          startDate: normalizedStart,
+          endDate: normalizedEnd,
+          shippingAddress: derivedShippingAddress ?? 'Pending confirmation',
+          orderDetails,
           customerId,
-          orderDetails: [
-            {
-              quantity,
-              deviceModelId,
-            },
-          ],
         },
-        session
+        activeSession,
       );
+
+      clearCart();
 
       Alert.alert('Rental order created', 'Your rental order has been submitted successfully.', [
         {
           text: 'OK',
-          onPress: () =>
-            router.replace({
-              pathname: '/(app)/product-details',
-              params: { productId: product.id },
-            }),
+          onPress: () => router.replace('/(app)/(tabs)/orders'),
         },
       ]);
     } catch (err) {
-      const apiError = err as { status?: number };
+      const apiError = err as { status?: number; message?: string };
 
       if (apiError?.status === 401) {
         await signOut();
@@ -265,7 +309,20 @@ export default function CheckoutScreen() {
     }
   };
 
-  const isOrderDisabled = orderBlockers.length > 0;
+  const renderCurrencySummary = (summary: Partial<Record<'USD' | 'VND', number>>, label: string) => {
+    const entries = Object.entries(summary);
+
+    if (entries.length === 0) {
+      return null;
+    }
+
+    return entries.map(([currency, amount]) => (
+      <View key={`${label}-${currency}`} style={styles.summaryRow}>
+        <Text style={styles.summaryLabel}>{`${label} (${currency})`}</Text>
+        <Text style={styles.summaryValue}>{formatCurrencyValue(amount ?? 0, currency as 'USD' | 'VND')}</Text>
+      </View>
+    ));
+  };
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
@@ -278,13 +335,13 @@ export default function CheckoutScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        {(error || orderError) && (
+        {orderError && (
           <View style={styles.errorBanner}>
-            <Text style={styles.errorBannerText}>{orderError ?? error}</Text>
+            <Text style={styles.errorBannerText}>{orderError}</Text>
           </View>
         )}
 
-        {isOrderDisabled && orderBlockers.length > 0 && (
+        {orderBlockers.length > 0 && (
           <View style={styles.diagnosticsContainer}>
             <Text style={styles.diagnosticsTitle}>Order requirements</Text>
             {orderBlockers.map((reason) => (
@@ -296,50 +353,54 @@ export default function CheckoutScreen() {
           </View>
         )}
 
-        {loading && (
-          <View style={styles.loaderRow}>
-            <ActivityIndicator size="small" color="#111111" />
-          </View>
-        )}
-
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Rental Details</Text>
           <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>Device</Text>
-            <Text style={styles.summaryValue}>{product.name}</Text>
+            <Text style={styles.summaryLabel}>Rental window</Text>
+            <Text style={styles.summaryValue}>{rentalRangeLabel}</Text>
           </View>
           <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>Quantity</Text>
-            <Text style={styles.summaryValue}>{quantity}</Text>
+            <Text style={styles.summaryLabel}>Total items</Text>
+            <Text style={styles.summaryValue}>{totalQuantity}</Text>
           </View>
           <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>Start Date</Text>
-            <Text style={styles.summaryValue}>
-              {rentalStartIso ? formatDisplayDate(rentalStartIso) : 'Not selected'}
-            </Text>
+            <Text style={styles.summaryLabel}>Start date</Text>
+            <Text style={styles.summaryValue}>{formatDisplayDate(rentalStartDate)}</Text>
           </View>
           <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>End Date</Text>
-            <Text style={styles.summaryValue}>
-              {rentalEndIso ? formatDisplayDate(rentalEndIso) : 'Not selected'}
-            </Text>
+            <Text style={styles.summaryLabel}>End date</Text>
+            <Text style={styles.summaryValue}>{formatDisplayDate(rentalEndDate)}</Text>
           </View>
         </View>
 
         <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Items</Text>
+          {items.length === 0 ? (
+            <Text style={styles.emptyItemsText}>Your cart is empty.</Text>
+          ) : (
+            items.map((item) => {
+              const currency = determineCurrency(item.product);
+              const dailyRate = getDailyRate(item.product);
+              return (
+                <View key={item.productId} style={styles.itemRow}>
+                  <View style={styles.itemInfo}>
+                    <Text style={styles.itemName}>{item.product.name}</Text>
+                    <Text style={styles.itemMeta}>{`Model: ${item.product.model}`}</Text>
+                  </View>
+                  <View style={styles.itemPricing}>
+                    <Text style={styles.itemQuantity}>{`Qty ${item.quantity}`}</Text>
+                    <Text style={styles.itemAmount}>{formatCurrencyValue(dailyRate * item.quantity, currency)}</Text>
+                  </View>
+                </View>
+              );
+            })
+          )}
+        </View>
+
+        <View style={styles.section}>
           <Text style={styles.sectionTitle}>Billing Summary</Text>
-          <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>Rental Range</Text>
-            <Text style={styles.summaryValue}>{rentalRangeLabel}</Text>
-          </View>
-          <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>Daily Rental Amount</Text>
-            <Text style={styles.summaryValue}>{formattedTotal}</Text>
-          </View>
-          <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>Deposit Held (Daily)</Text>
-            <Text style={styles.summaryValue}>{depositHeld}</Text>
-          </View>
+          {renderCurrencySummary(totalsByCurrency, 'Daily rental total')}
+          {renderCurrencySummary(depositByCurrency, 'Deposit held (daily)')}
         </View>
 
         <View style={styles.section}>
@@ -356,6 +417,12 @@ export default function CheckoutScreen() {
             <Text style={styles.summaryLabel}>Phone</Text>
             <Text style={styles.summaryValue}>{user?.phoneNumber ?? 'Not provided'}</Text>
           </View>
+          <View style={styles.summaryRow}>
+            <Text style={styles.summaryLabel}>Shipping address</Text>
+            <Text style={[styles.summaryValue, styles.summaryValueMultiline]}>
+              {derivedShippingAddress ?? 'Pending confirmation'}
+            </Text>
+          </View>
         </View>
       </ScrollView>
 
@@ -364,11 +431,11 @@ export default function CheckoutScreen() {
           <Text style={styles.backText}>Back</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.orderButton, isOrderDisabled && styles.disabledButton]}
+          style={[styles.orderButton, (orderBlockers.length > 0 || isSubmitting) && styles.disabledButton]}
           onPress={handleOrder}
-          disabled={isOrderDisabled}
+          disabled={orderBlockers.length > 0 || isSubmitting}
         >
-          {isSubmitting ? <ActivityIndicator size="small" color="#ffffff" /> : <Text style={styles.orderText}>Order</Text>}
+          {isSubmitting ? <Text style={styles.orderText}>Submitting…</Text> : <Text style={styles.orderText}>Order</Text>}
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -379,17 +446,6 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: '#ffffff',
-  },
-  loadingState: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 24,
-    backgroundColor: '#ffffff',
-  },
-  loadingStateText: {
-    color: '#6f6f6f',
-    fontSize: 16,
   },
   header: {
     flexDirection: 'row',
@@ -418,8 +474,8 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingHorizontal: 20,
-    paddingTop: 8,
     paddingBottom: 32,
+    paddingTop: 8,
     gap: 20,
   },
   errorBanner: {
@@ -434,40 +490,34 @@ const styles = StyleSheet.create({
     color: '#c53030',
     fontSize: 14,
   },
-  loaderRow: {
-    paddingVertical: 4,
-    alignItems: 'flex-start',
-  },
   diagnosticsContainer: {
-    borderRadius: 12,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#dbeafe',
-    backgroundColor: '#eff6ff',
+    borderColor: '#e5e7eb',
+    backgroundColor: '#f9fafb',
     padding: 16,
-    gap: 8,
+    gap: 12,
   },
   diagnosticsTitle: {
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: '600',
-    color: '#1d4ed8',
+    color: '#111111',
   },
   diagnosticsRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
+    alignItems: 'center',
+    gap: 10,
   },
   diagnosticsBullet: {
     width: 6,
     height: 6,
-    marginTop: 6,
     borderRadius: 3,
-    backgroundColor: '#2563eb',
+    backgroundColor: '#111111',
   },
   diagnosticsText: {
     flex: 1,
-    color: '#1e3a8a',
-    fontSize: 13,
-    lineHeight: 18,
+    color: '#6f6f6f',
+    fontSize: 14,
   },
   section: {
     borderRadius: 20,
@@ -488,13 +538,56 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   summaryLabel: {
+    fontSize: 14,
     color: '#6f6f6f',
-    fontSize: 15,
   },
   summaryValue: {
     fontSize: 16,
     fontWeight: '600',
     color: '#111111',
+  },
+  summaryValueMultiline: {
+    flex: 1,
+    textAlign: 'right',
+  },
+  itemRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderColor: '#f1f1f1',
+    gap: 12,
+  },
+  itemInfo: {
+    flex: 1,
+    gap: 4,
+  },
+  itemName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#111111',
+  },
+  itemMeta: {
+    color: '#6f6f6f',
+    fontSize: 13,
+  },
+  itemPricing: {
+    alignItems: 'flex-end',
+    gap: 4,
+  },
+  itemQuantity: {
+    fontSize: 14,
+    color: '#6f6f6f',
+  },
+  itemAmount: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#111111',
+  },
+  emptyItemsText: {
+    color: '#6f6f6f',
+    fontSize: 14,
   },
   footerActions: {
     flexDirection: 'row',
@@ -504,9 +597,9 @@ const styles = StyleSheet.create({
   },
   backButton: {
     flex: 1,
-    borderRadius: 14,
     borderWidth: 1,
     borderColor: '#111111',
+    borderRadius: 14,
     alignItems: 'center',
     paddingVertical: 16,
   },

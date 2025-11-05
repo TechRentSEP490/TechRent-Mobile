@@ -7,7 +7,13 @@ module.exports = defineConfig([
   {
     ignores: ['dist/*'],
     settings: {
-      'import/core-modules': ['expo-image-picker'],
+      'import/core-modules': [
+        'expo-image-picker',
+        'expo-print',
+        'expo-sharing',
+        'expo-file-system',
+        '@react-native-community/datetimepicker',
+      ],
     },
   },
 ]);
