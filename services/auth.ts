@@ -1,4 +1,4 @@
-import { buildApiUrl, fetchWithRetry } from './api';
+import { buildApiUrl, fetchWithRetry, postJsonWithRetry } from './api';
 
 export type RegisterPayload = {
   username: string;
@@ -98,28 +98,9 @@ const parseErrorMessage = async (response: Response) => {
 
 export async function registerUser(payload: RegisterPayload) {
   const endpointUrl = buildApiUrl('auth', 'register');
-  let response: Response;
-
-  try {
-    response = await fetchWithRetry(
-      endpointUrl,
-      {
-        method: 'POST',
-        headers: jsonHeaders,
-        body: JSON.stringify(payload),
-      },
-      {
-        onRetry: (nextUrl, networkError) => {
-          console.warn('Failed to reach registration endpoint, retrying with HTTPS', networkError, {
-            retryUrl: nextUrl,
-          });
-        },
-      },
-    );
-  } catch (networkError) {
-    console.warn('Failed to reach registration endpoint', networkError);
-    throw networkError;
-  }
+  const response = await postJsonWithRetry(endpointUrl, payload, {
+    description: 'registration endpoint',
+  });
 
   if (!response.ok) {
     const apiMessage = await parseErrorMessage(response);
@@ -182,28 +163,9 @@ export async function verifyEmail({ email, code }: { email: string; code: string
 
 export async function loginUser(payload: LoginPayload) {
   const endpointUrl = buildApiUrl('auth', 'login');
-  let response: Response;
-
-  try {
-    response = await fetchWithRetry(
-      endpointUrl,
-      {
-        method: 'POST',
-        headers: jsonHeaders,
-        body: JSON.stringify(payload),
-      },
-      {
-        onRetry: (nextUrl, networkError) => {
-          console.warn('Failed to reach login endpoint, retrying with HTTPS', networkError, {
-            retryUrl: nextUrl,
-          });
-        },
-      },
-    );
-  } catch (networkError) {
-    console.warn('Failed to reach login endpoint', networkError);
-    throw networkError;
-  }
+  const response = await postJsonWithRetry(endpointUrl, payload, {
+    description: 'login endpoint',
+  });
 
   if (!response.ok) {
     const apiMessage = await parseErrorMessage(response);

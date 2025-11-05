@@ -126,3 +126,42 @@ export const fetchWithRetry = async (
     throw enhanceNetworkError(error, url);
   }
 };
+
+const defaultJsonHeaders = {
+  'Content-Type': 'application/json',
+  Accept: 'application/json',
+};
+
+type PostJsonWithRetryOptions = {
+  description?: string;
+  headers?: Record<string, string>;
+};
+
+export const postJsonWithRetry = async (
+  url: string,
+  body: unknown,
+  { description = 'API endpoint', headers = {} }: PostJsonWithRetryOptions = {},
+) => {
+  const label = description.trim().length > 0 ? description : 'API endpoint';
+  const requestInit: RequestInit = {
+    method: 'POST',
+    headers: {
+      ...defaultJsonHeaders,
+      ...headers,
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  };
+
+  try {
+    return await fetchWithRetry(url, requestInit, {
+      onRetry: (nextUrl, networkError) => {
+        console.warn(`Failed to reach ${label}, retrying with HTTPS`, networkError, {
+          retryUrl: nextUrl,
+        });
+      },
+    });
+  } catch (networkError) {
+    console.warn(`Failed to reach ${label}`, networkError);
+    throw networkError;
+  }
+};
