@@ -165,6 +165,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             await fetchProfile(nextSession, { silent: true });
           } catch (error) {
             console.warn('Failed to restore user profile', error);
+            await clearSessionState();
           }
         }
       } catch (error) {
@@ -177,7 +178,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       isActive = false;
     };
-  }, [fetchProfile]);
+  }, [fetchProfile, clearSessionState]);
 
   const signIn = useCallback(
     async (payload: LoginPayload) => {
