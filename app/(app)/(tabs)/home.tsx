@@ -199,7 +199,7 @@ export default function HomeScreen() {
                   key={item.key}
                   style={styles.headerIconButton}
                   onPress={item.onPress}
-                  activeOpacity={item.onPress ? 0.7 : 1}
+                  activeOpacity={typeof item.onPress === 'function' ? 0.7 : 1}
                 >
                   <Ionicons name={item.icon as any} size={22} color="#111" />
                 </TouchableOpacity>
