@@ -12,20 +12,17 @@ export type LoginPayload = {
   password: string;
 };
 
-type RegisterResponse = {
+type ApiSuccessResponse<TData> = {
   status: string;
   message: string;
-  details: string;
+  details?: string | null;
   code: number;
+  data: TData;
 };
 
-type VerifyEmailResponse = {
-  status: string;
-  message: string;
-  details: string;
-  code: number;
-  data: unknown;
-};
+type RegisterResponse = ApiSuccessResponse<null>;
+
+type VerifyEmailResponse = ApiSuccessResponse<unknown>;
 
 type LoginResponse = {
   accessToken: string;
@@ -41,13 +38,7 @@ export type AuthenticatedUser = {
   isActive: boolean;
 };
 
-type CurrentUserResponse = {
-  status: string;
-  message: string;
-  details: string;
-  code: number;
-  data: AuthenticatedUser | null;
-};
+type CurrentUserResponse = ApiSuccessResponse<AuthenticatedUser | null>;
 
 type ApiErrorWithStatus = Error & { status?: number };
 
@@ -71,7 +62,7 @@ const parseErrorMessage = async (response: Response) => {
   }
 };
 
-export async function registerUser(payload: RegisterPayload) {
+export async function registerUser(payload: RegisterPayload): Promise<RegisterResponse> {
   const response = await fetch(buildApiUrl('auth', 'register'), {
     method: 'POST',
     headers: jsonHeaders,
