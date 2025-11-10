@@ -819,6 +819,13 @@ export default function OrdersScreen() {
   }, []);
 
   useEffect(() => {
+    if (!isModalVisible) {
+      setVerificationEmail(defaultVerificationEmail);
+      setPendingEmailInput(defaultVerificationEmail);
+    }
+  }, [defaultVerificationEmail, isModalVisible]);
+
+  useEffect(() => {
     if (!highlightedOrderId) {
       return;
     }
@@ -1149,7 +1156,7 @@ export default function OrdersScreen() {
         throw new Error('You must be signed in to complete the electronic signature.');
       }
 
-      await signContract(
+      const signResult = await signContract(
         { accessToken: activeSession.accessToken, tokenType: activeSession.tokenType },
         {
           contractId: activeContract.contractId,
@@ -1160,6 +1167,61 @@ export default function OrdersScreen() {
           ipAddress: 'string',
         },
       );
+
+      const signedAt =
+        (signResult as { data?: { signedAt?: string } | null }).data?.signedAt ??
+        new Date().toISOString();
+
+      setActiveContract((previous) =>
+        previous
+          ? {
+              ...previous,
+              status: 'SIGNED',
+              customerSignedAt: previous.customerSignedAt ?? signedAt,
+              signedAt: previous.signedAt ?? signedAt,
+            }
+          : previous,
+      );
+
+      if (activeOrder) {
+        setContractsByOrderId((previous) => {
+          const next = { ...previous };
+          const existing = next[activeOrder.id] ?? activeContract;
+          if (existing) {
+            next[activeOrder.id] = {
+              ...existing,
+              status: 'SIGNED',
+              customerSignedAt: existing.customerSignedAt ?? signedAt,
+              signedAt: existing.signedAt ?? signedAt,
+            };
+          }
+          return next;
+        });
+
+        setOrders((previous) =>
+          previous.map((order) => {
+            if (order.id !== activeOrder.id) {
+              return order;
+            }
+
+            const existingContract = order.contract ?? activeContract;
+            const updatedContract = existingContract
+              ? {
+                  ...existingContract,
+                  status: 'SIGNED',
+                  customerSignedAt: existingContract.customerSignedAt ?? signedAt,
+                  signedAt: existingContract.signedAt ?? signedAt,
+                }
+              : null;
+
+            return {
+              ...order,
+              action: { label: 'Download Contract', type: 'downloadContract' },
+              contract: updatedContract,
+            };
+          }),
+        );
+      }
 
       goToNextStep();
     } catch (error) {
@@ -1175,6 +1237,7 @@ export default function OrdersScreen() {
     }
   }, [
     activeContract,
+    activeOrder,
     ensureSession,
     goToNextStep,
     isSigningContract,
@@ -1815,7 +1878,7 @@ export default function OrdersScreen() {
                     !isOtpComplete && styles.primaryButtonTextDisabled,
                   ]}
                 >
-                  Verify Code
+                  Next
                 </Text>
               )}
             </Pressable>
