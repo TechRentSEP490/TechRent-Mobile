@@ -14,17 +14,34 @@ import { useRouter } from 'expo-router';
 
 import { useAuth } from '@/contexts/AuthContext';
 
-const formatRole = (role?: string | null) => {
-  if (!role) {
-    return 'Unknown Role';
+const formatAccountStatus = (status?: string | null) => {
+  if (!status) {
+    return 'Unknown';
   }
 
-  return role
+  return status
     .split(/[_\s]+/)
     .filter((segment) => segment.length > 0)
     .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1).toLowerCase())
     .join(' ');
 };
+
+const VERIFIED_KYC_STATUSES = new Set([
+  'VERIFIED',
+  'APPROVED',
+  'COMPLETED',
+]);
+
+const PENDING_KYC_STATUSES = new Set([
+  'PENDING',
+  'PENDING_VERIFICATION',
+  'IN_REVIEW',
+  'UNDER_REVIEW',
+  'PROCESSING',
+  'AWAITING_APPROVAL',
+]);
+
+const REJECTED_KYC_STATUSES = new Set(['REJECTED', 'FAILED', 'DECLINED']);
 
 export default function ProfileScreen() {
   const router = useRouter();
@@ -67,6 +84,18 @@ export default function ProfileScreen() {
 
     return [
       {
+        id: 'customerId',
+        label: 'Customer ID',
+        value: `#${user.customerId}`,
+        icon: 'pricetag-outline' as const,
+      },
+      {
+        id: 'username',
+        label: 'Username',
+        value: user.username,
+        icon: 'person-outline' as const,
+      },
+      {
         id: 'email',
         label: 'Email',
         value: user.email ?? 'Not provided',
@@ -82,19 +111,80 @@ export default function ProfileScreen() {
         icon: 'call-outline' as const,
       },
       {
-        id: 'role',
-        label: 'Role',
-        value: formatRole(user.role),
-        icon: 'person-outline' as const,
-      },
-      {
         id: 'status',
         label: 'Account Status',
-        value: user.isActive ? 'Active' : 'Inactive',
+        value: formatAccountStatus(user.status),
         icon: 'shield-checkmark-outline' as const,
       },
     ];
   }, [user]);
+
+  const kycReminder = useMemo(() => {
+    if (!user) {
+      return null;
+    }
+
+    const normalizedStatus = (user.kycStatus ?? '').toUpperCase();
+    const friendlyStatus =
+      normalizedStatus && normalizedStatus.length > 0
+        ? formatAccountStatus(normalizedStatus)
+        : 'Not Started';
+
+    if (VERIFIED_KYC_STATUSES.has(normalizedStatus)) {
+      return {
+        icon: 'shield-checkmark' as const,
+        iconColor: '#16a34a',
+        backgroundColor: '#dcfce7',
+        title: 'KYC Verified',
+        statusLabel: friendlyStatus,
+        description: 'Your identity has been verified. You are ready to create rental orders.',
+        actionLabel: undefined,
+      };
+    }
+
+    if (REJECTED_KYC_STATUSES.has(normalizedStatus)) {
+      return {
+        icon: 'alert-circle-outline' as const,
+        iconColor: '#dc2626',
+        backgroundColor: '#fee2e2',
+        title: 'KYC Needs Attention',
+        statusLabel: friendlyStatus,
+        description: 'We could not verify your documents. Please review your information and resubmit.',
+        actionLabel: 'Resubmit KYC',
+        actionColor: '#dc2626',
+        actionTextColor: '#ffffff',
+      };
+    }
+
+    if (PENDING_KYC_STATUSES.has(normalizedStatus)) {
+      return {
+        icon: 'time-outline' as const,
+        iconColor: '#f97316',
+        backgroundColor: '#fff7ed',
+        title: 'KYC Under Review',
+        statusLabel: friendlyStatus,
+        description: 'Thank you! Your documents are under review. We will notify you once verification is complete.',
+        actionLabel: 'Refresh Status',
+        actionDisabled: true,
+        actionColor: '#f1f5f9',
+        actionTextColor: '#64748b',
+      };
+    }
+
+    return {
+      icon: 'shield-outline' as const,
+      iconColor: '#f59e0b',
+      backgroundColor: '#fff7ed',
+      title: 'Complete your KYC',
+      statusLabel: friendlyStatus,
+      description: 'Finish identity verification to unlock all rental features and faster approvals.',
+      actionLabel: 'Start KYC',
+      actionColor: '#f59e0b',
+      actionTextColor: '#111111',
+    };
+  }, [user]);
+
+  const isAccountActive = user?.status?.toUpperCase() === 'ACTIVE';
 
   const isInitialLoading = isHydrating || (!user && isFetchingProfile);
 
@@ -207,25 +297,29 @@ export default function ProfileScreen() {
         )}
 
         <View style={styles.profileCard}>
-          <Text style={styles.profileName}>{user.username}</Text>
+          <Text style={styles.profileName}>
+            {user.fullName && user.fullName.trim().length > 0 ? user.fullName : user.username}
+          </Text>
+          <Text style={styles.profileUsername}>@{user.username}</Text>
           <Text style={styles.profileEmail}>{user.email ?? 'Email unavailable'}</Text>
           <View style={styles.profileBadge}>
-            <Text style={styles.profileBadgeText}>{formatRole(user.role)}</Text>
+            <Text style={styles.profileBadgeText}>Customer #{user.customerId}</Text>
           </View>
         </View>
 
         <View style={styles.selfieCard}>
           <MaterialCommunityIcons
-            name={user.isActive ? 'shield-check' : 'shield-alert'}
+            name={isAccountActive ? 'shield-check' : 'shield-alert'}
             size={28}
-            color={user.isActive ? '#16a34a' : '#dc2626'}
+            color={isAccountActive ? '#16a34a' : '#dc2626'}
           />
           <Text style={styles.selfieTitle}>Account Status</Text>
           <Text style={styles.selfieSubtitle}>
-            {user.isActive
+            {isAccountActive
               ? 'Your account is active and ready for rentals.'
               : 'Your account is currently inactive. Please contact support for assistance.'}
           </Text>
+          <Text style={styles.selfieStatus}>{formatAccountStatus(user.status)}</Text>
         </View>
 
         <View style={styles.section}>
@@ -251,19 +345,45 @@ export default function ProfileScreen() {
           </View>
         </View>
 
-        <View style={styles.kycCard}>
-          <View style={styles.kycHeader}>
-            <Ionicons name="shield-checkmark-outline" size={24} color="#f6a609" />
-            <Text style={styles.kycTitle}>KYC Reminder</Text>
+        {kycReminder && (
+          <View style={[styles.kycCard, { backgroundColor: kycReminder.backgroundColor }]}>
+            <View style={styles.kycHeader}>
+              <Ionicons name={kycReminder.icon} size={24} color={kycReminder.iconColor} />
+              <View style={styles.kycTitleGroup}>
+                <Text style={styles.kycTitle}>KYC Reminder</Text>
+                <Text style={styles.kycStatusLabel}>{kycReminder.statusLabel}</Text>
+              </View>
+            </View>
+            <Text style={styles.kycHeadline}>{kycReminder.title}</Text>
+            <Text style={styles.kycDescription}>{kycReminder.description}</Text>
+            {kycReminder.actionLabel ? (
+              <TouchableOpacity
+                style={[
+                  styles.kycButton,
+                  {
+                    backgroundColor: kycReminder.actionColor ?? '#111111',
+                  },
+                  kycReminder.actionDisabled && styles.kycButtonDisabled,
+                ]}
+                onPress={() => router.push('/(app)/kyc-documents')}
+                disabled={kycReminder.actionDisabled}
+              >
+                <Text
+                  style={[
+                    styles.kycButtonText,
+                    {
+                      color: kycReminder.actionDisabled
+                        ? '#6b7280'
+                        : kycReminder.actionTextColor ?? '#111111',
+                    },
+                  ]}
+                >
+                  {kycReminder.actionLabel}
+                </Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
-          <Text style={styles.kycDescription}>Don’t forget to complete your KYC.</Text>
-          <TouchableOpacity
-            style={styles.kycButton}
-            onPress={() => router.push('/(app)/kyc-documents')}
-          >
-            <Text style={styles.kycButtonText}>Complete KYC</Text>
-          </TouchableOpacity>
-        </View>
+        )}
 
         <TouchableOpacity style={styles.logoutButton} onPress={() => void handleLogout()}>
           <Text style={styles.logoutText}>Log Out</Text>
@@ -388,6 +508,10 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#111111',
   },
+  profileUsername: {
+    fontSize: 14,
+    color: '#6b7280',
+  },
   profileEmail: {
     fontSize: 14,
     color: '#666666',
@@ -423,6 +547,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#777777',
     textAlign: 'center',
+    marginBottom: 6,
+  },
+  selfieStatus: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#111111',
+    textTransform: 'uppercase',
   },
   section: {
     gap: 12,
@@ -483,8 +614,24 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
   },
+  kycTitleGroup: {
+    flex: 1,
+    gap: 2,
+  },
   kycTitle: {
     fontSize: 16,
+    fontWeight: '700',
+    color: '#111111',
+  },
+  kycStatusLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#4b5563',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  kycHeadline: {
+    fontSize: 15,
     fontWeight: '700',
     color: '#111111',
   },
@@ -498,6 +645,9 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     paddingHorizontal: 20,
     paddingVertical: 10,
+  },
+  kycButtonDisabled: {
+    opacity: 0.6,
   },
   kycButtonText: {
     fontSize: 14,
