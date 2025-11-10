@@ -30,8 +30,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/contexts/AuthContext';
 import {
-  fetchContracts,
   fetchContractById,
+  fetchContracts,
   sendContractPin,
   signContract,
   type ContractResponse,
@@ -244,7 +244,7 @@ const normalizeHtmlContent = (value: string | null | undefined): string => {
   }
 
   const withLineBreaks = value
-    .replace(/<\s*br\s*\/??\s*>/gi, '\n')
+    .replace(/<\s*br\s*\/?\s*>/gi, '\n')
     .replace(/<\s*\/p\s*>/gi, '\n\n')
     .replace(/<\s*li\s*>/gi, '• ')
     .replace(/<\s*\/li\s*>/gi, '\n')
@@ -682,11 +682,7 @@ export default function OrdersScreen() {
         let contractLookup: Record<string, ContractResponse> = {};
 
         try {
-          const sessionCredentials = {
-            accessToken: activeSession.accessToken,
-            tokenType: activeSession.tokenType,
-          };
-          const contracts = await fetchContracts(sessionCredentials);
+          const contracts = await fetchContracts(activeSession);
           contractLookup = contracts.reduce<Record<string, ContractResponse>>((accumulator, contract) => {
             if (typeof contract?.orderId === 'number') {
               accumulator[String(contract.orderId)] = contract;
@@ -823,13 +819,6 @@ export default function OrdersScreen() {
   }, []);
 
   useEffect(() => {
-    if (!isModalVisible) {
-      setVerificationEmail(defaultVerificationEmail);
-      setPendingEmailInput(defaultVerificationEmail);
-    }
-  }, [defaultVerificationEmail, isModalVisible]);
-
-  useEffect(() => {
     if (!highlightedOrderId) {
       return;
     }
@@ -892,10 +881,7 @@ export default function OrdersScreen() {
           throw new Error('You must be signed in to view rental contracts.');
         }
 
-        const contracts = await fetchContracts({
-          accessToken: activeSession.accessToken,
-          tokenType: activeSession.tokenType,
-        });
+        const contracts = await fetchContracts(activeSession);
 
         if (!isMounted) {
           return;
@@ -1163,7 +1149,7 @@ export default function OrdersScreen() {
         throw new Error('You must be signed in to complete the electronic signature.');
       }
 
-      const signResult = await signContract(
+      await signContract(
         { accessToken: activeSession.accessToken, tokenType: activeSession.tokenType },
         {
           contractId: activeContract.contractId,
@@ -1174,61 +1160,6 @@ export default function OrdersScreen() {
           ipAddress: 'string',
         },
       );
-
-      const signedAt =
-        (signResult as { data?: { signedAt?: string } | null }).data?.signedAt ??
-        new Date().toISOString();
-
-      setActiveContract((previous) =>
-        previous
-          ? {
-              ...previous,
-              status: 'SIGNED',
-              customerSignedAt: previous.customerSignedAt ?? signedAt,
-              signedAt: previous.signedAt ?? signedAt,
-            }
-          : previous,
-      );
-
-      if (activeOrder) {
-        setContractsByOrderId((previous) => {
-          const next = { ...previous };
-          const existing = next[activeOrder.id] ?? activeContract;
-          if (existing) {
-            next[activeOrder.id] = {
-              ...existing,
-              status: 'SIGNED',
-              customerSignedAt: existing.customerSignedAt ?? signedAt,
-              signedAt: existing.signedAt ?? signedAt,
-            };
-          }
-          return next;
-        });
-
-        setOrders((previous) =>
-          previous.map((order) => {
-            if (order.id !== activeOrder.id) {
-              return order;
-            }
-
-            const existingContract = order.contract ?? activeContract;
-            const updatedContract = existingContract
-              ? {
-                  ...existingContract,
-                  status: 'SIGNED',
-                  customerSignedAt: existingContract.customerSignedAt ?? signedAt,
-                  signedAt: existingContract.signedAt ?? signedAt,
-                }
-              : null;
-
-            return {
-              ...order,
-              action: { label: 'Download Contract', type: 'downloadContract' },
-              contract: updatedContract,
-            };
-          }),
-        );
-      }
 
       goToNextStep();
     } catch (error) {
@@ -1244,7 +1175,6 @@ export default function OrdersScreen() {
     }
   }, [
     activeContract,
-    activeOrder,
     ensureSession,
     goToNextStep,
     isSigningContract,
@@ -1713,23 +1643,23 @@ export default function OrdersScreen() {
                       <Text style={styles.contractMetaLabel}>Created</Text>
                       <Text style={styles.contractMetaValue}>{contractCreated}</Text>
                     </View>
-                    <View style={styles.contractMetaRow}>
-                      <Text style={styles.contractMetaLabel}>Updated</Text>
-                      <Text style={styles.contractMetaValue}>{contractUpdated}</Text>
-                    </View>
+                  <View style={styles.contractMetaRow}>
+                    <Text style={styles.contractMetaLabel}>Updated</Text>
+                    <Text style={styles.contractMetaValue}>{contractUpdated}</Text>
                   </View>
-                  {isSignedContract ? (
-                    <View style={styles.contractSignedBanner}>
-                      <Ionicons name="checkmark-circle" size={16} color="#15803d" />
-                      <Text style={styles.contractSignedText}>
-                        This contract has already been signed. Use the download button below to keep a copy for your
-                        records.
-                      </Text>
-                    </View>
-                  ) : null}
-                  {contractDescription.length > 0 && (
-                    <Text style={styles.contractBody}>{contractDescription}</Text>
-                  )}
+                </View>
+                {isSignedContract ? (
+                  <View style={styles.contractSignedBanner}>
+                    <Ionicons name="checkmark-circle" size={16} color="#15803d" />
+                    <Text style={styles.contractSignedText}>
+                      This contract has already been signed. Use the download button below to keep a copy for your
+                      records.
+                    </Text>
+                  </View>
+                ) : null}
+                {contractDescription.length > 0 && (
+                  <Text style={styles.contractBody}>{contractDescription}</Text>
+                )}
                   {contractBody.length > 0 && (
                     <View style={styles.contractSection}>
                       <Text style={styles.contractSectionHeading}>Contract Content</Text>
@@ -1885,7 +1815,7 @@ export default function OrdersScreen() {
                     !isOtpComplete && styles.primaryButtonTextDisabled,
                   ]}
                 >
-                  Next
+                  Verify Code
                 </Text>
               )}
             </Pressable>
@@ -3166,4 +3096,3 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 });
-
