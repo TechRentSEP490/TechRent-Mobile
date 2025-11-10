@@ -331,6 +331,11 @@ export default function HomeScreen() {
                   <Text style={styles.productName}>{item.name}</Text>
                   <Text style={styles.productBrand}>{item.brand}</Text>
                   <Text style={styles.productPrice}>{item.price}</Text>
+                  {typeof item.depositPercent === 'number' && (
+                    <Text style={styles.productDeposit}>
+                      Deposit: {Math.round(item.depositPercent * 100)}%
+                    </Text>
+                  )}
                 </TouchableOpacity>
               ))}
             </ScrollView>
@@ -572,6 +577,11 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: '#111111',
+  },
+  productDeposit: {
+    fontSize: 12,
+    color: '#6f6f6f',
+    marginTop: 2,
   },
   emptyState: {
     justifyContent: 'center',
