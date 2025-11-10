@@ -13,6 +13,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
+import { printToFileAsync } from 'expo-print';
+import * as FileSystem from 'expo-file-system';
 
 import { useAuth } from '@/contexts/AuthContext';
 import { fetchDeviceModelById } from '@/services/device-models';
@@ -177,6 +179,164 @@ const convertHtmlToPlainText = (value: string | null | undefined) => {
     .trim();
 };
 
+const sanitizeContractHtml = (value: string | null | undefined) => {
+  if (!value) {
+    return '';
+  }
+
+  return value
+    .replace(/<!DOCTYPE[^>]*>/gi, '')
+    .replace(/<\/(html|head|body)[^>]*>/gi, '')
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+    .trim();
+};
+
+const escapeHtml = (value: string) =>
+  value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+const buildContractHtmlDocument = (
+  contract: RentalContract,
+  order: RentalOrderResponse | null
+) => {
+  const contractTitle = contract.title?.trim().length
+    ? contract.title.trim()
+    : `Rental Contract #${contract.contractId}`;
+  const contractNumber = contract.contractNumber?.trim().length
+    ? contract.contractNumber.trim()
+    : `#${contract.contractId}`;
+
+  const metaRows: { label: string; value: string | null }[] = [
+    { label: 'Contract Number', value: contractNumber },
+    { label: 'Status', value: formatStatusLabel(contract.status) },
+    { label: 'Start Date', value: formatDateTime(contract.startDate) },
+    { label: 'End Date', value: formatDateTime(contract.endDate) },
+    {
+      label: 'Total Amount',
+      value:
+        contract.totalAmount !== null && contract.totalAmount !== undefined
+          ? formatCurrency(contract.totalAmount)
+          : null,
+    },
+    {
+      label: 'Deposit Amount',
+      value:
+        contract.depositAmount !== null && contract.depositAmount !== undefined
+          ? formatCurrency(contract.depositAmount)
+          : null,
+    },
+    { label: 'Signed At', value: formatDateTime(contract.signedAt) },
+    { label: 'Expires At', value: formatDateTime(contract.expiresAt) },
+  ];
+
+  if (order) {
+    metaRows.push(
+      { label: 'Order ID', value: `#${order.orderId}` },
+      { label: 'Rental Period', value: `${formatDateTime(order.startDate)} → ${formatDateTime(order.endDate)}` },
+      { label: 'Shipping Address', value: order.shippingAddress ?? 'Not provided' },
+      { label: 'Order Total', value: formatCurrency(order.totalPrice) },
+    );
+  }
+
+  const sanitizedContractContent = sanitizeContractHtml(contract.contractContent);
+  const sanitizedTerms = sanitizeContractHtml(contract.termsAndConditions);
+
+  const fallbackBody = convertHtmlToPlainText(contract.contractContent);
+
+  const sections: string[] = [];
+
+  if (sanitizedContractContent.length > 0) {
+    sections.push(`<section>${sanitizedContractContent}</section>`);
+  } else if (fallbackBody.length > 0) {
+    sections.push(`<section><p>${escapeHtml(fallbackBody)}</p></section>`);
+  }
+
+  if (sanitizedTerms.length > 0) {
+    sections.push(`<section><h2>Terms &amp; Conditions</h2>${sanitizedTerms}</section>`);
+  } else if (contract.termsAndConditions && contract.termsAndConditions.trim().length > 0) {
+    sections.push(
+      `<section><h2>Terms &amp; Conditions</h2><p>${escapeHtml(
+        contract.termsAndConditions.trim()
+      )}</p></section>`
+    );
+  }
+
+  if (sections.length === 0) {
+    sections.push('<section><p>Contract content is not yet available.</p></section>');
+  }
+
+  const metadataHtml = metaRows
+    .filter((row) => row.value && row.value !== '—')
+    .map(
+      (row) =>
+        `<div class="meta-row"><span class="meta-label">${escapeHtml(
+          row.label
+        )}:</span><span class="meta-value">${escapeHtml(String(row.value))}</span></div>`
+    )
+    .join('');
+
+  return `<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        padding: 32px;
+        color: #0f172a;
+        line-height: 1.6;
+        font-size: 14px;
+      }
+      h1 {
+        font-size: 24px;
+        margin-bottom: 12px;
+      }
+      h2 {
+        font-size: 18px;
+        margin-top: 24px;
+        margin-bottom: 12px;
+      }
+      p {
+        margin: 0 0 12px 0;
+      }
+      .meta-row {
+        display: flex;
+        justify-content: space-between;
+        border-bottom: 1px solid #e2e8f0;
+        padding: 6px 0;
+        font-size: 13px;
+      }
+      .meta-label {
+        font-weight: 600;
+        color: #334155;
+      }
+      .meta-value {
+        color: #0f172a;
+      }
+      section {
+        margin-top: 24px;
+      }
+      ul {
+        padding-left: 20px;
+      }
+      li {
+        margin-bottom: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>${escapeHtml(contractTitle)}</h1>
+    ${metadataHtml}
+    ${sections.join('\n')}
+  </body>
+</html>`;
+};
+
 const buildDeviceSummary = (order: RentalOrderResponse, deviceNames: Record<number, string>) => {
   if (!order.orderDetails || order.orderDetails.length === 0) {
     return 'No devices assigned';
@@ -228,6 +388,7 @@ export default function OrdersScreen() {
   const [contractCache, setContractCache] = useState<Record<number, RentalContract | null>>({});
   const [contractLoading, setContractLoading] = useState(false);
   const [contractError, setContractError] = useState<string | null>(null);
+  const [downloadingContract, setDownloadingContract] = useState(false);
 
   const credentials = useMemo(() => buildSessionCredentials(session), [session]);
 
@@ -444,6 +605,7 @@ export default function OrdersScreen() {
     setSelectedContract(null);
     setContractError(null);
     setContractLoading(false);
+    setDownloadingContract(false);
   }, []);
 
   useEffect(() => {
@@ -470,6 +632,7 @@ export default function OrdersScreen() {
       setSelectedOrderId(order.orderId);
       setModalVisible(true);
       setContractError(null);
+      setDownloadingContract(false);
 
       const cached = contractCache[order.orderId];
       if (cached !== undefined) {
@@ -495,6 +658,68 @@ export default function OrdersScreen() {
     },
     [credentials, contractCache]
   );
+
+  const selectedOrder = useMemo(
+    () => orders.find((order) => order.orderId === selectedOrderId) ?? null,
+    [orders, selectedOrderId]
+  );
+
+  const handleDownloadContract = useCallback(async () => {
+    if (!selectedContract) {
+      Alert.alert('Contract unavailable', 'There is no contract to download yet.');
+      return;
+    }
+
+    try {
+      setDownloadingContract(true);
+
+      const html = buildContractHtmlDocument(selectedContract, selectedOrder);
+
+      if (!html || html.trim().length === 0) {
+        throw new Error('The contract content is empty and cannot be saved.');
+      }
+
+      const pdf = await printToFileAsync({ html });
+
+      if (!pdf?.uri) {
+        throw new Error('Unable to generate a PDF from the contract.');
+      }
+
+      const storageRoot = FileSystem.documentDirectory ?? FileSystem.cacheDirectory;
+
+      if (!storageRoot) {
+        throw new Error('Saving contracts is not supported on this platform.');
+      }
+
+      const contractsDir = `${storageRoot}contracts/`;
+      const dirInfo = await FileSystem.getInfoAsync(contractsDir);
+
+      if (!dirInfo.exists) {
+        await FileSystem.makeDirectoryAsync(contractsDir, { intermediates: true });
+      } else if (!dirInfo.isDirectory) {
+        throw new Error('A file is blocking contract downloads. Please remove the "contracts" item and try again.');
+      }
+
+      const sanitizedNumber = selectedContract.contractNumber?.trim().length
+        ? selectedContract.contractNumber.trim().replace(/[^a-z0-9_-]+/gi, '-').toLowerCase()
+        : `contract-${selectedContract.contractId}`;
+
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const destinationPath = `${contractsDir}${sanitizedNumber}-${timestamp}.pdf`;
+
+      await FileSystem.copyAsync({ from: pdf.uri, to: destinationPath });
+
+      Alert.alert('Contract saved', `The contract PDF was saved to:\n${destinationPath}`);
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message.length > 0
+          ? error.message
+          : 'Unable to save the contract PDF. Please try again.';
+      Alert.alert('Save failed', message);
+    } finally {
+      setDownloadingContract(false);
+    }
+  }, [selectedContract, selectedOrder]);
 
   const renderOrderItem = useCallback(
     ({ item }: { item: RentalOrderResponse }) => {
@@ -598,11 +823,6 @@ export default function OrdersScreen() {
       </View>
     );
   }, [error, loadOrders, loading]);
-
-  const selectedOrder = useMemo(
-    () => orders.find((order) => order.orderId === selectedOrderId) ?? null,
-    [orders, selectedOrderId]
-  );
 
   if (isHydrating) {
     return (
@@ -781,6 +1001,20 @@ export default function OrdersScreen() {
                         </Text>
                       </View>
                     ) : null}
+                    <Pressable
+                      style={[
+                        styles.downloadButton,
+                        downloadingContract && styles.downloadButtonDisabled,
+                      ]}
+                      onPress={() => void handleDownloadContract()}
+                      disabled={downloadingContract}
+                    >
+                      {downloadingContract ? (
+                        <ActivityIndicator size="small" color="#ffffff" />
+                      ) : (
+                        <Text style={styles.downloadButtonText}>Save contract PDF</Text>
+                      )}
+                    </Pressable>
                   </View>
                 ) : (
                   <Text style={styles.modalBodyText}>
@@ -1101,5 +1335,20 @@ const styles = StyleSheet.create({
   },
   modalTermsSection: {
     gap: 12,
+  },
+  downloadButton: {
+    marginTop: 8,
+    borderRadius: 12,
+    backgroundColor: '#111827',
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  downloadButtonDisabled: {
+    opacity: 0.7,
+  },
+  downloadButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#ffffff',
   },
 });
