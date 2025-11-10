@@ -461,7 +461,7 @@ export default function ProductDetailsScreen() {
       return;
     }
 
-    if (!session?.accessToken || !user?.accountId) {
+    if (!session?.accessToken || !user) {
       Alert.alert('Authentication required', 'Please sign in again to continue with your rental.');
       closeRentModal();
       return;
@@ -483,7 +483,6 @@ export default function ProductDetailsScreen() {
           startDate: startDate.toISOString(),
           endDate: endDate.toISOString(),
           shippingAddress: shippingAddress.trim(),
-          customerId: user.accountId,
           orderDetails: [
             {
               quantity,

@@ -9,7 +9,6 @@ export type CreateRentalOrderPayload = {
   startDate: string;
   endDate: string;
   shippingAddress: string;
-  customerId: number;
   orderDetails: RentalOrderDetailPayload[];
 };
 
