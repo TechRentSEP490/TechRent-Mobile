@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
-import { scanFromURLAsync, VisionDetectorType } from 'expo-mlkit-vision';
+import { scanOCRFromImageAsync } from 'expo-mlkit-ocr';
 import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import {
@@ -74,6 +74,11 @@ const extractTextFromResult = (result: unknown): string => {
   }
 
   if (typeof result === 'object') {
+    const { resultText } = result as { resultText?: string };
+    if (typeof resultText === 'string' && resultText.length > 0) {
+      return resultText;
+    }
+
     const { text } = result as { text?: string };
     if (typeof text === 'string' && text.length > 0) {
       return text;
@@ -111,20 +116,6 @@ const toDocumentAsset = (asset: ImagePicker.ImagePickerAsset, type: DocumentType
     name: asset.fileName ?? buildFileName(type, extension),
   };
 };
-
-const resolveTextDetector = () => {
-  const detectors = VisionDetectorType as Record<string, unknown> | undefined;
-
-  if (!detectors) {
-    return undefined;
-  }
-
-  const fallback = Object.values(detectors).filter((value) => typeof value === 'string');
-
-  return detectors.TextRecognition ?? detectors.Text ?? fallback[0];
-};
-
-const TEXT_DETECTOR = resolveTextDetector();
 
 const DocumentCard = ({
   type,
@@ -242,10 +233,12 @@ export default function KycDocumentsScreen() {
       }));
 
       try {
-        const detectionResult = TEXT_DETECTOR
-          ? await (scanFromURLAsync as any)(asset.uri, [TEXT_DETECTOR])
-          : await (scanFromURLAsync as any)(asset.uri);
-        const detectedText = extractTextFromResult(detectionResult);
+        const detectionResult = await scanOCRFromImageAsync(asset.uri, {
+          shouldGroup: true,
+        });
+        const detectedText = extractTextFromResult(
+          (detectionResult as { blocks?: unknown })?.blocks ?? detectionResult,
+        );
 
         setOcrState((prev) => {
           const nextState: OcrStateMap = {
