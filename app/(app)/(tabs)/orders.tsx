@@ -29,13 +29,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/contexts/AuthContext';
-import {
-  fetchContractById,
-  fetchContracts,
-  sendContractPin,
-  signContract,
-  type ContractResponse,
-} from '@/services/contracts';
+import contractsService, { type ContractResponse } from '@/services/contracts';
 import { fetchDeviceModelById } from '@/services/device-models';
 import {
   fetchRentalOrderById,
@@ -682,7 +676,7 @@ export default function OrdersScreen() {
         let contractLookup: Record<string, ContractResponse> = {};
 
         try {
-          const contracts = await fetchContracts(activeSession);
+          const contracts = await contractsService.fetchContracts(activeSession);
           contractLookup = contracts.reduce<Record<string, ContractResponse>>((accumulator, contract) => {
             if (typeof contract?.orderId === 'number') {
               accumulator[String(contract.orderId)] = contract;
@@ -888,7 +882,7 @@ export default function OrdersScreen() {
           throw new Error('You must be signed in to view rental contracts.');
         }
 
-        const contracts = await fetchContracts(activeSession);
+        const contracts = await contractsService.fetchContracts(activeSession);
 
         if (!isMounted) {
           return;
@@ -1014,7 +1008,7 @@ export default function OrdersScreen() {
         throw new Error('You must be signed in to continue the rental agreement.');
       }
 
-      const result = await sendContractPin(
+      const result = await contractsService.sendContractPin(
         { accessToken: activeSession.accessToken, tokenType: activeSession.tokenType },
         { contractId: activeContract.contractId, email: trimmedEmail },
       );
@@ -1156,7 +1150,7 @@ export default function OrdersScreen() {
         throw new Error('You must be signed in to complete the electronic signature.');
       }
 
-      const signResult = await signContract(
+      const signResult = await contractsService.signContract(
         { accessToken: activeSession.accessToken, tokenType: activeSession.tokenType },
         {
           contractId: activeContract.contractId,
@@ -1361,7 +1355,7 @@ export default function OrdersScreen() {
         );
 
         if (!hasExistingContent) {
-          contractDetails = await fetchContractById(sessionCredentials, contractId);
+          contractDetails = await contractsService.fetchContractById(sessionCredentials, contractId);
         }
 
         const hasDownloadableContent = Boolean(
