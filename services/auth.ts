@@ -12,20 +12,17 @@ export type LoginPayload = {
   password: string;
 };
 
-type RegisterResponse = {
+type ApiSuccessResponse<TData> = {
   status: string;
   message: string;
-  details: string;
+  details?: string | null;
   code: number;
+  data: TData;
 };
 
-type VerifyEmailResponse = {
-  status: string;
-  message: string;
-  details: string;
-  code: number;
-  data: unknown;
-};
+type RegisterResponse = ApiSuccessResponse<null>;
+
+type VerifyEmailResponse = ApiSuccessResponse<unknown>;
 
 type LoginResponse = {
   accessToken: string;
@@ -33,21 +30,21 @@ type LoginResponse = {
 };
 
 export type AuthenticatedUser = {
+  customerId: number;
   accountId: number;
   username: string;
   email: string;
-  role: string;
   phoneNumber: string | null;
-  isActive: boolean;
+  fullName: string | null;
+  kycStatus: string;
+  shippingAddressDtos: unknown[];
+  bankInformationDtos: unknown[];
+  status: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
-type CurrentUserResponse = {
-  status: string;
-  message: string;
-  details: string;
-  code: number;
-  data: AuthenticatedUser | null;
-};
+type CurrentUserResponse = ApiSuccessResponse<AuthenticatedUser | null>;
 
 type ApiErrorWithStatus = Error & { status?: number };
 
@@ -71,7 +68,7 @@ const parseErrorMessage = async (response: Response) => {
   }
 };
 
-export async function registerUser(payload: RegisterPayload) {
+export async function registerUser(payload: RegisterPayload): Promise<RegisterResponse> {
   const response = await fetch(buildApiUrl('auth', 'register'), {
     method: 'POST',
     headers: jsonHeaders,
@@ -152,7 +149,7 @@ export async function getCurrentUser({
     throw new Error('Access token is required to load the current user.');
   }
 
-  const response = await fetch(buildApiUrl('auth', 'me'), {
+  const response = await fetch(buildApiUrl('customers', 'profile'), {
     method: 'GET',
     headers: {
       Accept: 'application/json',
@@ -177,5 +174,10 @@ export async function getCurrentUser({
     throw error;
   }
 
-  return json.data;
+  const normalizedPhoneNumber = json.data.phoneNumber?.trim() ?? null;
+
+  return {
+    ...json.data,
+    phoneNumber: normalizedPhoneNumber && normalizedPhoneNumber.length > 0 ? normalizedPhoneNumber : null,
+  };
 }

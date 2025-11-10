@@ -9,7 +9,6 @@ export type CreateRentalOrderPayload = {
   startDate: string;
   endDate: string;
   shippingAddress: string;
-  customerId: number;
   orderDetails: RentalOrderDetailPayload[];
 };
 
@@ -91,6 +90,20 @@ export async function createRentalOrder(
   });
 
   if (!response.ok) {
+    let errorBody: string | null = null;
+
+    try {
+      errorBody = await response.clone().text();
+    } catch (cloneError) {
+      console.warn('Unable to clone rental order error response body', cloneError);
+    }
+
+    console.error('Create rental order request failed', {
+      status: response.status,
+      statusText: response.statusText,
+      body: errorBody,
+    });
+
     const apiMessage = await parseErrorMessage(response);
     throw new Error(apiMessage ?? `Unable to create rental order (status ${response.status}).`);
   }
