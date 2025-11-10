@@ -40,6 +40,7 @@ export type ProductSummary = {
 
 export type ProductDetail = ProductSummary & {
   brand: string;
+  description?: string;
   status: string;
   stock: number;
   specs: ProductSpecsPayload;
@@ -51,6 +52,7 @@ export type ProductDetail = ProductSummary & {
   depositPercent?: number;
   deviceValue?: number;
   deviceCategoryId?: number;
+  depositPercentage?: number;
   currency?: 'USD' | 'VND';
   source?: 'static' | 'api';
 };

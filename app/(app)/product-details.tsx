@@ -200,6 +200,14 @@ const normalizeSpecsData = (data: ProductDetail['specs']): NormalizedSpecEntry[]
     : [];
 };
 
+const VND_FORMATTER = new Intl.NumberFormat('vi-VN', {
+  style: 'currency',
+  currency: 'VND',
+  maximumFractionDigits: 0,
+});
+
+const formatCurrencyValue = (value: number) => VND_FORMATTER.format(value);
+
 const clampToStartOfDay = (date: Date) => {
   const normalized = new Date(date);
   normalized.setHours(0, 0, 0, 0);
@@ -346,7 +354,20 @@ export default function ProductDetailsScreen() {
     );
   }
 
-  const { name, model, brand, status, accessories, relatedProducts, reviews, price, stock } = product;
+  const {
+    name,
+    model,
+    brand,
+    status,
+    accessories,
+    relatedProducts,
+    reviews,
+    price,
+    stock,
+    description,
+    deviceValue,
+    depositPercent,
+  } = product;
   const productImage = product.imageURL;
 
   const isOutOfStock = stock <= 0;
@@ -400,6 +421,24 @@ export default function ProductDetailsScreen() {
     rentMode === null ||
     (rentMode === 'rent' && shippingAddress.trim().length === 0) ||
     (rentMode === 'rent' && isSubmittingOrder);
+
+  const normalizedDepositPercent = typeof depositPercent === 'number' ? depositPercent : null;
+  const depositPercentageLabel = normalizedDepositPercent !== null
+    ? `${Math.round(normalizedDepositPercent * 100)}%`
+    : null;
+  const depositAmount =
+    normalizedDepositPercent !== null && typeof deviceValue === 'number'
+      ? deviceValue * normalizedDepositPercent
+      : null;
+  const depositSummary = depositPercentageLabel
+    ? depositAmount !== null
+      ? `${depositPercentageLabel} (~${formatCurrencyValue(depositAmount)})`
+      : depositPercentageLabel
+    : null;
+  const deviceValueLabel =
+    typeof deviceValue === 'number' && Number.isFinite(deviceValue)
+      ? formatCurrencyValue(deviceValue)
+      : null;
 
   const handlePrimaryAction = async () => {
     if (isPrimaryDisabled || rentMode === null) {
@@ -521,6 +560,28 @@ export default function ProductDetailsScreen() {
             <Text style={styles.productMeta}>{`Model: ${model} | Brand: ${brand} | ${status}`}</Text>
           </View>
           <MaterialCommunityIcons name="bookmark-outline" size={28} color="#111" />
+        </View>
+
+        {description ? <Text style={styles.productDescription}>{description}</Text> : null}
+
+        <View style={styles.pricingCard}>
+          <Text style={styles.pricingTitle}>Pricing</Text>
+          <View style={styles.pricingRow}>
+            <Text style={styles.pricingLabel}>Daily rate</Text>
+            <Text style={styles.pricingValue}>{price}</Text>
+          </View>
+          {depositSummary ? (
+            <View style={styles.pricingRow}>
+              <Text style={styles.pricingLabel}>Deposit</Text>
+              <Text style={styles.pricingValue}>{depositSummary}</Text>
+            </View>
+          ) : null}
+          {deviceValueLabel ? (
+            <View style={styles.pricingRow}>
+              <Text style={styles.pricingLabel}>Device value</Text>
+              <Text style={styles.pricingValue}>{deviceValueLabel}</Text>
+            </View>
+          ) : null}
         </View>
 
         <View style={styles.quickActions}>
@@ -1005,6 +1066,40 @@ const styles = StyleSheet.create({
   productMeta: {
     color: '#6c6c6c',
     marginTop: 4,
+  },
+  productDescription: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#4a4a4a',
+    marginBottom: 16,
+  },
+  pricingCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#ececec',
+    backgroundColor: '#ffffff',
+    padding: 16,
+    marginBottom: 24,
+    gap: 12,
+  },
+  pricingTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111111',
+  },
+  pricingRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  pricingLabel: {
+    fontSize: 14,
+    color: '#6c6c6c',
+  },
+  pricingValue: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#111111',
   },
   quickActions: {
     flexDirection: 'row',
