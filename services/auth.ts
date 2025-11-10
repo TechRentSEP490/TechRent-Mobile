@@ -30,12 +30,18 @@ type LoginResponse = {
 };
 
 export type AuthenticatedUser = {
+  customerId: number;
   accountId: number;
   username: string;
   email: string;
-  role: string;
   phoneNumber: string | null;
-  isActive: boolean;
+  fullName: string | null;
+  kycStatus: string;
+  shippingAddressDtos: unknown[];
+  bankInformationDtos: unknown[];
+  status: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
 type CurrentUserResponse = ApiSuccessResponse<AuthenticatedUser | null>;
@@ -143,7 +149,7 @@ export async function getCurrentUser({
     throw new Error('Access token is required to load the current user.');
   }
 
-  const response = await fetch(buildApiUrl('auth', 'me'), {
+  const response = await fetch(buildApiUrl('customers', 'profile'), {
     method: 'GET',
     headers: {
       Accept: 'application/json',
@@ -168,5 +174,10 @@ export async function getCurrentUser({
     throw error;
   }
 
-  return json.data;
+  const normalizedPhoneNumber = json.data.phoneNumber?.trim() ?? null;
+
+  return {
+    ...json.data,
+    phoneNumber: normalizedPhoneNumber && normalizedPhoneNumber.length > 0 ? normalizedPhoneNumber : null,
+  };
 }
