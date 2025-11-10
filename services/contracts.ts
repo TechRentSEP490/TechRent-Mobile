@@ -1,12 +1,8 @@
 import { buildApiUrl, fetchWithRetry } from './api';
-import type { SessionCredentials } from './rental-orders';
 
-type ApiStatusEnvelope<T> = {
-  status: string;
-  message: string;
-  details: string;
-  code: number;
-  data: T;
+type SessionCredentials = {
+  accessToken: string;
+  tokenType?: string | null;
 };
 
 export type ContractResponse = {
@@ -34,9 +30,29 @@ export type ContractResponse = {
   updatedBy: number | null;
 };
 
-export type FetchContractsResult = ApiStatusEnvelope<ContractResponse[] | null>;
-export type FetchContractResult = ApiStatusEnvelope<ContractResponse | null>;
-export type SendContractPinResult = ApiStatusEnvelope<unknown>;
+export type FetchContractsResult = {
+  status: string;
+  message: string;
+  details: string;
+  code: number;
+  data: ContractResponse[] | null;
+};
+
+export type FetchContractResult = {
+  status: string;
+  message: string;
+  details: string;
+  code: number;
+  data: ContractResponse | null;
+};
+
+export type SendContractPinResult = {
+  status: string;
+  message: string;
+  details: string;
+  code: number;
+  data: unknown;
+};
 
 export type SignedContractData = {
   signatureId: number;
@@ -51,12 +67,13 @@ export type SignedContractData = {
   auditTrail: string;
 };
 
-export type SignContractResult = ApiStatusEnvelope<SignedContractData | null>;
-
-type ApiErrorWithStatus = Error & { status?: number };
-
-const buildAuthHeader = (session: SessionCredentials) =>
-  `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${session.accessToken}`;
+export type SignContractResult = {
+  status: string;
+  message: string;
+  details: string;
+  code: number;
+  data: SignedContractData | null;
+};
 
 const parseErrorMessage = async (response: Response) => {
   try {
@@ -73,6 +90,8 @@ const parseErrorMessage = async (response: Response) => {
   }
 };
 
+type ApiErrorWithStatus = Error & { status?: number };
+
 export async function fetchContracts(session: SessionCredentials): Promise<ContractResponse[]> {
   if (!session?.accessToken) {
     throw new Error('An access token is required to load rental contracts.');
@@ -88,7 +107,9 @@ export async function fetchContracts(session: SessionCredentials): Promise<Contr
         method: 'GET',
         headers: {
           Accept: 'application/json',
-          Authorization: buildAuthHeader(session),
+          Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
+            session.accessToken
+          }`,
         },
       },
       {
@@ -150,7 +171,9 @@ export async function fetchContractById(
         method: 'GET',
         headers: {
           Accept: 'application/json',
-          Authorization: buildAuthHeader(session),
+          Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
+            session.accessToken
+          }`,
         },
       },
       {
@@ -224,7 +247,9 @@ export async function sendContractPin(
         headers: {
           Accept: 'application/json',
           'Content-Type': 'application/json',
-          Authorization: buildAuthHeader(session),
+          Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
+            session.accessToken
+          }`,
         },
         body: JSON.stringify({ email: trimmedEmail }),
       },
@@ -301,7 +326,9 @@ export async function signContract(
         headers: {
           Accept: 'application/json',
           'Content-Type': 'application/json',
-          Authorization: buildAuthHeader(session),
+          Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
+            session.accessToken
+          }`,
         },
         body: JSON.stringify(payload),
       },
@@ -341,12 +368,3 @@ export async function signContract(
 
   return json;
 }
-
-export const contractsService = {
-  fetchContracts,
-  fetchContractById,
-  sendContractPin,
-  signContract,
-};
-
-export default contractsService;

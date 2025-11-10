@@ -29,7 +29,13 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/contexts/AuthContext';
-import contractsService, { type ContractResponse } from '@/services/contracts';
+import {
+  fetchContracts,
+  fetchContractById,
+  sendContractPin,
+  signContract,
+  type ContractResponse,
+} from '@/services/contracts';
 import { fetchDeviceModelById } from '@/services/device-models';
 import {
   fetchRentalOrderById,
@@ -676,7 +682,11 @@ export default function OrdersScreen() {
         let contractLookup: Record<string, ContractResponse> = {};
 
         try {
-          const contracts = await contractsService.fetchContracts(activeSession);
+          const sessionCredentials = {
+            accessToken: activeSession.accessToken,
+            tokenType: activeSession.tokenType,
+          };
+          const contracts = await fetchContracts(sessionCredentials);
           contractLookup = contracts.reduce<Record<string, ContractResponse>>((accumulator, contract) => {
             if (typeof contract?.orderId === 'number') {
               accumulator[String(contract.orderId)] = contract;
@@ -882,7 +892,10 @@ export default function OrdersScreen() {
           throw new Error('You must be signed in to view rental contracts.');
         }
 
-        const contracts = await contractsService.fetchContracts(activeSession);
+        const contracts = await fetchContracts({
+          accessToken: activeSession.accessToken,
+          tokenType: activeSession.tokenType,
+        });
 
         if (!isMounted) {
           return;
@@ -1008,7 +1021,7 @@ export default function OrdersScreen() {
         throw new Error('You must be signed in to continue the rental agreement.');
       }
 
-      const result = await contractsService.sendContractPin(
+      const result = await sendContractPin(
         { accessToken: activeSession.accessToken, tokenType: activeSession.tokenType },
         { contractId: activeContract.contractId, email: trimmedEmail },
       );
@@ -1150,7 +1163,7 @@ export default function OrdersScreen() {
         throw new Error('You must be signed in to complete the electronic signature.');
       }
 
-      const signResult = await contractsService.signContract(
+      const signResult = await signContract(
         { accessToken: activeSession.accessToken, tokenType: activeSession.tokenType },
         {
           contractId: activeContract.contractId,
@@ -1355,7 +1368,7 @@ export default function OrdersScreen() {
         );
 
         if (!hasExistingContent) {
-          contractDetails = await contractsService.fetchContractById(sessionCredentials, contractId);
+          contractDetails = await fetchContractById(sessionCredentials, contractId);
         }
 
         const hasDownloadableContent = Boolean(
