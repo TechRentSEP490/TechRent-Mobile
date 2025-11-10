@@ -1,6 +1,7 @@
 import type { ProductDetail, ProductSpecsPayload } from '@/constants/products';
 import { products as fallbackProducts } from '@/constants/products';
 import { buildApiUrl } from './api';
+import { fetchBrandMap, getCachedBrandName } from './brands';
 
 type DeviceModelResponse = {
   status: string;
@@ -10,13 +11,23 @@ type DeviceModelResponse = {
   data: DeviceModelPayload[];
 };
 
+type DeviceModelDetailResponse = {
+  status: string;
+  message: string;
+  details: string;
+  code: number;
+  data: DeviceModelPayload;
+};
+
 type DeviceModelPayload = {
   deviceModelId: number;
   deviceName: string;
-  brand: string;
+  description: string | null;
+  brandId: number;
   imageURL: string | null;
   specifications: string | null;
   deviceCategoryId: number;
+  amountAvailable: number;
   deviceValue: number;
   pricePerDay: number;
   depositPercent: number;
@@ -92,26 +103,55 @@ const parseSpecifications = (value: string | null): ProductSpecsPayload => {
   return parseLooseSpecificationString(trimmed);
 };
 
-const mapDeviceModelToProductDetail = (payload: DeviceModelPayload): ProductDetail => ({
-  id: String(payload.deviceModelId),
-  name: payload.deviceName,
-  model: payload.deviceName,
-  price: `${CURRENCY_FORMATTER.format(payload.pricePerDay)}/day`,
-  brand: payload.brand,
-  status: payload.active ? 'Available' : 'Unavailable',
-  stock: payload.active ? 10 : 0,
-  specs: parseSpecifications(payload.specifications),
-  accessories: [],
-  relatedProducts: [],
-  reviews: [],
-  imageURL: payload.imageURL,
-  pricePerDay: payload.pricePerDay,
-  depositPercent: payload.depositPercent,
-  deviceValue: payload.deviceValue,
-  deviceCategoryId: payload.deviceCategoryId,
-  currency: 'VND',
-  source: 'api',
-});
+const formatBrandName = (brandId: number, brandMap: Map<number, { brandName: string }>) => {
+  const entry = brandMap.get(brandId);
+
+  if (entry?.brandName) {
+    return entry.brandName;
+  }
+
+  const cached = getCachedBrandName(brandId);
+  if (cached) {
+    return cached;
+  }
+
+  return brandId ? `Brand #${brandId}` : 'Unknown Brand';
+};
+
+const mapDeviceModelToProductDetail = (
+  payload: DeviceModelPayload,
+  brandMap: Map<number, { brandName: string }>,
+): ProductDetail => {
+  const brandName = formatBrandName(payload.brandId, brandMap);
+  const isAvailable = payload.active && payload.amountAvailable > 0;
+  const normalizedStock = Number.isFinite(payload.amountAvailable) ? payload.amountAvailable : 0;
+  const depositPercentage = Number.isFinite(payload.depositPercent)
+    ? payload.depositPercent * 100
+    : undefined;
+
+  return {
+    id: String(payload.deviceModelId),
+    name: payload.deviceName,
+    model: payload.deviceName,
+    description: payload.description ?? undefined,
+    price: `${CURRENCY_FORMATTER.format(payload.pricePerDay)}/day`,
+    brand: brandName,
+    status: isAvailable ? 'Available' : 'Unavailable',
+    stock: Math.max(0, normalizedStock),
+    specs: parseSpecifications(payload.specifications),
+    accessories: [],
+    relatedProducts: [],
+    reviews: [],
+    imageURL: payload.imageURL,
+    pricePerDay: payload.pricePerDay,
+    depositPercent: payload.depositPercent,
+    depositPercentage,
+    deviceValue: payload.deviceValue,
+    deviceCategoryId: payload.deviceCategoryId,
+    currency: 'VND',
+    source: 'api',
+  };
+};
 
 export async function fetchDeviceModels(forceRefresh = false): Promise<ProductDetail[]> {
   const now = Date.now();
@@ -132,7 +172,8 @@ export async function fetchDeviceModels(forceRefresh = false): Promise<ProductDe
     throw new Error('Unexpected response format when loading device models.');
   }
 
-  const normalized = json.data.map(mapDeviceModelToProductDetail);
+  const brandMap = await fetchBrandMap();
+  const normalized = json.data.map((payload) => mapDeviceModelToProductDetail(payload, brandMap));
 
   cachedDeviceModels = normalized;
   cacheTimestamp = now;
@@ -148,15 +189,39 @@ export async function fetchDeviceModelById(
     return null;
   }
 
-  try {
-    const devices = await fetchDeviceModels(options.forceRefresh ?? false);
-    const match = devices.find((item) => item.id === id);
+  const url = buildApiUrl('device-models', id);
 
-    if (match) {
-      return match;
+  try {
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      throw new Error(`Failed to load device model (status ${response.status}).`);
     }
+
+    const json = (await response.json()) as DeviceModelDetailResponse;
+
+    if (!json || !json.data) {
+      throw new Error('Unexpected response format when loading device model.');
+    }
+
+    const brandMap = await fetchBrandMap(options.forceRefresh ?? false);
+    const normalized = mapDeviceModelToProductDetail(json.data, brandMap);
+
+    if (cachedDeviceModels) {
+      const next = [...cachedDeviceModels];
+      const index = next.findIndex((item) => item.id === normalized.id);
+      if (index >= 0) {
+        next[index] = normalized;
+      } else {
+        next.push(normalized);
+      }
+      cachedDeviceModels = next;
+      cacheTimestamp = Date.now();
+    }
+
+    return normalized;
   } catch (error) {
-    console.warn('Unable to fetch device models. Falling back to local data.', error);
+    console.warn('Unable to fetch device model detail. Falling back to local data.', error);
   }
 
   const fallbackMatch = fallbackProducts.find((item) => item.id === id);
