@@ -1,7 +1,40 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import * as SecureStore from 'expo-secure-store';
+import { router } from 'expo-router';
 
 import { getCurrentUser, loginUser, type AuthenticatedUser, type LoginPayload } from '@/services/auth';
+
+type ApiErrorWithStatus = Error & { status?: number };
+
+const PROFILE_FETCH_TIMEOUT_MS = 15000;
+const PROFILE_TIMEOUT_ERROR_NAME = 'ProfileTimeoutError';
+
+const createProfileTimeout = () => {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+  const promise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      const timeoutError = new Error(
+        'Your session expired because we could not load your profile. Please sign in again.'
+      ) as ApiErrorWithStatus;
+      timeoutError.name = PROFILE_TIMEOUT_ERROR_NAME;
+      timeoutError.status = 440;
+      reject(timeoutError);
+    }, PROFILE_FETCH_TIMEOUT_MS);
+  });
+
+  const cancel = () => {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+      timeoutId = null;
+    }
+  };
+
+  return { promise, cancel };
+};
+
+const isProfileTimeoutError = (error: unknown): error is ApiErrorWithStatus =>
+  error instanceof Error && error.name === PROFILE_TIMEOUT_ERROR_NAME;
 
 type AuthSession = {
   accessToken: string;
@@ -32,8 +65,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isFetchingProfile, setIsFetchingProfile] = useState(false);
   const isMountedRef = useRef(true);
 
-  type ApiErrorWithStatus = Error & { status?: number };
-
   useEffect(() => {
     return () => {
       isMountedRef.current = false;
@@ -61,15 +92,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [isStorageAvailable]);
 
-  const clearSessionState = useCallback(async () => {
-    if (isMountedRef.current) {
-      setSession(null);
-      setUser(null);
-      setIsFetchingProfile(false);
-    }
+  const clearSessionState = useCallback(
+    async ({ redirectToSignIn = false }: { redirectToSignIn?: boolean } = {}) => {
+      if (isMountedRef.current) {
+        setSession(null);
+        setUser(null);
+        setIsFetchingProfile(false);
+      }
 
-    await persistSession(null);
-  }, [persistSession]);
+      await persistSession(null);
+
+      if (redirectToSignIn) {
+        router.replace('/(auth)/sign-in');
+      }
+    },
+    [persistSession, router]
+  );
 
   type FetchProfileOptions = { silent?: boolean };
 
@@ -90,11 +128,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setIsFetchingProfile(true);
       }
 
+      const { promise: timeoutPromise, cancel: cancelTimeout } = createProfileTimeout();
+
       try {
-        const profile = await getCurrentUser({
-          accessToken: activeSession.accessToken,
-          tokenType: activeSession.tokenType,
-        });
+        const profile = await Promise.race([
+          getCurrentUser({
+            accessToken: activeSession.accessToken,
+            tokenType: activeSession.tokenType,
+          }),
+          timeoutPromise,
+        ]);
 
         if (isMountedRef.current) {
           setUser(profile);
@@ -105,14 +148,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const normalizedError =
           error instanceof Error ? error : new Error('Failed to load profile. Please try again.');
 
-        if ((normalizedError as ApiErrorWithStatus).status === 401) {
-          await clearSessionState();
+        if (isProfileTimeoutError(normalizedError) || (normalizedError as ApiErrorWithStatus).status === 401) {
+          await clearSessionState({ redirectToSignIn: true });
         } else if (isMountedRef.current) {
           setUser(null);
         }
 
         throw normalizedError;
       } finally {
+        cancelTimeout();
+
         if (!silent && isMountedRef.current) {
           setIsFetchingProfile(false);
         }
@@ -204,8 +249,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         await fetchProfile(nextSession);
       } catch (error) {
-        if ((error as ApiErrorWithStatus).status === 401) {
-          throw error;
+        const normalizedError: ApiErrorWithStatus =
+          error instanceof Error
+            ? (error as ApiErrorWithStatus)
+            : Object.assign(new Error('Failed to load profile.'), { status: undefined });
+
+        if (isProfileTimeoutError(normalizedError) || normalizedError.status === 401) {
+          throw normalizedError;
         }
 
         console.warn('Sign in succeeded but loading the user profile failed.', error);

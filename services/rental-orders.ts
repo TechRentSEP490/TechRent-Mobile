@@ -9,7 +9,6 @@ export type CreateRentalOrderPayload = {
   startDate: string;
   endDate: string;
   shippingAddress: string;
-  customerId: number;
   orderDetails: RentalOrderDetailPayload[];
 };
 
@@ -46,7 +45,7 @@ export type CreateRentalOrderResult = {
   data: RentalOrderResponse | null;
 };
 
-type SessionCredentials = {
+export type SessionCredentials = {
   accessToken: string;
   tokenType?: string | null;
 };
@@ -91,6 +90,20 @@ export async function createRentalOrder(
   });
 
   if (!response.ok) {
+    let errorBody: string | null = null;
+
+    try {
+      errorBody = await response.clone().text();
+    } catch (cloneError) {
+      console.warn('Unable to clone rental order error response body', cloneError);
+    }
+
+    console.error('Create rental order request failed', {
+      status: response.status,
+      statusText: response.statusText,
+      body: errorBody,
+    });
+
     const apiMessage = await parseErrorMessage(response);
     throw new Error(apiMessage ?? `Unable to create rental order (status ${response.status}).`);
   }
@@ -99,6 +112,44 @@ export async function createRentalOrder(
 
   if (!json || json.status !== 'SUCCESS' || !json.data) {
     throw new Error(json?.message ?? 'Failed to create rental order. Please try again.');
+  }
+
+  return json.data;
+}
+
+type RentalOrdersListResponse = {
+  status: string;
+  message: string;
+  details?: string;
+  code: number;
+  data: RentalOrderResponse[] | null;
+};
+
+export async function fetchRentalOrders(
+  session: SessionCredentials
+): Promise<RentalOrderResponse[]> {
+  if (!session?.accessToken) {
+    throw new Error('An access token is required to load rental orders.');
+  }
+
+  const response = await fetch(buildApiUrl('rental-orders'), {
+    headers: {
+      Accept: 'application/json',
+      Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
+        session.accessToken
+      }`,
+    },
+  });
+
+  if (!response.ok) {
+    const apiMessage = await parseErrorMessage(response);
+    throw new Error(apiMessage ?? `Unable to load rental orders (status ${response.status}).`);
+  }
+
+  const json = (await response.json()) as RentalOrdersListResponse | null;
+
+  if (!json || json.status !== 'SUCCESS' || !Array.isArray(json.data)) {
+    throw new Error(json?.message ?? 'Failed to load rental orders. Please try again.');
   }
 
   return json.data;

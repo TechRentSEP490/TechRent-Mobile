@@ -1,185 +1,310 @@
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   FlatList,
   Modal,
-  NativeSyntheticEvent,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
-  TextInputKeyPressEventData,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 
-type OrderStatusFilter = 'All' | 'Pending' | 'Delivered' | 'In Use' | 'Completed';
-type OrderStatus = Exclude<OrderStatusFilter, 'All'>;
-type OrderActionType =
-  | 'continueProcess'
-  | 'extendRental'
-  | 'confirmReceipt'
-  | 'cancelOrder'
-  | 'rentAgain';
+import { useAuth } from '@/contexts/AuthContext';
+import { fetchDeviceModelById } from '@/services/device-models';
+import {
+  fetchRentalOrders,
+  type RentalOrderResponse,
+  type SessionCredentials,
+} from '@/services/rental-orders';
+import { fetchContractForOrder, type RentalContract } from '@/services/contracts';
 
-type OrderCard = {
-  id: string;
-  productName: string;
-  orderNumber: string;
-  rentalPeriod: string;
-  totalAmount: string;
-  statusFilter: OrderStatus;
-  statusLabel: string;
-  statusColor: string;
-  statusBackground: string;
-  action?: {
-    label: string;
-    type: OrderActionType;
+type StatusPresentation = {
+  label: string;
+  color: string;
+  backgroundColor: string;
+};
+
+type StatusFilterOption = {
+  key: string;
+  label: string;
+};
+
+const STATUS_PRESENTATION: Record<string, StatusPresentation> = {
+  PENDING: {
+    label: 'Pending',
+    color: '#b45309',
+    backgroundColor: '#fef3c7',
+  },
+  APPROVED: {
+    label: 'Approved',
+    color: '#2563eb',
+    backgroundColor: '#dbeafe',
+  },
+  IN_PROGRESS: {
+    label: 'In Progress',
+    color: '#1d4ed8',
+    backgroundColor: '#e0f2fe',
+  },
+  DELIVERED: {
+    label: 'Delivered',
+    color: '#15803d',
+    backgroundColor: '#dcfce7',
+  },
+  COMPLETED: {
+    label: 'Completed',
+    color: '#111827',
+    backgroundColor: '#e5e7eb',
+  },
+  CANCELLED: {
+    label: 'Cancelled',
+    color: '#b91c1c',
+    backgroundColor: '#fee2e2',
+  },
+};
+
+const CURRENCY_FORMATTER = new Intl.NumberFormat('vi-VN', {
+  style: 'currency',
+  currency: 'VND',
+  maximumFractionDigits: 0,
+});
+
+const formatCurrency = (value: number | null | undefined) => {
+  if (value === null || value === undefined) {
+    return '—';
+  }
+
+  try {
+    return CURRENCY_FORMATTER.format(value);
+  } catch (error) {
+    console.warn('Failed to format currency', error);
+    return `${value}`;
+  }
+};
+
+const formatStatusLabel = (status: string | null | undefined) => {
+  if (!status) {
+    return 'Unknown';
+  }
+
+  return status
+    .toLowerCase()
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(' ');
+};
+
+const getStatusPresentation = (status: string | null | undefined): StatusPresentation => {
+  if (!status) {
+    return {
+      label: 'Unknown',
+      color: '#1f2937',
+      backgroundColor: '#e5e7eb',
+    };
+  }
+
+  const normalized = status.toUpperCase();
+  const preset = STATUS_PRESENTATION[normalized];
+
+  if (preset) {
+    return preset;
+  }
+
+  return {
+    label: formatStatusLabel(status),
+    color: '#1f2937',
+    backgroundColor: '#e5e7eb',
   };
 };
 
-const ORDER_FILTERS: OrderStatusFilter[] = ['All', 'Pending', 'Delivered', 'In Use', 'Completed'];
+const formatDate = (value: string | null | undefined) => {
+  if (!value) {
+    return '—';
+  }
 
-const ORDERS: OrderCard[] = [
-  {
-    id: 'ORD-20001',
-    productName: 'Samsung Galaxy S23',
-    orderNumber: 'Order #ORD-20001',
-    rentalPeriod: 'Jan 14 - Jan 21, 2025',
-    totalAmount: '$560.00',
-    statusFilter: 'Pending',
-    statusLabel: 'Awaiting Docs',
-    statusColor: '#b45309',
-    statusBackground: '#fef3c7',
-    action: { label: 'Continue Process', type: 'continueProcess' },
-  },
-  {
-    id: 'ORD-12345',
-    productName: 'SmartPhone X',
-    orderNumber: 'Order #12345',
-    rentalPeriod: 'Jan 15 - Jan 22, 2025',
-    totalAmount: '$799.00',
-    statusFilter: 'In Use',
-    statusLabel: 'In Use',
-    statusColor: '#1d4ed8',
-    statusBackground: '#dbeafe',
-    action: { label: 'Extend Rental', type: 'extendRental' },
-  },
-  {
-    id: 'ORD-12344',
-    productName: 'MacBook Pro 16"',
-    orderNumber: 'Order #12344',
-    rentalPeriod: 'Jan 10 - Jan 17, 2025',
-    totalAmount: '$420.00',
-    statusFilter: 'Delivered',
-    statusLabel: 'Delivery',
-    statusColor: '#15803d',
-    statusBackground: '#dcfce7',
-    action: { label: 'Confirm Receipt', type: 'confirmReceipt' },
-  },
-  {
-    id: 'ORD-12343',
-    productName: 'DJI Mavic Air 2 Drone',
-    orderNumber: 'Order #12343',
-    rentalPeriod: 'Jan 20 - Jan 25, 2025',
-    totalAmount: '$180.00',
-    statusFilter: 'Pending',
-    statusLabel: 'In Review',
-    statusColor: '#6d28d9',
-    statusBackground: '#ede9fe',
-    action: { label: 'Cancel Order', type: 'cancelOrder' },
-  },
-  {
-    id: 'ORD-12211',
-    productName: 'Lenovo ThinkPad X1',
-    orderNumber: 'Order #12211',
-    rentalPeriod: 'Dec 01 - Dec 20, 2024',
-    totalAmount: '$650.00',
-    statusFilter: 'Completed',
-    statusLabel: 'Completed',
-    statusColor: '#111111',
-    statusBackground: '#f3f4f6',
-    action: { label: 'Rent Again', type: 'rentAgain' },
-  },
-];
+  const date = new Date(value);
 
-const PAYMENT_OPTIONS = [
-  {
-    id: 'payos',
-    label: 'PayOS',
-    description: 'Credit/Debit Card',
-    icon: <Ionicons name="card-outline" size={24} color="#111" />,
-  },
-  {
-    id: 'momo',
-    label: 'MoMo',
-    description: 'Mobile Wallet',
-    icon: <MaterialCommunityIcons name="wallet-outline" size={24} color="#111" />,
-  },
-];
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleDateString('vi-VN', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
+};
+
+const formatDateTime = (value: string | null | undefined) => {
+  if (!value) {
+    return '—';
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleString('vi-VN', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+};
+
+const convertHtmlToPlainText = (value: string | null | undefined) => {
+  if (!value) {
+    return '';
+  }
+
+  return value
+    .replace(/<br\s*\/?>(?=\s*<)/gi, '\n')
+    .replace(/<br\s*\/?>(?!\s*<)/gi, '\n')
+    .replace(/<\/(p|div|h[1-6])>/gi, '\n\n')
+    .replace(/<li>/gi, '\u2022 ')
+    .replace(/<\/li>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+};
+
+const buildDeviceSummary = (order: RentalOrderResponse, deviceNames: Record<number, string>) => {
+  if (!order.orderDetails || order.orderDetails.length === 0) {
+    return 'No devices assigned';
+  }
+
+  const [first, ...rest] = order.orderDetails;
+  const firstName = deviceNames[first.deviceModelId] ?? `Device #${first.deviceModelId}`;
+  const primary = `${first.quantity} × ${firstName}`;
+
+  if (rest.length === 0) {
+    return primary;
+  }
+
+  const additionalCount = rest.reduce((total, detail) => total + detail.quantity, 0);
+  return `${primary} (+${rest.length} more item${rest.length > 1 ? 's' : ''}, ${additionalCount} additional unit${
+    additionalCount === 1 ? '' : 's'
+  })`;
+};
+
+const buildSessionCredentials = (
+  session: { accessToken?: string | null; tokenType?: string | null } | null | undefined
+) => {
+  if (!session?.accessToken) {
+    return null;
+  }
+
+  return {
+    accessToken: session.accessToken,
+    tokenType: session.tokenType,
+  } satisfies SessionCredentials;
+};
 
 export default function OrdersScreen() {
-  const router = useRouter();
-  const { flow, orderId } = useLocalSearchParams<{
-    flow?: string | string[];
-    orderId?: string | string[];
-  }>();
-  const listRef = useRef<FlatList<OrderCard>>(null);
-  const [selectedFilter, setSelectedFilter] = useState<OrderStatusFilter>('All');
-  const [highlightedOrderId, setHighlightedOrderId] = useState<string | null>(null);
-  const [pendingScrollOrderId, setPendingScrollOrderId] = useState<string | null>(null);
+  const { session, isHydrating } = useAuth();
+  const { orderId: orderIdParam } = useLocalSearchParams<{ orderId?: string | string[] }>();
+  const listRef = useRef<FlatList<RentalOrderResponse> | null>(null);
+
+  const [orders, setOrders] = useState<RentalOrderResponse[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [deviceNames, setDeviceNames] = useState<Record<number, string>>({});
+  const [selectedFilter, setSelectedFilter] = useState<string>('ALL');
+  const [highlightedOrderId, setHighlightedOrderId] = useState<number | null>(null);
+  const [pendingHighlightId, setPendingHighlightId] = useState<number | null>(null);
   const [isModalVisible, setModalVisible] = useState(false);
-  const [activeOrder, setActiveOrder] = useState<OrderCard | null>(null);
-  const [currentStep, setCurrentStep] = useState(1);
-  const [otpDigits, setOtpDigits] = useState<string[]>(Array(6).fill(''));
-  const otpRefs = useRef<(TextInput | null)[]>([]);
-  const [selectedPayment, setSelectedPayment] = useState(PAYMENT_OPTIONS[0].id);
-  const [hasAgreed, setHasAgreed] = useState(false);
+  const [selectedOrderId, setSelectedOrderId] = useState<number | null>(null);
+  const [selectedContract, setSelectedContract] = useState<RentalContract | null>(null);
+  const [contractCache, setContractCache] = useState<Record<number, RentalContract | null>>({});
+  const [contractLoading, setContractLoading] = useState(false);
+  const [contractError, setContractError] = useState<string | null>(null);
 
-  const progressWidth = useMemo(() => `${(currentStep / 3) * 100}%`, [currentStep]);
-  const isAgreementComplete = hasAgreed;
-  const isOtpComplete = useMemo(
-    () => otpDigits.every((digit) => digit.length === 1),
-    [otpDigits],
-  );
-
-  const filteredOrders = useMemo(() => {
-    if (selectedFilter === 'All') {
-      return ORDERS;
-    }
-
-    return ORDERS.filter((order) => order.statusFilter === selectedFilter);
-  }, [selectedFilter]);
-
-  const openFlow = useCallback((order: OrderCard) => {
-    setActiveOrder(order);
-    setModalVisible(true);
-    setCurrentStep(1);
-    setOtpDigits(Array(6).fill(''));
-    setSelectedPayment(PAYMENT_OPTIONS[0].id);
-    setHasAgreed(false);
-  }, []);
-
-  const resetFlow = useCallback(() => {
-    setModalVisible(false);
-    setCurrentStep(1);
-    setOtpDigits(Array(6).fill(''));
-    setSelectedPayment(PAYMENT_OPTIONS[0].id);
-    setHasAgreed(false);
-    setActiveOrder(null);
-  }, []);
+  const credentials = useMemo(() => buildSessionCredentials(session), [session]);
 
   useEffect(() => {
-    if (!highlightedOrderId) {
+    const idParam = Array.isArray(orderIdParam) ? orderIdParam[0] : orderIdParam;
+    if (!idParam) {
+      return;
+    }
+
+    const parsed = Number.parseInt(idParam, 10);
+    if (!Number.isNaN(parsed)) {
+      setPendingHighlightId(parsed);
+    }
+  }, [orderIdParam]);
+
+  const loadOrders = useCallback(
+    async (options: { silent?: boolean } = {}) => {
+      if (!credentials) {
+        setOrders([]);
+        setError(null);
+        return;
+      }
+
+      if (!options.silent) {
+        setLoading(true);
+      }
+
+      try {
+        const data = await fetchRentalOrders(credentials);
+        const sorted = [...data].sort((a, b) => {
+          const left = new Date(b.createdAt ?? '').getTime();
+          const right = new Date(a.createdAt ?? '').getTime();
+          if (Number.isNaN(left) || Number.isNaN(right)) {
+            return b.orderId - a.orderId;
+          }
+          return left - right;
+        });
+
+        setOrders(sorted);
+        setError(null);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Unable to load rental orders.';
+        setOrders([]);
+        setError(message);
+      } finally {
+        if (!options.silent) {
+          setLoading(false);
+        }
+      }
+    },
+    [credentials]
+  );
+
+  useEffect(() => {
+    if (!credentials) {
+      setOrders([]);
+      return;
+    }
+
+    void loadOrders();
+  }, [credentials, loadOrders]);
+
+  useEffect(() => {
+    if (pendingHighlightId === null) {
+      return;
+    }
+
+    const exists = orders.some((order) => order.orderId === pendingHighlightId);
+
+    if (exists) {
+      setHighlightedOrderId(pendingHighlightId);
+      setPendingHighlightId(null);
+    }
+  }, [orders, pendingHighlightId]);
+
+  useEffect(() => {
+    if (highlightedOrderId === null || orders.length === 0) {
       return;
     }
 
@@ -190,435 +315,480 @@ export default function OrdersScreen() {
     return () => {
       clearTimeout(timeout);
     };
-  }, [highlightedOrderId]);
+  }, [highlightedOrderId, orders.length]);
 
   useEffect(() => {
-    const flowParam = Array.isArray(flow) ? flow[0] : flow;
-    if (flowParam !== 'continue') {
+    if (orders.length === 0) {
       return;
     }
 
-    const orderIdParam = Array.isArray(orderId) ? orderId[0] : orderId;
-    const targetOrder =
-      ORDERS.find((order) => order.id === orderIdParam) ||
-      ORDERS.find((order) => order.action?.type === 'continueProcess');
+    const uniqueIds = new Set<number>();
+    orders.forEach((order) => {
+      order.orderDetails.forEach((detail) => {
+        uniqueIds.add(detail.deviceModelId);
+      });
+    });
 
-    if (targetOrder) {
-      setSelectedFilter(targetOrder.statusFilter);
-      setHighlightedOrderId(targetOrder.id);
-      setPendingScrollOrderId(targetOrder.id);
-    }
+    const missingIds = Array.from(uniqueIds).filter((id) => deviceNames[id] === undefined);
 
-    router.replace('/(app)/(tabs)/orders');
-  }, [flow, orderId, router]);
-
-  useEffect(() => {
-    if (!pendingScrollOrderId) {
+    if (missingIds.length === 0) {
       return;
     }
 
-    const index = filteredOrders.findIndex((order) => order.id === pendingScrollOrderId);
+    let isActive = true;
+
+    (async () => {
+      const entries = await Promise.all(
+        missingIds.map(async (id) => {
+          try {
+            const detail = await fetchDeviceModelById(String(id));
+            if (detail?.model) {
+              return [id, detail.model] as const;
+            }
+            if (detail?.name) {
+              return [id, detail.name] as const;
+            }
+          } catch (error) {
+            console.warn(`Failed to fetch device model ${id}`, error);
+          }
+          return [id, `Device #${id}`] as const;
+        })
+      );
+
+      if (!isActive) {
+        return;
+      }
+
+      setDeviceNames((previous) => {
+        const next = { ...previous };
+        for (const [id, name] of entries) {
+          next[id] = name;
+        }
+        return next;
+      });
+    })();
+
+    return () => {
+      isActive = false;
+    };
+  }, [orders, deviceNames]);
+
+  const filterOptions = useMemo<StatusFilterOption[]>(() => {
+    const unique = new Set<string>();
+    orders.forEach((order) => {
+      if (order.orderStatus) {
+        unique.add(order.orderStatus.toUpperCase());
+      }
+    });
+
+    const options = Array.from(unique)
+      .map((key) => ({ key, label: formatStatusLabel(key) }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+
+    return [{ key: 'ALL', label: 'All' }, ...options];
+  }, [orders]);
+
+  useEffect(() => {
+    if (selectedFilter === 'ALL') {
+      return;
+    }
+
+    const availableKeys = new Set(filterOptions.map((option) => option.key));
+    if (!availableKeys.has(selectedFilter)) {
+      setSelectedFilter('ALL');
+    }
+  }, [filterOptions, selectedFilter]);
+
+  const filteredOrders = useMemo(() => {
+    if (selectedFilter === 'ALL') {
+      return orders;
+    }
+
+    return orders.filter(
+      (order) => order.orderStatus && order.orderStatus.toUpperCase() === selectedFilter
+    );
+  }, [orders, selectedFilter]);
+
+  useEffect(() => {
+    if (highlightedOrderId === null || filteredOrders.length === 0) {
+      return;
+    }
+
+    const index = filteredOrders.findIndex((order) => order.orderId === highlightedOrderId);
 
     if (index >= 0) {
       try {
         listRef.current?.scrollToIndex({ index, animated: true });
-      } catch {
-        // Ignore scroll errors if the list has not rendered yet
+      } catch (error) {
+        console.warn('Unable to scroll to highlighted order', error);
       }
     }
+  }, [filteredOrders, highlightedOrderId]);
 
-    setPendingScrollOrderId(null);
-  }, [filteredOrders, pendingScrollOrderId]);
-
-  const goToNextStep = () => {
-    setCurrentStep((prev) => Math.min(prev + 1, 3));
-  };
-
-  const goToPreviousStep = () => {
-    setCurrentStep((prev) => Math.max(prev - 1, 1));
-  };
-
-  const handleOtpChange = (value: string, index: number) => {
-    const sanitized = value.replace(/[^0-9]/g, '');
-    const digits = [...otpDigits];
-    digits[index] = sanitized.slice(-1);
-    setOtpDigits(digits);
-
-    if (sanitized && index < otpRefs.current.length - 1) {
-      otpRefs.current[index + 1]?.focus();
+  const handleRefresh = useCallback(async () => {
+    if (!credentials) {
+      return;
     }
-  };
 
-  const handleOtpKeyPress = (
-    event: NativeSyntheticEvent<TextInputKeyPressEventData>,
-    index: number,
-  ) => {
-    if (event.nativeEvent.key === 'Backspace' && otpDigits[index] === '' && index > 0) {
-      otpRefs.current[index - 1]?.focus();
+    setRefreshing(true);
+    try {
+      await loadOrders({ silent: true });
+    } finally {
+      setRefreshing(false);
     }
-  };
+  }, [credentials, loadOrders]);
 
-  const handleCardAction = useCallback(
-    (order: OrderCard) => {
-      if (!order.action) {
+  const closeModal = useCallback(() => {
+    setModalVisible(false);
+    setSelectedOrderId(null);
+    setSelectedContract(null);
+    setContractError(null);
+    setContractLoading(false);
+  }, []);
+
+  useEffect(() => {
+    if (!isModalVisible || selectedOrderId === null) {
+      return;
+    }
+
+    const stillExists = orders.some((order) => order.orderId === selectedOrderId);
+    if (!stillExists) {
+      closeModal();
+    }
+  }, [closeModal, isModalVisible, orders, selectedOrderId]);
+
+  const handleViewContract = useCallback(
+    async (order: RentalOrderResponse) => {
+      if (!credentials) {
+        Alert.alert(
+          'Authentication required',
+          'Please sign in again to view your rental agreement.'
+        );
         return;
       }
 
-      switch (order.action.type) {
-        case 'continueProcess':
-          openFlow(order);
-          break;
-        case 'extendRental':
-          Alert.alert('Extend Rental', 'Our team will reach out to help extend this rental.');
-          break;
-        case 'confirmReceipt':
-          Alert.alert('Receipt Confirmed', 'Thanks for confirming delivery of your device.');
-          break;
-        case 'cancelOrder':
-          Alert.alert('Cancel Order', 'Your cancellation request has been submitted.');
-          break;
-        case 'rentAgain':
-          Alert.alert('Rent Again', 'We\'ll move this device to your cart so you can rent it again.');
-          break;
-        default:
-          break;
+      setSelectedOrderId(order.orderId);
+      setModalVisible(true);
+      setContractError(null);
+
+      const cached = contractCache[order.orderId];
+      if (cached !== undefined) {
+        setSelectedContract(cached);
+        return;
+      }
+
+      setContractLoading(true);
+      setSelectedContract(null);
+
+      try {
+        const contract = await fetchContractForOrder(order.orderId, credentials);
+        setSelectedContract(contract ?? null);
+        setContractCache((previous) => ({ ...previous, [order.orderId]: contract ?? null }));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Unable to load rental agreement.';
+        setContractError(message);
+        setSelectedContract(null);
+        setContractCache((previous) => ({ ...previous, [order.orderId]: null }));
+      } finally {
+        setContractLoading(false);
       }
     },
-    [openFlow],
+    [credentials, contractCache]
   );
 
-  const handleViewDetails = useCallback((order: OrderCard) => {
-    Alert.alert('View Details', `Detailed tracking for ${order.productName} is coming soon.`);
-  }, []);
+  const renderOrderItem = useCallback(
+    ({ item }: { item: RentalOrderResponse }) => {
+      const statusMeta = getStatusPresentation(item.orderStatus);
+      const deviceSummary = buildDeviceSummary(item, deviceNames);
+      const isHighlighted = highlightedOrderId === item.orderId;
 
-  const renderStepContent = () => {
-    switch (currentStep) {
-      case 1:
-        return (
-          <View style={styles.stepContent}>
-            <View style={styles.modalOrderHeader}>
-              <Text style={styles.modalOrderName}>{activeOrder?.productName ?? 'Rental Order'}</Text>
-              <Text style={styles.modalOrderMeta}>{activeOrder?.orderNumber}</Text>
+      return (
+        <View
+          style={[
+            styles.orderCard,
+            isHighlighted && styles.orderCardHighlighted,
+          ]}
+        >
+          <View style={styles.cardHeader}>
+            <View style={styles.cardHeaderText}>
+              <Text style={styles.orderTitle}>{`Order #${item.orderId}`}</Text>
+              <Text style={styles.orderSubtitle}>{deviceSummary}</Text>
             </View>
-            <Text style={styles.stepTitle}>Rental Agreement Contract</Text>
-            <Text style={styles.stepSubtitle}>
-              Please review the complete terms and conditions below
-            </Text>
-            <View style={styles.contractContainer}>
-              <ScrollView showsVerticalScrollIndicator={false}>
-                <Text style={styles.contractHeading}>RENTAL AGREEMENT CONTRACT</Text>
-                <Text style={styles.contractBody}>
-                  Lorem ipsum dolor sit amet, consectetur adipisicing elit. Sed do eiusmod tempor
-                  incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud
-                  exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
-                  {'\n\n'}Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore
-                  eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in
-                  culpa qui officia deserunt mollit anim id est laborum.
-                </Text>
-              </ScrollView>
-            </View>
-            <Pressable
-              style={styles.agreementRow}
-              onPress={() => setHasAgreed((previous) => !previous)}
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: hasAgreed }}
-            >
-              <MaterialCommunityIcons
-                name={hasAgreed ? 'checkbox-marked' : 'checkbox-blank-outline'}
-                size={24}
-                color={hasAgreed ? '#111111' : '#8a8a8a'}
-              />
-              <View style={styles.agreementTextWrapper}>
-                <Text style={styles.agreementLabel}>I agree to the rental contract terms</Text>
-                <Text style={styles.agreementHelper}>
-                  You must accept before proceeding to the verification step.
-                </Text>
-              </View>
-            </Pressable>
-            <View style={styles.primaryActions}>
-              <Pressable
-                style={[
-                  styles.primaryButton,
-                  styles.buttonFlex,
-                  isAgreementComplete ? styles.primaryButtonEnabled : styles.primaryButtonDisabled,
-                ]}
-                onPress={goToNextStep}
-                disabled={!isAgreementComplete}
-              >
-                <Text
-                  style={[
-                    styles.primaryButtonText,
-                    !isAgreementComplete && styles.primaryButtonTextDisabled,
-                  ]}
-                >
-                  Next
-                </Text>
-              </Pressable>
-              <Pressable style={[styles.secondaryButton, styles.buttonFlex]} onPress={resetFlow}>
-                <Text style={styles.secondaryButtonText}>Cancel</Text>
-              </Pressable>
-            </View>
-          </View>
-        );
-      case 2:
-        return (
-          <View style={styles.stepContent}>
-            <View style={styles.verificationIconWrapper}>
-              <Ionicons name="shield-checkmark-outline" size={32} color="#111" />
-            </View>
-            <Text style={styles.stepTitle}>Verify Your Signature</Text>
-            <Text style={styles.stepSubtitle}>We&apos;ve sent a 6-digit code to user@gmail.com</Text>
-            <View style={styles.otpInputsRow}>
-              {otpDigits.map((digit, index) => (
-                <TextInput
-                  key={`otp-${index}`}
-                  ref={(ref) => {
-                    otpRefs.current[index] = ref;
-                  }}
-                  style={styles.otpInput}
-                  keyboardType="number-pad"
-                  maxLength={1}
-                  value={digit}
-                  onChangeText={(value) => handleOtpChange(value, index)}
-                  onKeyPress={(event) => handleOtpKeyPress(event, index)}
-                  returnKeyType="next"
-                />
-              ))}
-            </View>
-            <View style={styles.verificationHelpers}>
-              <Pressable>
-                <Text style={styles.helperLink}>Didn&apos;t receive the code?</Text>
-              </Pressable>
-              <Text style={styles.helperText}>Resend available in 00:45</Text>
-            </View>
-            <Pressable
+            <View
               style={[
-                styles.primaryButton,
-                isOtpComplete ? styles.primaryButtonEnabled : styles.primaryButtonDisabled,
+                styles.statusBadge,
+                { backgroundColor: statusMeta.backgroundColor },
               ]}
-              onPress={goToNextStep}
-              disabled={!isOtpComplete}
             >
-              <Text
-                style={[
-                  styles.primaryButtonText,
-                  !isOtpComplete && styles.primaryButtonTextDisabled,
-                ]}
-              >
-                Verify Code
-              </Text>
-            </Pressable>
-            <Pressable style={styles.helperButton}>
-              <Text style={styles.helperButtonText}>Use a different email</Text>
-            </Pressable>
-            <Pressable style={styles.secondaryButton} onPress={goToPreviousStep}>
-              <Text style={styles.secondaryButtonText}>Back</Text>
-            </Pressable>
+              <Text style={[styles.statusText, { color: statusMeta.color }]}>{
+                statusMeta.label
+              }</Text>
+            </View>
           </View>
-        );
-      case 3:
-      default:
-        return (
-          <View style={styles.stepContent}>
-            <Text style={styles.stepTitle}>Review &amp; Pay</Text>
-            <View style={styles.summaryCard}>
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Order</Text>
-                <Text style={styles.summaryValue}>{activeOrder?.productName}</Text>
-              </View>
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Rental Period</Text>
-                <Text style={styles.summaryValue}>{activeOrder?.rentalPeriod}</Text>
-              </View>
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Total Amount</Text>
-                <Text style={styles.summaryTotal}>{activeOrder?.totalAmount ?? '$0.00'}</Text>
-              </View>
+          <View style={styles.metaRow}>
+            <View style={styles.metaGroup}>
+              <Text style={styles.metaLabel}>Rental period</Text>
+              <Text style={styles.metaValue}>{`${formatDate(item.startDate)} → ${formatDate(
+                item.endDate
+              )}`}</Text>
             </View>
-            <View style={styles.paymentList}>
-              {PAYMENT_OPTIONS.map((option) => {
-                const isSelected = option.id === selectedPayment;
-                return (
-                  <Pressable
-                    key={option.id}
-                    style={[styles.paymentOption, isSelected && styles.paymentOptionSelected]}
-                    onPress={() => setSelectedPayment(option.id)}
-                  >
-                    <View style={styles.paymentIcon}>{option.icon}</View>
-                    <View style={styles.paymentDetails}>
-                      <Text style={styles.paymentLabel}>{option.label}</Text>
-                      <Text style={styles.paymentDescription}>{option.description}</Text>
-                    </View>
-                    <Ionicons
-                      name={isSelected ? 'radio-button-on' : 'radio-button-off'}
-                      size={20}
-                      color={isSelected ? '#1f7df4' : '#c1c1c1'}
-                    />
-                  </Pressable>
-                );
-              })}
+            <View style={styles.metaGroup}>
+              <Text style={styles.metaLabel}>Total</Text>
+              <Text style={styles.metaValue}>{formatCurrency(item.totalPrice)}</Text>
             </View>
-            <View style={styles.paymentSecurity}>
-              <Ionicons name="shield-checkmark" size={16} color="#1f7df4" />
-              <Text style={styles.paymentSecurityText}>Your payment information is secure</Text>
+          </View>
+          <View style={styles.metaRow}>
+            <View style={styles.metaGroup}>
+              <Text style={styles.metaLabel}>Deposit</Text>
+              <Text style={styles.metaValue}>{formatCurrency(item.depositAmount)}</Text>
             </View>
+            <View style={styles.metaGroup}>
+              <Text style={styles.metaLabel}>Created</Text>
+              <Text style={styles.metaValue}>{formatDateTime(item.createdAt)}</Text>
+            </View>
+          </View>
+          {item.shippingAddress ? (
+            <View style={styles.metaGroupFull}>
+              <Text style={styles.metaLabel}>Shipping address</Text>
+              <Text style={styles.metaValue}>{item.shippingAddress}</Text>
+            </View>
+          ) : null}
+          <View style={styles.cardFooter}>
             <Pressable
-              style={[styles.primaryButton, styles.primaryButtonEnabled]}
-              onPress={() =>
-                Alert.alert(
-                  'Rental Process Complete',
-                  `${activeOrder?.productName ?? 'Your order'} is confirmed!`,
-                  [
-                    {
-                      text: 'Done',
-                      style: 'default',
-                      onPress: resetFlow,
-                    },
-                  ],
-                )
-              }
+              style={styles.viewContractButton}
+              onPress={() => handleViewContract(item)}
             >
-              <Text style={styles.primaryButtonText}>Complete Rental Process</Text>
-            </Pressable>
-            <Pressable style={styles.secondaryButton} onPress={goToPreviousStep}>
-              <Text style={styles.secondaryButtonText}>Back</Text>
+              <Text style={styles.viewContractText}>View rental agreement</Text>
             </Pressable>
           </View>
-        );
+        </View>
+      );
+    },
+    [deviceNames, handleViewContract, highlightedOrderId]
+  );
+
+  const listEmptyComponent = useMemo(() => {
+    if (loading) {
+      return (
+        <View style={styles.emptyState}>
+          <ActivityIndicator size="large" color="#111111" />
+          <Text style={styles.emptySubtitle}>Loading your rental orders…</Text>
+        </View>
+      );
     }
-  };
+
+    if (error) {
+      return (
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyTitle}>Unable to load orders</Text>
+          <Text style={styles.emptySubtitle}>{error}</Text>
+          <Pressable style={styles.retryButton} onPress={() => void loadOrders()}>
+            <Text style={styles.retryButtonText}>Try again</Text>
+          </Pressable>
+        </View>
+      );
+    }
+
+    return (
+      <View style={styles.emptyState}>
+        <Text style={styles.emptyTitle}>No rental orders yet</Text>
+        <Text style={styles.emptySubtitle}>
+          Your confirmed rentals will appear here as soon as you place an order.
+        </Text>
+      </View>
+    );
+  }, [error, loadOrders, loading]);
+
+  const selectedOrder = useMemo(
+    () => orders.find((order) => order.orderId === selectedOrderId) ?? null,
+    [orders, selectedOrderId]
+  );
+
+  if (isHydrating) {
+    return (
+      <SafeAreaView style={styles.safeArea} edges={["top"]}>
+        <View style={styles.loadingState}>
+          <ActivityIndicator size="large" color="#111111" />
+          <Text style={styles.loadingStateText}>Restoring your session…</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (!credentials) {
+    return (
+      <SafeAreaView style={styles.safeArea} edges={["top"]}>
+        <View style={styles.loadingState}>
+          <Text style={styles.loadingStateTitle}>Sign in required</Text>
+          <Text style={styles.loadingStateText}>
+            Please sign in to view and manage your rental orders.
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top"]}>
-      <FlatList
-        ref={listRef}
-        data={filteredOrders}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.listContent}
-        showsVerticalScrollIndicator={false}
-        renderItem={({ item }) => {
-          const isHighlighted = highlightedOrderId === item.id;
-          return (
-            <View
-              style={[
-                styles.orderCard,
-                isHighlighted && styles.orderCardHighlighted,
-              ]}
-            >
-              <View style={styles.cardLeading}>
-                <View style={styles.thumbnail}>
-                  <Text style={styles.thumbnailText}>IMG</Text>
-                </View>
-              </View>
-              <View style={styles.cardBody}>
-                <View style={styles.cardHeader}>
-                  <Text style={styles.productName}>{item.productName}</Text>
-                  <View
-                    style={[
-                      styles.statusBadge,
-                      {
-                        backgroundColor: item.statusBackground,
-                      },
-                    ]}
+      <View style={styles.container}>
+        <View style={styles.header}>
+          <Text style={styles.title}>Rental orders</Text>
+          <Text style={styles.subtitle}>Track your active and completed rentals</Text>
+        </View>
+        {filterOptions.length > 1 ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.filterRow}
+          >
+            {filterOptions.map((option) => {
+              const isSelected = selectedFilter === option.key;
+              return (
+                <Pressable
+                  key={option.key}
+                  style={[styles.filterChip, isSelected && styles.filterChipSelected]}
+                  onPress={() => setSelectedFilter(option.key)}
+                >
+                  <Text
+                    style={[styles.filterLabel, isSelected && styles.filterLabelSelected]}
                   >
-                    <Text style={[styles.statusText, { color: item.statusColor }]}>
-                      {item.statusLabel}
-                    </Text>
-                  </View>
-                </View>
-                <Text style={styles.orderNumber}>{item.orderNumber}</Text>
-                <View style={styles.metaRow}>
-                  <View style={styles.metaGroup}>
-                    <Text style={styles.metaLabel}>Rental Period</Text>
-                    <Text style={styles.metaValue}>{item.rentalPeriod}</Text>
-                  </View>
-                  <View style={styles.metaGroup}>
-                    <Text style={styles.metaLabel}>Total Amount</Text>
-                    <Text style={styles.metaValue}>{item.totalAmount}</Text>
-                  </View>
-                </View>
-                <View style={styles.cardFooter}>
-                  <Pressable onPress={() => handleViewDetails(item)}>
-                    <Text style={styles.viewDetails}>View Details</Text>
-                  </Pressable>
-                  {item.action ? (
-                    <Pressable
-                      style={styles.cardActionButton}
-                      onPress={() => handleCardAction(item)}
-                    >
-                      <Text style={styles.cardActionLabel}>{item.action.label}</Text>
-                    </Pressable>
-                  ) : null}
-                </View>
-              </View>
-            </View>
-          );
-        }}
-        ListHeaderComponent={() => (
-          <View style={styles.headerSection}>
-            <View style={styles.topBar}>
-              <Text style={styles.title}>My Orders</Text>
-              <View style={styles.headerActions}>
-                <Pressable style={styles.iconButton}>
-                  <Ionicons name="search" size={18} color="#111" />
+                    {option.label}
+                  </Text>
                 </Pressable>
-                <Pressable style={styles.iconButton}>
-                  <Ionicons name="options-outline" size={18} color="#111" />
-                </Pressable>
+              );
+            })}
+          </ScrollView>
+        ) : null}
+        <FlatList
+          ref={listRef}
+          data={filteredOrders}
+          keyExtractor={(item) => String(item.orderId)}
+          renderItem={renderOrderItem}
+          contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator={false}
+          ItemSeparatorComponent={() => <View style={styles.separator} />}
+          ListEmptyComponent={listEmptyComponent}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={() => void handleRefresh()} />
+          }
+          ListFooterComponent={
+            loading && filteredOrders.length > 0 ? (
+              <View style={styles.footerLoading}>
+                <ActivityIndicator size="small" color="#111111" />
               </View>
-            </View>
-            <Text style={styles.subtitle}>
-              Track your order history, deliveries, and active rentals in one place.
-            </Text>
-            <View style={styles.filterRow}>
-              {ORDER_FILTERS.map((filter) => {
-                const isSelected = selectedFilter === filter;
-                return (
-                  <Pressable
-                    key={filter}
-                    style={[styles.filterChip, isSelected && styles.filterChipSelected]}
-                    onPress={() => setSelectedFilter(filter)}
-                  >
-                    <Text
-                      style={[styles.filterLabel, isSelected && styles.filterLabelSelected]}
-                    >
-                      {filter}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          </View>
-        )}
-        ListEmptyComponent={
-          <View style={styles.emptyState}>
-            <Ionicons name="cube-outline" size={48} color="#9ca3af" />
-            <Text style={styles.emptyTitle}>No orders found</Text>
-            <Text style={styles.emptySubtitle}>
-              Orders matching the selected status will appear here.
-            </Text>
-          </View>
-        }
-        ItemSeparatorComponent={() => <View style={styles.separator} />}
-      />
-
-      <Modal animationType="slide" visible={isModalVisible} transparent onRequestClose={resetFlow}>
+            ) : null
+          }
+        />
+      </View>
+      <Modal
+        visible={isModalVisible}
+        animationType="slide"
+        onRequestClose={closeModal}
+        transparent
+      >
         <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
+          <View style={styles.modalContainer}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Complete Rental Agreement</Text>
-              <Pressable style={styles.closeButton} onPress={resetFlow}>
-                <Ionicons name="close" size={20} color="#111" />
+              <Text style={styles.modalTitle}>
+                {selectedOrder ? `Order #${selectedOrder.orderId}` : 'Rental agreement'}
+              </Text>
+              <Pressable onPress={closeModal} style={styles.modalCloseButton}>
+                <Text style={styles.modalCloseText}>Close</Text>
               </Pressable>
             </View>
-            <View style={styles.progressHeader}>
-              <Text style={styles.progressLabel}>Step {currentStep} of 3</Text>
-              <Text style={styles.progressStage}>Final Review</Text>
-            </View>
-            <View style={styles.progressBar}>
-              <View style={[styles.progressFill, { width: progressWidth }]} />
-            </View>
-            {renderStepContent()}
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.modalContent}
+            >
+              {selectedOrder ? (
+                <View style={styles.modalSection}>
+                  <Text style={styles.modalSectionTitle}>Rental summary</Text>
+                  <View style={styles.modalSummaryRow}>
+                    <Text style={styles.modalSummaryLabel}>Rental period</Text>
+                    <Text style={styles.modalSummaryValue}>{`${formatDateTime(
+                      selectedOrder.startDate
+                    )} → ${formatDateTime(selectedOrder.endDate)}`}</Text>
+                  </View>
+                  <View style={styles.modalSummaryRow}>
+                    <Text style={styles.modalSummaryLabel}>Shipping address</Text>
+                    <Text style={styles.modalSummaryValue}>
+                      {selectedOrder.shippingAddress || 'Not provided'}
+                    </Text>
+                  </View>
+                  <View style={styles.modalSummaryRow}>
+                    <Text style={styles.modalSummaryLabel}>Total amount</Text>
+                    <Text style={styles.modalSummaryValue}>
+                      {formatCurrency(selectedOrder.totalPrice)}
+                    </Text>
+                  </View>
+                  <View style={styles.modalSummaryRow}>
+                    <Text style={styles.modalSummaryLabel}>Deposit collected</Text>
+                    <Text style={styles.modalSummaryValue}>
+                      {formatCurrency(selectedOrder.depositAmount)}
+                    </Text>
+                  </View>
+                  <View style={styles.modalDevicesList}>
+                    {selectedOrder.orderDetails.map((detail) => {
+                      const name =
+                        deviceNames[detail.deviceModelId] ?? `Device #${detail.deviceModelId}`;
+                      return (
+                        <View key={detail.orderDetailId} style={styles.modalDeviceRow}>
+                          <Text style={styles.modalDeviceName}>{`${detail.quantity} × ${name}`}</Text>
+                          <Text style={styles.modalDeviceMeta}>
+                            {`Price/day: ${formatCurrency(detail.pricePerDay)}`}
+                          </Text>
+                          <Text style={styles.modalDeviceMeta}>
+                            {`Deposit/unit: ${formatCurrency(detail.depositAmountPerUnit)}`}
+                          </Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+                </View>
+              ) : null}
+              <View style={styles.modalSection}>
+                <Text style={styles.modalSectionTitle}>Rental agreement</Text>
+                {contractLoading ? (
+                  <View style={styles.modalLoading}>
+                    <ActivityIndicator size="large" color="#111111" />
+                    <Text style={styles.modalLoadingText}>Fetching contract…</Text>
+                  </View>
+                ) : contractError ? (
+                  <Text style={styles.modalErrorText}>{contractError}</Text>
+                ) : selectedContract ? (
+                  <View style={styles.modalContractContent}>
+                    <Text style={styles.modalContractTitle}>
+                      {selectedContract.title || 'Contract details'}
+                    </Text>
+                    <Text style={styles.modalContractMeta}>
+                      {selectedContract.contractNumber
+                        ? `Contract #: ${selectedContract.contractNumber}`
+                        : 'Contract number unavailable'}
+                    </Text>
+                    <Text style={styles.modalContractMeta}>
+                      {`Status: ${formatStatusLabel(selectedContract.status)}`}
+                    </Text>
+                    <View style={styles.modalDivider} />
+                    <Text style={styles.modalBodyText}>
+                      {convertHtmlToPlainText(selectedContract.contractContent) ||
+                        'Contract content will appear here once available.'}
+                    </Text>
+                    {selectedContract.termsAndConditions ? (
+                      <View style={styles.modalTermsSection}>
+                        <Text style={styles.modalContractTitle}>Terms & Conditions</Text>
+                        <Text style={styles.modalBodyText}>
+                          {selectedContract.termsAndConditions.trim()}
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
+                ) : (
+                  <Text style={styles.modalBodyText}>
+                    We could not find a signed contract for this order yet. Please check back soon.
+                  </Text>
+                )}
+              </View>
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -629,473 +799,307 @@ export default function OrdersScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#ffffff',
+    backgroundColor: '#f8fafc',
   },
-  listContent: {
+  container: {
+    flex: 1,
     paddingHorizontal: 20,
-    paddingBottom: 24,
-    paddingTop: 12,
+    paddingBottom: 16,
   },
-  headerSection: {
-    marginBottom: 16,
-    gap: 16,
-  },
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+  header: {
+    paddingTop: 8,
+    paddingBottom: 16,
   },
   title: {
     fontSize: 28,
     fontWeight: '700',
-    color: '#111111',
+    color: '#0f172a',
   },
   subtitle: {
+    marginTop: 4,
     fontSize: 15,
-    color: '#6b7280',
-    lineHeight: 20,
-  },
-  headerActions: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  iconButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: '#f4f4f5',
-    alignItems: 'center',
-    justifyContent: 'center',
+    color: '#475569',
   },
   filterRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+    paddingVertical: 8,
     gap: 12,
   },
   filterChip: {
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 999,
     paddingHorizontal: 16,
     paddingVertical: 8,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
     backgroundColor: '#ffffff',
   },
   filterChipSelected: {
-    backgroundColor: '#111111',
-    borderColor: '#111111',
+    backgroundColor: '#111827',
+    borderColor: '#111827',
   },
   filterLabel: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#6b7280',
+    color: '#475569',
   },
   filterLabelSelected: {
     color: '#ffffff',
   },
+  listContent: {
+    paddingBottom: 120,
+    paddingTop: 8,
+  },
+  separator: {
+    height: 16,
+  },
   orderCard: {
-    flexDirection: 'row',
-    backgroundColor: '#f9fafb',
+    backgroundColor: '#ffffff',
     borderRadius: 20,
-    padding: 16,
+    padding: 20,
+    shadowColor: '#0f172a',
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 3,
   },
   orderCardHighlighted: {
     borderWidth: 2,
-    borderColor: '#1f7df4',
-    backgroundColor: '#eef4ff',
-  },
-  cardLeading: {
-    marginRight: 16,
-  },
-  thumbnail: {
-    width: 64,
-    height: 64,
-    borderRadius: 14,
-    backgroundColor: '#e5e7eb',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  thumbnailText: {
-    fontWeight: '700',
-    color: '#4b5563',
-    fontSize: 12,
-  },
-  cardBody: {
-    flex: 1,
-    gap: 12,
+    borderColor: '#2563eb',
+    shadowOpacity: 0.16,
+    shadowRadius: 16,
   },
   cardHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
+    gap: 16,
   },
-  productName: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: '#111111',
+  cardHeaderText: {
     flex: 1,
-    marginRight: 12,
+  },
+  orderTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  orderSubtitle: {
+    marginTop: 4,
+    fontSize: 14,
+    color: '#334155',
   },
   statusBadge: {
     borderRadius: 999,
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
     paddingVertical: 6,
   },
   statusText: {
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '700',
     textTransform: 'uppercase',
     letterSpacing: 0.6,
   },
-  orderNumber: {
-    fontSize: 13,
-    color: '#6b7280',
-  },
   metaRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     gap: 16,
+    marginTop: 16,
   },
   metaGroup: {
     flex: 1,
   },
+  metaGroupFull: {
+    marginTop: 16,
+  },
   metaLabel: {
     fontSize: 12,
-    color: '#9ca3af',
     textTransform: 'uppercase',
     letterSpacing: 0.6,
+    color: '#94a3b8',
     marginBottom: 4,
   },
   metaValue: {
-    fontSize: 14,
-    color: '#111111',
+    fontSize: 15,
     fontWeight: '600',
+    color: '#1e293b',
   },
   cardFooter: {
+    marginTop: 20,
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
   },
-  viewDetails: {
-    fontSize: 14,
-    color: '#1f7df4',
-    fontWeight: '600',
-  },
-  cardActionButton: {
-    backgroundColor: '#111111',
+  viewContractButton: {
+    backgroundColor: '#111827',
     borderRadius: 12,
-    paddingHorizontal: 16,
+    paddingHorizontal: 18,
     paddingVertical: 10,
   },
-  cardActionLabel: {
-    fontSize: 13,
+  viewContractText: {
     color: '#ffffff',
     fontWeight: '700',
-  },
-  separator: {
-    height: 16,
+    fontSize: 14,
   },
   emptyState: {
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 80,
+    paddingHorizontal: 24,
     gap: 12,
   },
   emptyTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#111111',
+    color: '#0f172a',
+    textAlign: 'center',
   },
   emptySubtitle: {
     fontSize: 14,
-    color: '#6b7280',
+    color: '#475569',
     textAlign: 'center',
+  },
+  retryButton: {
+    marginTop: 8,
+    backgroundColor: '#111827',
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 12,
+  },
+  retryButtonText: {
+    color: '#ffffff',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  loadingState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 32,
+    gap: 12,
+  },
+  loadingStateTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  loadingStateText: {
+    fontSize: 15,
+    color: '#475569',
+    textAlign: 'center',
+  },
+  footerLoading: {
+    paddingVertical: 16,
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.25)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
+    backgroundColor: 'rgba(15, 23, 42, 0.32)',
+    justifyContent: 'flex-end',
   },
-  modalCard: {
-    width: '100%',
-    maxWidth: 420,
+  modalContainer: {
+    maxHeight: '90%',
     backgroundColor: '#ffffff',
-    borderRadius: 28,
-    padding: 24,
-    gap: 16,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingBottom: 24,
   },
   modalHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingTop: 20,
+    paddingBottom: 12,
   },
   modalTitle: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#111111',
+    color: '#0f172a',
   },
-  closeButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#f3f4f6',
-    alignItems: 'center',
-    justifyContent: 'center',
+  modalCloseButton: {
+    paddingHorizontal: 4,
+    paddingVertical: 4,
   },
-  progressHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  progressLabel: {
-    fontSize: 13,
-    color: '#6b7280',
+  modalCloseText: {
+    fontSize: 15,
     fontWeight: '600',
+    color: '#2563eb',
   },
-  progressStage: {
-    fontSize: 13,
-    color: '#111111',
-    fontWeight: '600',
+  modalContent: {
+    paddingHorizontal: 24,
+    paddingBottom: 32,
+    gap: 24,
   },
-  progressBar: {
-    height: 6,
-    backgroundColor: '#e5e7eb',
-    borderRadius: 999,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%',
-    backgroundColor: '#111111',
-  },
-  stepContent: {
+  modalSection: {
     gap: 16,
   },
-  modalOrderHeader: {
-    gap: 4,
-  },
-  modalOrderName: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#111111',
-  },
-  modalOrderMeta: {
-    fontSize: 13,
-    color: '#6b7280',
-  },
-  stepTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#111111',
-  },
-  stepSubtitle: {
-    fontSize: 14,
-    color: '#6b7280',
-  },
-  contractContainer: {
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: 16,
-    maxHeight: 200,
-    padding: 16,
-    backgroundColor: '#f9fafb',
-  },
-  contractHeading: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#111111',
-    marginBottom: 12,
-  },
-  contractBody: {
-    fontSize: 13,
-    lineHeight: 20,
-    color: '#4b5563',
-  },
-  agreementRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-  },
-  agreementTextWrapper: {
-    flex: 1,
-    gap: 4,
-  },
-  agreementLabel: {
-    fontSize: 14,
-    color: '#111111',
-    fontWeight: '600',
-  },
-  agreementHelper: {
-    fontSize: 12,
-    color: '#6b7280',
-  },
-  primaryActions: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  primaryButton: {
-    backgroundColor: '#111111',
-    borderRadius: 14,
-    minHeight: 52,
-    paddingHorizontal: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    alignSelf: 'stretch',
-  },
-  primaryButtonEnabled: {
-    opacity: 1,
-  },
-  primaryButtonDisabled: {
-    backgroundColor: '#d1d5db',
-  },
-  primaryButtonText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#ffffff',
-  },
-  primaryButtonTextDisabled: {
-    color: '#9ca3af',
-  },
-  secondaryButton: {
-    borderRadius: 14,
-    minHeight: 52,
-    paddingHorizontal: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    alignSelf: 'stretch',
-  },
-  buttonFlex: {
-    flex: 1,
-  },
-  secondaryButtonText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#111111',
-  },
-  verificationIconWrapper: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: '#eef2ff',
-    alignItems: 'center',
-    justifyContent: 'center',
-    alignSelf: 'center',
-  },
-  otpInputsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  otpInput: {
-    flex: 1,
-    height: 56,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    textAlign: 'center',
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#111111',
-  },
-  verificationHelpers: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  helperLink: {
-    fontSize: 13,
-    color: '#1f7df4',
-    fontWeight: '600',
-  },
-  helperText: {
-    fontSize: 12,
-    color: '#9ca3af',
-  },
-  helperButton: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 10,
-  },
-  helperButtonText: {
-    fontSize: 14,
-    color: '#1f7df4',
-    fontWeight: '600',
-  },
-  summaryCard: {
-    backgroundColor: '#f9fafb',
-    borderRadius: 16,
-    padding: 16,
-    gap: 12,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-  },
-  summaryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  summaryLabel: {
-    fontSize: 14,
-    color: '#6b7280',
-  },
-  summaryValue: {
-    fontSize: 14,
-    color: '#111111',
-    fontWeight: '600',
-  },
-  summaryTotal: {
+  modalSectionTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#111111',
+    color: '#0f172a',
   },
-  paymentList: {
-    gap: 12,
-  },
-  paymentOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: 14,
-    padding: 14,
-  },
-  paymentOptionSelected: {
-    borderColor: '#1f7df4',
-    backgroundColor: '#eef4ff',
-  },
-  paymentIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: '#ffffff',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-  },
-  paymentDetails: {
-    flex: 1,
+  modalSummaryRow: {
     gap: 4,
   },
-  paymentLabel: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#111111',
-  },
-  paymentDescription: {
+  modalSummaryLabel: {
     fontSize: 13,
-    color: '#6b7280',
+    color: '#64748b',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
   },
-  paymentSecurity: {
-    flexDirection: 'row',
-    gap: 8,
+  modalSummaryValue: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#1e293b',
+  },
+  modalDevicesList: {
+    gap: 12,
+    marginTop: 8,
+  },
+  modalDeviceRow: {
+    gap: 4,
+  },
+  modalDeviceName: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#0f172a',
+  },
+  modalDeviceMeta: {
+    fontSize: 13,
+    color: '#475569',
+  },
+  modalLoading: {
     alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    paddingVertical: 24,
   },
-  paymentSecurityText: {
-    fontSize: 12,
-    color: '#6b7280',
+  modalLoadingText: {
+    fontSize: 14,
+    color: '#475569',
+  },
+  modalErrorText: {
+    fontSize: 14,
+    color: '#b91c1c',
+  },
+  modalContractContent: {
+    gap: 12,
+  },
+  modalContractTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  modalContractMeta: {
+    fontSize: 13,
+    color: '#475569',
+  },
+  modalDivider: {
+    height: 1,
+    backgroundColor: '#e2e8f0',
+    marginVertical: 8,
+  },
+  modalBodyText: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: '#1e293b',
+  },
+  modalTermsSection: {
+    gap: 12,
   },
 });
-
