@@ -44,18 +44,22 @@ export default function SignUpScreen() {
     setErrorMessage(null);
 
     try {
-      await registerUser({
+      const trimmedEmail = email.trim();
+      const result = await registerUser({
         username: username.trim(),
-        email: email.trim(),
+        email: trimmedEmail,
         password,
         phoneNumber: phoneNumber.trim(),
       });
 
-      Alert.alert('Registration successful', 'Enter the verification code we emailed to you.');
+      Alert.alert(
+        result.message ?? 'Registration successful',
+        result.details ?? 'Enter the verification code we emailed to you.'
+      );
 
       router.push({
         pathname: '/(auth)/otp',
-        params: { email: email.trim() },
+        params: { email: trimmedEmail },
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to create your account.';
@@ -80,7 +84,12 @@ export default function SignUpScreen() {
             placeholder="Choose a username"
             placeholderTextColor="#7f7f7f"
             value={username}
-            onChangeText={setUsername}
+            onChangeText={(text) => {
+              setUsername(text);
+              if (errorMessage) {
+                setErrorMessage(null);
+              }
+            }}
             autoCapitalize="none"
           />
         </View>
@@ -93,7 +102,12 @@ export default function SignUpScreen() {
             placeholderTextColor="#7f7f7f"
             keyboardType="email-address"
             value={email}
-            onChangeText={setEmail}
+            onChangeText={(text) => {
+              setEmail(text);
+              if (errorMessage) {
+                setErrorMessage(null);
+              }
+            }}
             autoCapitalize="none"
           />
           <Text style={styles.helperText}>Find what you need easily!</Text>
@@ -107,7 +121,12 @@ export default function SignUpScreen() {
             placeholderTextColor="#7f7f7f"
             keyboardType="phone-pad"
             value={phoneNumber}
-            onChangeText={setPhoneNumber}
+            onChangeText={(text) => {
+              setPhoneNumber(text);
+              if (errorMessage) {
+                setErrorMessage(null);
+              }
+            }}
           />
         </View>
 
@@ -119,7 +138,12 @@ export default function SignUpScreen() {
             placeholderTextColor="#7f7f7f"
             secureTextEntry
             value={password}
-            onChangeText={setPassword}
+            onChangeText={(text) => {
+              setPassword(text);
+              if (errorMessage) {
+                setErrorMessage(null);
+              }
+            }}
           />
         </View>
 
@@ -131,7 +155,12 @@ export default function SignUpScreen() {
             placeholderTextColor="#7f7f7f"
             secureTextEntry
             value={confirmPassword}
-            onChangeText={setConfirmPassword}
+            onChangeText={(text) => {
+              setConfirmPassword(text);
+              if (errorMessage) {
+                setErrorMessage(null);
+              }
+            }}
           />
         </View>
 

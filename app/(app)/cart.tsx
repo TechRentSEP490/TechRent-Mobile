@@ -1,22 +1,43 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useMemo } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import type { ProductDetail } from '@/constants/products';
+import { useAuth } from '@/contexts/AuthContext';
 import { useDeviceModel } from '@/hooks/use-device-model';
+import { createRentalOrder } from '@/services/rental-orders';
 
-const formatDisplayDate = (value: string) => {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-  return parsed.toLocaleDateString('en-US', {
+const clampToStartOfDay = (date: Date) => {
+  const normalized = new Date(date);
+  normalized.setHours(0, 0, 0, 0);
+  return normalized;
+};
+
+const addDays = (date: Date, days: number) => {
+  const base = clampToStartOfDay(date);
+  const nextDate = new Date(base);
+  nextDate.setDate(base.getDate() + days);
+  return clampToStartOfDay(nextDate);
+};
+
+const formatDisplayDate = (date: Date) =>
+  clampToStartOfDay(date).toLocaleDateString('en-US', {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
   });
-};
 
 const formatCurrencyValue = (value: number, currency: 'USD' | 'VND') =>
   new Intl.NumberFormat(currency === 'USD' ? 'en-US' : 'vi-VN', {
@@ -43,8 +64,128 @@ const getDailyRate = (product: ProductDetail) => {
   return Number.isNaN(parsed) ? 0 : parsed;
 };
 
+const DATE_SCROLL_ITEM_HEIGHT = 48;
+const DATE_SCROLL_VISIBLE_ROWS = 5;
+const DATE_SCROLL_RANGE_DAYS = 365;
+
+const createDateSequence = (start: Date, totalDays: number) => {
+  const normalizedStart = clampToStartOfDay(start);
+  const length = Math.max(totalDays, 1);
+  return Array.from({ length }, (_, index) => addDays(normalizedStart, index));
+};
+
+const findDateIndex = (dates: Date[], target: Date) =>
+  dates.findIndex((item) => item.getTime() === target.getTime());
+
+const parseDateParam = (value: unknown, fallback: Date) => {
+  if (typeof value === 'string') {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) {
+      return clampToStartOfDay(parsed);
+    }
+  }
+
+  return clampToStartOfDay(fallback);
+};
+
+type DateScrollPickerProps = {
+  value: Date;
+  minimumDate: Date;
+  onChange: (date: Date) => void;
+  rangeInDays?: number;
+};
+
+function DateScrollPicker({ value, minimumDate, onChange, rangeInDays = DATE_SCROLL_RANGE_DAYS }: DateScrollPickerProps) {
+  const dates = useMemo(() => createDateSequence(minimumDate, rangeInDays), [minimumDate, rangeInDays]);
+  const scrollRef = useRef<ScrollView | null>(null);
+  const isInteractingRef = useRef(false);
+
+  const selectedIndex = useMemo(() => {
+    const index = findDateIndex(dates, clampToStartOfDay(value));
+    if (index >= 0) {
+      return index;
+    }
+
+    if (dates.length === 0) {
+      return 0;
+    }
+
+    if (value.getTime() < dates[0].getTime()) {
+      return 0;
+    }
+
+    return dates.length - 1;
+  }, [dates, value]);
+
+  useEffect(() => {
+    if (!scrollRef.current) {
+      return;
+    }
+
+    const targetOffset = selectedIndex * DATE_SCROLL_ITEM_HEIGHT;
+    scrollRef.current.scrollTo({ y: targetOffset, animated: !isInteractingRef.current });
+  }, [selectedIndex]);
+
+  const handleMomentumEnd = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const offsetY = event.nativeEvent.contentOffset.y;
+      const rawIndex = Math.round(offsetY / DATE_SCROLL_ITEM_HEIGHT);
+      const clampedIndex = Math.min(Math.max(rawIndex, 0), Math.max(dates.length - 1, 0));
+      const nextDate = dates[clampedIndex];
+
+      if (nextDate && nextDate.getTime() !== value.getTime()) {
+        onChange(nextDate);
+      }
+
+      isInteractingRef.current = false;
+    },
+    [dates, onChange, value]
+  );
+
+  const handleScrollBegin = useCallback(() => {
+    isInteractingRef.current = true;
+  }, []);
+
+  const handleScrollEndDrag = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      handleMomentumEnd(event);
+    },
+    [handleMomentumEnd]
+  );
+
+  return (
+    <View style={styles.dateScrollPickerContainer}>
+      <ScrollView
+        ref={scrollRef}
+        showsVerticalScrollIndicator={false}
+        snapToInterval={DATE_SCROLL_ITEM_HEIGHT}
+        decelerationRate="fast"
+        onMomentumScrollEnd={handleMomentumEnd}
+        onScrollBeginDrag={handleScrollBegin}
+        onScrollEndDrag={handleScrollEndDrag}
+        contentContainerStyle={styles.dateScrollContent}
+      >
+        {dates.map((date) => {
+          const key = date.getTime();
+          const isSelected = date.getTime() === value.getTime();
+
+          return (
+            <View key={key} style={[styles.dateScrollItem, isSelected && styles.dateScrollItemSelected]}>
+              <Text style={[styles.dateScrollText, isSelected && styles.dateScrollTextSelected]}>
+                {formatDisplayDate(date)}
+              </Text>
+            </View>
+          );
+        })}
+      </ScrollView>
+      <View pointerEvents="none" style={styles.dateScrollHighlight} />
+    </View>
+  );
+}
+
 export default function CartScreen() {
   const router = useRouter();
+  const { session } = useAuth();
   const { productId, quantity: quantityParam, startDate: startParam, endDate: endParam } =
     useLocalSearchParams<{
       productId?: string;
@@ -59,8 +200,22 @@ export default function CartScreen() {
     return Number.isNaN(parsed) || parsed <= 0 ? 1 : parsed;
   }, [quantityParam]);
 
-  const startDate = typeof startParam === 'string' ? startParam : new Date().toISOString().split('T')[0];
-  const endDate = typeof endParam === 'string' ? endParam : startDate;
+  const today = clampToStartOfDay(new Date());
+  const initialStartDate = parseDateParam(startParam, today);
+  const initialEndFallback = addDays(initialStartDate, 1);
+  const initialEndDate = parseDateParam(endParam, initialEndFallback);
+
+  const [startDate, setStartDate] = useState<Date>(initialStartDate);
+  const [endDate, setEndDate] = useState<Date>(
+    initialEndDate.getTime() <= initialStartDate.getTime() ? initialEndFallback : initialEndDate
+  );
+  const [shippingAddress, setShippingAddress] = useState('');
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const minimumStartDate = today;
+  const minimumEndDate = useMemo(() => addDays(startDate, 1), [startDate]);
+  const isRangeInvalid = endDate.getTime() <= startDate.getTime();
 
   if (!product) {
     return (
@@ -84,18 +239,91 @@ export default function CartScreen() {
   const productLabel = product.model || product.name;
   const deviceLabel = `${quantity} ${quantity === 1 ? 'device' : 'devices'}`;
   const rentalRangeLabel =
-    startDate === endDate
+    endDate.getTime() === startDate.getTime()
       ? formatDisplayDate(startDate)
       : `${formatDisplayDate(startDate)} - ${formatDisplayDate(endDate)}`;
 
-  const handleCheckout = () => {
-    router.push({
-      pathname: '/(app)/checkout',
-      params: {
-        productId: product.id,
-        quantity: String(quantity),
-      },
-    });
+  const handleStartDateChange = (nextDate: Date) => {
+    const normalized = clampToStartOfDay(nextDate);
+    setStartDate(normalized);
+    setEndDate((current) => (current.getTime() <= normalized.getTime() ? addDays(normalized, 1) : current));
+  };
+
+  const handleEndDateChange = (nextDate: Date) => {
+    const normalized = clampToStartOfDay(nextDate);
+    if (normalized.getTime() <= startDate.getTime()) {
+      setEndDate(addDays(startDate, 1));
+      return;
+    }
+
+    setEndDate(normalized);
+  };
+
+  const isCheckoutDisabled =
+    !shippingAddress.trim() ||
+    isRangeInvalid ||
+    isSubmitting ||
+    !Number.isFinite(Number.parseInt(product.id, 10));
+
+  const handleCheckout = async () => {
+    if (isCheckoutDisabled) {
+      return;
+    }
+
+    if (!session?.accessToken) {
+      Alert.alert('Authentication required', 'Please sign in again to complete your rental.');
+      return;
+    }
+
+    const deviceModelId = Number.parseInt(product.id, 10);
+
+    if (!Number.isFinite(deviceModelId)) {
+      setSubmitError('Unable to determine the selected device. Please try again.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setSubmitError(null);
+
+    try {
+      await createRentalOrder(
+        {
+          startDate: startDate.toISOString(),
+          endDate: endDate.toISOString(),
+          shippingAddress: shippingAddress.trim(),
+          orderDetails: [
+            {
+              quantity,
+              deviceModelId,
+            },
+          ],
+        },
+        {
+          accessToken: session.accessToken,
+          tokenType: session.tokenType,
+        }
+      );
+
+      Alert.alert(
+        'Rental order created',
+        "Your rental order was submitted successfully. We'll keep you posted with updates.",
+        [
+          {
+            text: 'OK',
+            onPress: () =>
+              router.replace({
+                pathname: '/(app)/(tabs)/home',
+              }),
+          },
+        ]
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unable to create the rental order. Please try again.';
+      setSubmitError(message);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -135,7 +363,7 @@ export default function CartScreen() {
         <View style={styles.orderCard}>
           <View style={styles.orderHeader}>
             <View>
-              <Text style={styles.orderTitle}>Order #001</Text>
+              <Text style={styles.orderTitle}>Rental Summary</Text>
               <Text style={styles.orderSubtitle}>{rentalRangeLabel}</Text>
             </View>
             <Ionicons name="trash-outline" size={20} color="#9c9c9c" />
@@ -152,14 +380,57 @@ export default function CartScreen() {
             <Text style={styles.productPrice}>{formattedTotal}</Text>
           </View>
         </View>
+
+        <View style={styles.formCard}>
+          <Text style={styles.formLabel}>Shipping Address</Text>
+          <TextInput
+            style={styles.formInput}
+            placeholder="Enter the address where we should deliver the device"
+            placeholderTextColor="#9c9c9c"
+            value={shippingAddress}
+            onChangeText={setShippingAddress}
+            multiline
+          />
+        </View>
+
+        <View style={styles.formCard}>
+          <Text style={styles.formLabel}>Rental Dates</Text>
+          <View style={styles.dateRow}>
+            <View style={styles.dateColumn}>
+              <Text style={styles.dateLabel}>Start Date</Text>
+              <DateScrollPicker value={startDate} minimumDate={minimumStartDate} onChange={handleStartDateChange} />
+            </View>
+            <View style={styles.dateColumn}>
+              <Text style={styles.dateLabel}>End Date</Text>
+              <DateScrollPicker value={endDate} minimumDate={minimumEndDate} onChange={handleEndDateChange} />
+            </View>
+          </View>
+          {isRangeInvalid && (
+            <Text style={styles.dateErrorText}>End date must be at least one day after the start date.</Text>
+          )}
+        </View>
+
+        {submitError && (
+          <View style={styles.submitErrorBanner}>
+            <Text style={styles.submitErrorText}>{submitError}</Text>
+          </View>
+        )}
       </ScrollView>
 
       <View style={styles.footerActions}>
         <TouchableOpacity style={styles.cancelButton} onPress={() => router.back()}>
-          <Text style={styles.cancelText}>Cancel Order</Text>
+          <Text style={styles.cancelText}>Cancel</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.checkoutButton} onPress={handleCheckout}>
-          <Text style={styles.checkoutText}>Checkout</Text>
+        <TouchableOpacity
+          style={[styles.checkoutButton, (isCheckoutDisabled || isSubmitting) && styles.checkoutButtonDisabled]}
+          onPress={handleCheckout}
+          disabled={isCheckoutDisabled || isSubmitting}
+        >
+          {isSubmitting ? (
+            <ActivityIndicator color="#ffffff" />
+          ) : (
+            <Text style={styles.checkoutText}>Place Rental Order</Text>
+          )}
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -240,7 +511,7 @@ const styles = StyleSheet.create({
   },
   summaryLabel: {
     color: '#6f6f6f',
-    fontSize: 14,
+    fontSize: 13,
   },
   summaryValue: {
     fontSize: 18,
@@ -253,7 +524,7 @@ const styles = StyleSheet.create({
   },
   summaryAmount: {
     fontSize: 18,
-    fontWeight: '700',
+    fontWeight: '600',
     color: '#111111',
     marginTop: 4,
   },
@@ -261,7 +532,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     borderWidth: 1,
     borderColor: '#ededed',
-    padding: 20,
+    padding: 18,
     backgroundColor: '#ffffff',
     gap: 20,
   },
@@ -276,18 +547,19 @@ const styles = StyleSheet.create({
     color: '#111111',
   },
   orderSubtitle: {
-    color: '#6f6f6f',
     marginTop: 4,
+    color: '#6f6f6f',
+    fontSize: 13,
   },
   orderBody: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 16,
+    gap: 12,
   },
   productBadge: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    width: 48,
+    height: 48,
+    borderRadius: 16,
     backgroundColor: '#f4f4f4',
     alignItems: 'center',
     justifyContent: 'center',
@@ -302,42 +574,140 @@ const styles = StyleSheet.create({
   },
   productMeta: {
     color: '#6f6f6f',
-    marginTop: 4,
+    marginTop: 2,
   },
   productPrice: {
+    fontWeight: '600',
+    color: '#111111',
+  },
+  formCard: {
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#ededed',
+    padding: 18,
+    backgroundColor: '#ffffff',
+    gap: 16,
+  },
+  formLabel: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#111111',
+  },
+  formInput: {
+    borderWidth: 1,
+    borderColor: '#d9d9d9',
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 15,
+    color: '#111111',
+    backgroundColor: '#ffffff',
+    minHeight: 72,
+    textAlignVertical: 'top',
+  },
+  dateRow: {
+    flexDirection: 'row',
+    gap: 16,
+  },
+  dateColumn: {
+    flex: 1,
+    gap: 8,
+  },
+  dateLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111111',
+  },
+  dateErrorText: {
+    color: '#c53030',
+    fontSize: 13,
+  },
+  dateScrollPickerContainer: {
+    width: '100%',
+    height: DATE_SCROLL_ITEM_HEIGHT * DATE_SCROLL_VISIBLE_ROWS,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#e5e5e5',
+    backgroundColor: '#fafafa',
+  },
+  dateScrollContent: {
+    paddingVertical: (DATE_SCROLL_ITEM_HEIGHT * DATE_SCROLL_VISIBLE_ROWS - DATE_SCROLL_ITEM_HEIGHT) / 2,
+  },
+  dateScrollItem: {
+    height: DATE_SCROLL_ITEM_HEIGHT,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dateScrollItemSelected: {
+    backgroundColor: '#ffffff',
+  },
+  dateScrollText: {
+    fontSize: 15,
+    color: '#6f6f6f',
+  },
+  dateScrollTextSelected: {
     fontSize: 16,
     fontWeight: '600',
     color: '#111111',
+  },
+  dateScrollHighlight: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: (DATE_SCROLL_ITEM_HEIGHT * DATE_SCROLL_VISIBLE_ROWS - DATE_SCROLL_ITEM_HEIGHT) / 2,
+    height: DATE_SCROLL_ITEM_HEIGHT,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: '#d4d4d4',
+  },
+  submitErrorBanner: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#f5c2c2',
+    backgroundColor: '#fff5f5',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  submitErrorText: {
+    color: '#c53030',
+    fontSize: 14,
   },
   footerActions: {
     flexDirection: 'row',
-    gap: 12,
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 20,
-    paddingBottom: 24,
+    paddingVertical: 16,
+    gap: 12,
   },
   cancelButton: {
     flex: 1,
-    borderWidth: 1,
-    borderColor: '#111111',
     borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#d9d9d9',
+    paddingVertical: 14,
     alignItems: 'center',
-    paddingVertical: 16,
+    justifyContent: 'center',
   },
   cancelText: {
-    fontSize: 16,
-    fontWeight: '600',
     color: '#111111',
+    fontSize: 15,
+    fontWeight: '600',
   },
   checkoutButton: {
-    flex: 1,
+    flex: 2,
     borderRadius: 14,
     backgroundColor: '#111111',
-    alignItems: 'center',
     paddingVertical: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkoutButtonDisabled: {
+    opacity: 0.5,
   },
   checkoutText: {
+    color: '#ffffff',
     fontSize: 16,
     fontWeight: '600',
-    color: '#ffffff',
   },
 });
