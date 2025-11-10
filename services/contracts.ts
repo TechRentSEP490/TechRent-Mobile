@@ -196,3 +196,13 @@ export async function signContract(
 
   return json;
 }
+
+export const contractsService = {
+  fetchContracts,
+  fetchContractForOrder,
+  fetchContractById,
+  sendContractPin,
+  signContract,
+};
+
+export default contractsService;
