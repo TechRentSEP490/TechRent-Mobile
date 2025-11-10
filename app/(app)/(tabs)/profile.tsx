@@ -132,55 +132,30 @@ export default function ProfileScreen() {
 
     if (VERIFIED_KYC_STATUSES.has(normalizedStatus)) {
       return {
-        icon: 'shield-checkmark' as const,
-        iconColor: '#16a34a',
-        backgroundColor: '#dcfce7',
-        title: 'KYC Verified',
-        statusLabel: friendlyStatus,
-        description: 'Your identity has been verified. You are ready to create rental orders.',
-        actionLabel: undefined,
+        description: `Status: ${friendlyStatus}. Your identity has been verified and you are ready to create rental orders.`,
+        buttonLabel: 'View KYC',
+        buttonDisabled: true,
       };
     }
 
     if (REJECTED_KYC_STATUSES.has(normalizedStatus)) {
       return {
-        icon: 'alert-circle-outline' as const,
-        iconColor: '#dc2626',
-        backgroundColor: '#fee2e2',
-        title: 'KYC Needs Attention',
-        statusLabel: friendlyStatus,
-        description: 'We could not verify your documents. Please review your information and resubmit.',
-        actionLabel: 'Resubmit KYC',
-        actionColor: '#dc2626',
-        actionTextColor: '#ffffff',
+        description: `Status: ${friendlyStatus}. We could not verify your documents. Please review your information and resubmit.`,
+        buttonLabel: 'Resubmit KYC',
       };
     }
 
     if (PENDING_KYC_STATUSES.has(normalizedStatus)) {
       return {
-        icon: 'time-outline' as const,
-        iconColor: '#f97316',
-        backgroundColor: '#fff7ed',
-        title: 'KYC Under Review',
-        statusLabel: friendlyStatus,
-        description: 'Thank you! Your documents are under review. We will notify you once verification is complete.',
-        actionLabel: 'Refresh Status',
-        actionDisabled: true,
-        actionColor: '#f1f5f9',
-        actionTextColor: '#64748b',
+        description: `Status: ${friendlyStatus}. Thank you! Your documents are under review. We will notify you once verification is complete.`,
+        buttonLabel: 'Refresh Status',
+        buttonDisabled: true,
       };
     }
 
     return {
-      icon: 'shield-outline' as const,
-      iconColor: '#f59e0b',
-      backgroundColor: '#fff7ed',
-      title: 'Complete your KYC',
-      statusLabel: friendlyStatus,
-      description: 'Finish identity verification to unlock all rental features and faster approvals.',
-      actionLabel: 'Start KYC',
-      actionColor: '#f59e0b',
-      actionTextColor: '#111111',
+      description: `Status: ${friendlyStatus}. Complete identity verification to unlock all rental features and faster approvals.`,
+      buttonLabel: 'Complete KYC',
     };
   }, [user]);
 
@@ -346,40 +321,22 @@ export default function ProfileScreen() {
         </View>
 
         {kycReminder && (
-          <View style={[styles.kycCard, { backgroundColor: kycReminder.backgroundColor }]}>
+          <View style={styles.kycCard}>
             <View style={styles.kycHeader}>
-              <Ionicons name={kycReminder.icon} size={24} color={kycReminder.iconColor} />
-              <View style={styles.kycTitleGroup}>
-                <Text style={styles.kycTitle}>KYC Reminder</Text>
-                <Text style={styles.kycStatusLabel}>{kycReminder.statusLabel}</Text>
-              </View>
+              <Ionicons name="shield-checkmark-outline" size={24} color="#f6a609" />
+              <Text style={styles.kycTitle}>KYC Reminder</Text>
             </View>
-            <Text style={styles.kycHeadline}>{kycReminder.title}</Text>
             <Text style={styles.kycDescription}>{kycReminder.description}</Text>
-            {kycReminder.actionLabel ? (
+            {kycReminder.buttonLabel ? (
               <TouchableOpacity
                 style={[
                   styles.kycButton,
-                  {
-                    backgroundColor: kycReminder.actionColor ?? '#111111',
-                  },
-                  kycReminder.actionDisabled && styles.kycButtonDisabled,
+                  kycReminder.buttonDisabled && styles.kycButtonDisabled,
                 ]}
                 onPress={() => router.push('/(app)/kyc-documents')}
-                disabled={kycReminder.actionDisabled}
+                disabled={kycReminder.buttonDisabled}
               >
-                <Text
-                  style={[
-                    styles.kycButtonText,
-                    {
-                      color: kycReminder.actionDisabled
-                        ? '#6b7280'
-                        : kycReminder.actionTextColor ?? '#111111',
-                    },
-                  ]}
-                >
-                  {kycReminder.actionLabel}
-                </Text>
+                <Text style={styles.kycButtonText}>{kycReminder.buttonLabel}</Text>
               </TouchableOpacity>
             ) : null}
           </View>
@@ -614,24 +571,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
   },
-  kycTitleGroup: {
-    flex: 1,
-    gap: 2,
-  },
   kycTitle: {
     fontSize: 16,
-    fontWeight: '700',
-    color: '#111111',
-  },
-  kycStatusLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#4b5563',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  kycHeadline: {
-    fontSize: 15,
     fontWeight: '700',
     color: '#111111',
   },
