@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
-import * as TextExtractor from 'expo-text-extractor';
+import TextRecognition, { type TextRecognitionResult } from '@react-native-ml-kit/text-recognition';
 import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import {
@@ -60,49 +60,17 @@ const documentCopy: Record<DocumentType, { title: string; description: string }>
   },
 };
 
-type TextExtractorFunction = (uri: string, options?: Record<string, unknown>) => Promise<unknown>;
-
-const scanDocumentForText = async (uri: string): Promise<unknown> => {
-  const moduleEntries = Object.entries(TextExtractor ?? {})
-    .map(([name, fn]) => ({ name, fn }))
-    .filter(({ fn }) => typeof fn === 'function')
-    .filter(({ name }) => /extract|recognize|scan/i.test(name));
-
-  const defaultExport = (TextExtractor as { default?: unknown }).default;
-  if (typeof defaultExport === 'function') {
-    moduleEntries.unshift({ name: 'default', fn: defaultExport });
-  }
-
-  if (moduleEntries.length === 0) {
-    throw new Error('Text extractor module does not expose a usable method.');
-  }
+const scanDocumentForText = async (uri: string): Promise<TextRecognitionResult> => {
+  const candidates = uri.startsWith('file://') ? [uri, uri.replace(/^file:\/\//, '')] : [uri];
 
   let lastError: unknown;
 
-  for (const { fn, name } of moduleEntries) {
-    const extractor = fn as TextExtractorFunction;
-
+  for (const candidate of candidates) {
     try {
-      return await extractor(uri, { shouldGroup: true });
+      return await TextRecognition.recognize(candidate);
     } catch (error) {
       lastError = error;
-
-      if (error instanceof TypeError || error instanceof RangeError) {
-        try {
-          return await extractor(uri);
-        } catch (fallbackError) {
-          lastError = fallbackError;
-        }
-
-        const acceptsObjectArg = extractor as unknown as (input: unknown) => Promise<unknown>;
-        try {
-          return await acceptsObjectArg({ uri });
-        } catch (objectArgError) {
-          lastError = objectArgError;
-        }
-      }
-
-      console.warn(`Text extraction failed using ${name}`, error);
+      console.warn('Text recognition failed for candidate URI', candidate, error);
     }
   }
 
@@ -293,9 +261,7 @@ export default function KycDocumentsScreen() {
 
       try {
         const detectionResult = await scanDocumentForText(asset.uri);
-        const detectedText = extractTextFromResult(
-          (detectionResult as { blocks?: unknown })?.blocks ?? detectionResult,
-        );
+        const detectedText = extractTextFromResult(detectionResult);
 
         setOcrState((prev) => {
           const nextState: OcrStateMap = {
