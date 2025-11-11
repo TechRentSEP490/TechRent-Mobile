@@ -5,8 +5,6 @@ import {
   FlatList,
   Image,
   Modal,
-  NativeScrollEvent,
-  NativeSyntheticEvent,
   ScrollView,
   StyleSheet,
   Text,
@@ -15,8 +13,10 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import Toast from 'react-native-toast-message';
 import { products, type ProductDetail } from '../../constants/products';
 import { useAuth } from '@/contexts/AuthContext';
+import { useCart } from '@/contexts/CartContext';
 import { useDeviceModel } from '@/hooks/use-device-model';
 
 type NormalizedSpecEntry = {
@@ -215,6 +215,7 @@ export default function ProductDetailsScreen() {
   const [authPromptMode, setAuthPromptMode] = useState<'rent' | 'cart' | null>(null);
   const router = useRouter();
   const { isSignedIn, isHydrating, session } = useAuth();
+  const { addItem } = useCart();
   const { productId: productIdParam, deviceModelId } = useLocalSearchParams<{
     productId?: string;
     deviceModelId?: string;
@@ -352,16 +353,24 @@ export default function ProductDetailsScreen() {
       return;
     }
 
-    const destinationProductId = product.id;
+    if (rentMode === 'cart') {
+      addItem(product, quantity);
+      closeRentModal();
+      const isMultiple = quantity > 1;
+      Toast.show({
+        type: 'success',
+        text1: 'Added to cart',
+        text2: isMultiple
+          ? `${quantity} units of ${product.name} are now in your cart.`
+          : `${product.name} is now in your cart.`,
+      });
+      return;
+    }
 
+    addItem(product, quantity, { replace: true });
     closeRentModal();
     router.push({
       pathname: '/(app)/cart',
-      params: {
-        productId: destinationProductId,
-        quantity: String(quantity),
-        mode: rentMode,
-      },
     });
   };
 
