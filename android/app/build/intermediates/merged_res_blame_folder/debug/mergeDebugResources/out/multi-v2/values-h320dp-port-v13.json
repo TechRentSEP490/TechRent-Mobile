@@ -1,0 +1,19 @@
+{
+    "logs": [
+        {
+            "outputFile": "com.genchio.TechRentMobile.app-mergeDebugResources-64:/values-h320dp-port-v13/values-h320dp-port-v13.xml",
+            "map": [
+                {
+                    "source": "C:\\Users\\Hyun\\.gradle\\caches\\8.14.3\\transforms\\41d420f11177fe72d723cc1c547d75cb\\transformed\\material-1.12.0\\res\\values-h320dp-port-v13\\values-h320dp-port-v13.xml",
+                    "from": {
+                        "startLines": "2",
+                        "startColumns": "4",
+                        "startOffsets": "55",
+                        "endColumns": "63",
+                        "endOffsets": "114"
+                    }
+                }
+            ]
+        }
+    ]
+}

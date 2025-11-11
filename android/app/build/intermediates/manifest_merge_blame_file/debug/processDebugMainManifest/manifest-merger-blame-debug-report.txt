@@ -1,0 +1,483 @@
+1<?xml version="1.0" encoding="utf-8"?>
+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+3    package="com.genchio.TechRentMobile"
+4    android:versionCode="1"
+5    android:versionName="1.0.0" >
+6
+7    <uses-sdk
+8        android:minSdkVersion="24"
+9        android:targetSdkVersion="36" />
+10
+11    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+11-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:5:3-75
+11-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:5:20-73
+12    <uses-permission android:name="android.permission.INTERNET" />
+12-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:2:3-64
+12-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:2:20-62
+13    <uses-permission
+13-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:3:3-77
+14        android:name="android.permission.READ_EXTERNAL_STORAGE"
+14-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:3:20-75
+15        android:maxSdkVersion="32" />
+15-->[BareExpo:expo.modules.image:3.0.10] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\88581ebdcaf3737f159267271e2a5a33\transformed\expo.modules.image-3.0.10\AndroidManifest.xml:17:9-35
+16    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+16-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:4:3-68
+16-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:4:20-66
+17    <uses-permission android:name="android.permission.VIBRATE" />
+17-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:6:3-63
+17-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:6:20-61
+18    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+18-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:7:3-78
+18-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:7:20-76
+19
+20    <queries>
+20-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:8:3-14:13
+21        <intent>
+21-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:9:5-13:14
+22            <action android:name="android.intent.action.VIEW" />
+22-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:10:7-58
+22-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:10:15-56
+23
+24            <category android:name="android.intent.category.BROWSABLE" />
+24-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:11:7-67
+24-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:11:17-65
+25
+26            <data android:scheme="https" />
+26-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:12:7-37
+26-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:12:13-35
+27        </intent>
+28        <!-- Query open documents -->
+29        <intent>
+29-->[host.exp.exponent:expo.modules.filesystem:19.0.17] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\c73a388dca1f3de84a64fcadf7718e07\transformed\expo.modules.filesystem-19.0.17\AndroidManifest.xml:15:9-17:18
+30            <action android:name="android.intent.action.OPEN_DOCUMENT_TREE" />
+30-->[host.exp.exponent:expo.modules.filesystem:19.0.17] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\c73a388dca1f3de84a64fcadf7718e07\transformed\expo.modules.filesystem-19.0.17\AndroidManifest.xml:16:13-79
+30-->[host.exp.exponent:expo.modules.filesystem:19.0.17] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\c73a388dca1f3de84a64fcadf7718e07\transformed\expo.modules.filesystem-19.0.17\AndroidManifest.xml:16:21-76
+31        </intent>
+32        <intent>
+32-->[host.exp.exponent:expo.modules.imagepicker:17.0.8] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\83319ca2c23cc197c27f3f3c82215f5e\transformed\expo.modules.imagepicker-17.0.8\AndroidManifest.xml:15:9-19:18
+33
+34            <!-- Required for picking images from the camera roll if targeting API 30 -->
+35            <action android:name="android.media.action.IMAGE_CAPTURE" />
+35-->[host.exp.exponent:expo.modules.imagepicker:17.0.8] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\83319ca2c23cc197c27f3f3c82215f5e\transformed\expo.modules.imagepicker-17.0.8\AndroidManifest.xml:18:13-73
+35-->[host.exp.exponent:expo.modules.imagepicker:17.0.8] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\83319ca2c23cc197c27f3f3c82215f5e\transformed\expo.modules.imagepicker-17.0.8\AndroidManifest.xml:18:21-70
+36        </intent>
+37        <intent>
+37-->[host.exp.exponent:expo.modules.imagepicker:17.0.8] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\83319ca2c23cc197c27f3f3c82215f5e\transformed\expo.modules.imagepicker-17.0.8\AndroidManifest.xml:20:9-24:18
+38
+39            <!-- Required for picking images from the camera if targeting API 30 -->
+40            <action android:name="android.media.action.ACTION_VIDEO_CAPTURE" />
+40-->[host.exp.exponent:expo.modules.imagepicker:17.0.8] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\83319ca2c23cc197c27f3f3c82215f5e\transformed\expo.modules.imagepicker-17.0.8\AndroidManifest.xml:23:13-80
+40-->[host.exp.exponent:expo.modules.imagepicker:17.0.8] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\83319ca2c23cc197c27f3f3c82215f5e\transformed\expo.modules.imagepicker-17.0.8\AndroidManifest.xml:23:21-77
+41        </intent>
+42        <intent>
+42-->[host.exp.exponent:expo.modules.webbrowser:15.0.9] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\a6fd8403e98eda2e408b91f4eb993629\transformed\expo.modules.webbrowser-15.0.9\AndroidManifest.xml:8:9-12:18
+43
+44            <!-- Required for opening tabs if targeting API 30 -->
+45            <action android:name="android.support.customtabs.action.CustomTabsService" />
+45-->[host.exp.exponent:expo.modules.webbrowser:15.0.9] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\a6fd8403e98eda2e408b91f4eb993629\transformed\expo.modules.webbrowser-15.0.9\AndroidManifest.xml:11:13-90
+45-->[host.exp.exponent:expo.modules.webbrowser:15.0.9] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\a6fd8403e98eda2e408b91f4eb993629\transformed\expo.modules.webbrowser-15.0.9\AndroidManifest.xml:11:21-87
+46        </intent>
+47        <intent>
+47-->[com.vanniktech:android-image-cropper:4.6.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\07be8b25de477fa0b6dccf83f6ebb0b7\transformed\android-image-cropper-4.6.0\AndroidManifest.xml:8:9-14:18
+48            <action android:name="android.intent.action.GET_CONTENT" />
+48-->[com.vanniktech:android-image-cropper:4.6.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\07be8b25de477fa0b6dccf83f6ebb0b7\transformed\android-image-cropper-4.6.0\AndroidManifest.xml:9:13-72
+48-->[com.vanniktech:android-image-cropper:4.6.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\07be8b25de477fa0b6dccf83f6ebb0b7\transformed\android-image-cropper-4.6.0\AndroidManifest.xml:9:21-69
+49
+50            <category android:name="android.intent.category.OPENABLE" />
+50-->[com.vanniktech:android-image-cropper:4.6.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\07be8b25de477fa0b6dccf83f6ebb0b7\transformed\android-image-cropper-4.6.0\AndroidManifest.xml:11:13-73
+50-->[com.vanniktech:android-image-cropper:4.6.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\07be8b25de477fa0b6dccf83f6ebb0b7\transformed\android-image-cropper-4.6.0\AndroidManifest.xml:11:23-70
+51
+52            <data android:mimeType="*/*" />
+52-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:12:7-37
+53        </intent>
+54    </queries>
+55    <!--
+56  Allows Glide to monitor connectivity status and restart failed requests if users go from a
+57  a disconnected to a connected network state.
+58    -->
+59    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" /> <!-- Required for picking images from camera directly -->
+59-->[BareExpo:expo.modules.image:3.0.10] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\88581ebdcaf3737f159267271e2a5a33\transformed\expo.modules.image-3.0.10\AndroidManifest.xml:12:5-79
+59-->[BareExpo:expo.modules.image:3.0.10] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\88581ebdcaf3737f159267271e2a5a33\transformed\expo.modules.image-3.0.10\AndroidManifest.xml:12:22-76
+60    <uses-permission android:name="android.permission.CAMERA" />
+60-->[host.exp.exponent:expo.modules.imagepicker:17.0.8] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\83319ca2c23cc197c27f3f3c82215f5e\transformed\expo.modules.imagepicker-17.0.8\AndroidManifest.xml:8:5-65
+60-->[host.exp.exponent:expo.modules.imagepicker:17.0.8] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\83319ca2c23cc197c27f3f3c82215f5e\transformed\expo.modules.imagepicker-17.0.8\AndroidManifest.xml:8:22-62
+61    <uses-permission android:name="android.permission.USE_BIOMETRIC" /> <!-- suppress DeprecatedClassUsageInspection -->
+61-->[androidx.biometric:biometric:1.1.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\9ea5d70ff5a6376273d1c0f3d1f03bcd\transformed\biometric-1.1.0\AndroidManifest.xml:24:5-72
+61-->[androidx.biometric:biometric:1.1.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\9ea5d70ff5a6376273d1c0f3d1f03bcd\transformed\biometric-1.1.0\AndroidManifest.xml:24:22-69
+62    <uses-permission android:name="android.permission.USE_FINGERPRINT" />
+62-->[androidx.biometric:biometric:1.1.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\9ea5d70ff5a6376273d1c0f3d1f03bcd\transformed\biometric-1.1.0\AndroidManifest.xml:27:5-74
+62-->[androidx.biometric:biometric:1.1.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\9ea5d70ff5a6376273d1c0f3d1f03bcd\transformed\biometric-1.1.0\AndroidManifest.xml:27:22-71
+63
+64    <permission
+64-->[androidx.core:core:1.16.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\4c976aa5ac91a2b799611f6cd6245e34\transformed\core-1.16.0\AndroidManifest.xml:22:5-24:47
+65        android:name="com.genchio.TechRentMobile.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+65-->[androidx.core:core:1.16.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\4c976aa5ac91a2b799611f6cd6245e34\transformed\core-1.16.0\AndroidManifest.xml:23:9-81
+66        android:protectionLevel="signature" />
+66-->[androidx.core:core:1.16.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\4c976aa5ac91a2b799611f6cd6245e34\transformed\core-1.16.0\AndroidManifest.xml:24:9-44
+67
+68    <uses-permission android:name="com.genchio.TechRentMobile.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
+68-->[androidx.core:core:1.16.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\4c976aa5ac91a2b799611f6cd6245e34\transformed\core-1.16.0\AndroidManifest.xml:26:5-97
+68-->[androidx.core:core:1.16.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\4c976aa5ac91a2b799611f6cd6245e34\transformed\core-1.16.0\AndroidManifest.xml:26:22-94
+69
+70    <application
+70-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:15:3-31:17
+71        android:name="com.genchio.TechRentMobile.MainApplication"
+71-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:15:16-47
+72        android:allowBackup="true"
+72-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:15:162-188
+73        android:appComponentFactory="androidx.core.app.CoreComponentFactory"
+73-->[androidx.core:core:1.16.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\4c976aa5ac91a2b799611f6cd6245e34\transformed\core-1.16.0\AndroidManifest.xml:28:18-86
+74        android:dataExtractionRules="@xml/secure_store_data_extraction_rules"
+74-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:15:351-420
+75        android:debuggable="true"
+76        android:enableOnBackInvokedCallback="false"
+76-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:15:248-291
+77        android:extractNativeLibs="false"
+78        android:fullBackupContent="@xml/secure_store_backup_rules"
+78-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:15:292-350
+79        android:icon="@mipmap/ic_launcher"
+79-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:15:81-115
+80        android:label="@string/app_name"
+80-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:15:48-80
+81        android:roundIcon="@mipmap/ic_launcher_round"
+81-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:15:116-161
+82        android:supportsRtl="true"
+82-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:15:221-247
+83        android:theme="@style/AppTheme"
+83-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:15:189-220
+84        android:usesCleartextTraffic="true" >
+84-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\debug\AndroidManifest.xml:6:18-53
+85        <meta-data
+85-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:16:5-83
+86            android:name="expo.modules.updates.ENABLED"
+86-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:16:16-59
+87            android:value="false" />
+87-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:16:60-81
+88        <meta-data
+88-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:17:5-105
+89            android:name="expo.modules.updates.EXPO_UPDATES_CHECK_ON_LAUNCH"
+89-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:17:16-80
+90            android:value="ALWAYS" />
+90-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:17:81-103
+91        <meta-data
+91-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:18:5-99
+92            android:name="expo.modules.updates.EXPO_UPDATES_LAUNCH_WAIT_MS"
+92-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:18:16-79
+93            android:value="0" />
+93-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:18:80-97
+94
+95        <activity
+95-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:19:5-30:16
+96            android:name="com.genchio.TechRentMobile.MainActivity"
+96-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:19:15-43
+97            android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|uiMode"
+97-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:19:44-134
+98            android:exported="true"
+98-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:19:256-279
+99            android:launchMode="singleTask"
+99-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:19:135-166
+100            android:screenOrientation="portrait"
+100-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:19:280-316
+101            android:theme="@style/Theme.App.SplashScreen"
+101-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:19:210-255
+102            android:windowSoftInputMode="adjustResize" >
+102-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:19:167-209
+103            <intent-filter>
+103-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:20:7-23:23
+104                <action android:name="android.intent.action.MAIN" />
+104-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:21:9-60
+104-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:21:17-58
+105
+106                <category android:name="android.intent.category.LAUNCHER" />
+106-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:22:9-68
+106-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:22:19-66
+107            </intent-filter>
+108            <intent-filter>
+108-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:24:7-29:23
+109                <action android:name="android.intent.action.VIEW" />
+109-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:10:7-58
+109-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:10:15-56
+110
+111                <category android:name="android.intent.category.DEFAULT" />
+111-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:26:9-67
+111-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:26:19-65
+112                <category android:name="android.intent.category.BROWSABLE" />
+112-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:11:7-67
+112-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:11:17-65
+113
+114                <data android:scheme="techrentmobile" />
+114-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:12:7-37
+114-->C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\android\app\src\main\AndroidManifest.xml:12:13-35
+115            </intent-filter>
+116        </activity>
+117
+118        <meta-data
+118-->[:expo-modules-core] C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\node_modules\expo-modules-core\android\build\intermediates\merged_manifest\debug\processDebugManifest\AndroidManifest.xml:9:9-11:89
+119            android:name="org.unimodules.core.AppLoader#react-native-headless"
+119-->[:expo-modules-core] C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\node_modules\expo-modules-core\android\build\intermediates\merged_manifest\debug\processDebugManifest\AndroidManifest.xml:10:13-79
+120            android:value="expo.modules.adapters.react.apploader.RNHeadlessAppLoader" />
+120-->[:expo-modules-core] C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\node_modules\expo-modules-core\android\build\intermediates\merged_manifest\debug\processDebugManifest\AndroidManifest.xml:11:13-86
+121        <meta-data
+121-->[:expo-modules-core] C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\node_modules\expo-modules-core\android\build\intermediates\merged_manifest\debug\processDebugManifest\AndroidManifest.xml:12:9-15:45
+122            android:name="com.facebook.soloader.enabled"
+122-->[:expo-modules-core] C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\node_modules\expo-modules-core\android\build\intermediates\merged_manifest\debug\processDebugManifest\AndroidManifest.xml:13:13-57
+123            android:value="true" />
+123-->[:expo-modules-core] C:\Users\Hyun\Documents\tempcode\TechRent-Mobile\node_modules\expo-modules-core\android\build\intermediates\merged_manifest\debug\processDebugManifest\AndroidManifest.xml:14:13-33
+124
+125        <activity
+125-->[com.facebook.react:react-android:0.81.5] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\8bca444e06763d64457172ec6b80f8aa\transformed\react-android-0.81.5-debug\AndroidManifest.xml:19:9-21:40
+126            android:name="com.facebook.react.devsupport.DevSettingsActivity"
+126-->[com.facebook.react:react-android:0.81.5] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\8bca444e06763d64457172ec6b80f8aa\transformed\react-android-0.81.5-debug\AndroidManifest.xml:20:13-77
+127            android:exported="false" />
+127-->[com.facebook.react:react-android:0.81.5] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\8bca444e06763d64457172ec6b80f8aa\transformed\react-android-0.81.5-debug\AndroidManifest.xml:21:13-37
+128
+129        <provider
+129-->[host.exp.exponent:expo.modules.filesystem:19.0.17] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\c73a388dca1f3de84a64fcadf7718e07\transformed\expo.modules.filesystem-19.0.17\AndroidManifest.xml:21:9-30:20
+130            android:name="expo.modules.filesystem.FileSystemFileProvider"
+130-->[host.exp.exponent:expo.modules.filesystem:19.0.17] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\c73a388dca1f3de84a64fcadf7718e07\transformed\expo.modules.filesystem-19.0.17\AndroidManifest.xml:22:13-74
+131            android:authorities="com.genchio.TechRentMobile.FileSystemFileProvider"
+131-->[host.exp.exponent:expo.modules.filesystem:19.0.17] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\c73a388dca1f3de84a64fcadf7718e07\transformed\expo.modules.filesystem-19.0.17\AndroidManifest.xml:23:13-74
+132            android:exported="false"
+132-->[host.exp.exponent:expo.modules.filesystem:19.0.17] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\c73a388dca1f3de84a64fcadf7718e07\transformed\expo.modules.filesystem-19.0.17\AndroidManifest.xml:24:13-37
+133            android:grantUriPermissions="true" >
+133-->[host.exp.exponent:expo.modules.filesystem:19.0.17] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\c73a388dca1f3de84a64fcadf7718e07\transformed\expo.modules.filesystem-19.0.17\AndroidManifest.xml:25:13-47
+134            <meta-data
+134-->[host.exp.exponent:expo.modules.filesystem:19.0.17] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\c73a388dca1f3de84a64fcadf7718e07\transformed\expo.modules.filesystem-19.0.17\AndroidManifest.xml:27:13-29:70
+135                android:name="android.support.FILE_PROVIDER_PATHS"
+135-->[host.exp.exponent:expo.modules.filesystem:19.0.17] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\c73a388dca1f3de84a64fcadf7718e07\transformed\expo.modules.filesystem-19.0.17\AndroidManifest.xml:28:17-67
+136                android:resource="@xml/file_system_provider_paths" />
+136-->[host.exp.exponent:expo.modules.filesystem:19.0.17] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\c73a388dca1f3de84a64fcadf7718e07\transformed\expo.modules.filesystem-19.0.17\AndroidManifest.xml:29:17-67
+137        </provider>
+138
+139        <service
+139-->[host.exp.exponent:expo.modules.imagepicker:17.0.8] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\83319ca2c23cc197c27f3f3c82215f5e\transformed\expo.modules.imagepicker-17.0.8\AndroidManifest.xml:28:9-40:19
+140            android:name="com.google.android.gms.metadata.ModuleDependencies"
+140-->[host.exp.exponent:expo.modules.imagepicker:17.0.8] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\83319ca2c23cc197c27f3f3c82215f5e\transformed\expo.modules.imagepicker-17.0.8\AndroidManifest.xml:29:13-78
+141            android:enabled="false"
+141-->[host.exp.exponent:expo.modules.imagepicker:17.0.8] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\83319ca2c23cc197c27f3f3c82215f5e\transformed\expo.modules.imagepicker-17.0.8\AndroidManifest.xml:30:13-36
+142            android:exported="false" >
+142-->[host.exp.exponent:expo.modules.imagepicker:17.0.8] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\83319ca2c23cc197c27f3f3c82215f5e\transformed\expo.modules.imagepicker-17.0.8\AndroidManifest.xml:31:13-37
+143            <intent-filter>
+143-->[host.exp.exponent:expo.modules.imagepicker:17.0.8] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\83319ca2c23cc197c27f3f3c82215f5e\transformed\expo.modules.imagepicker-17.0.8\AndroidManifest.xml:33:13-35:29
+144                <action android:name="com.google.android.gms.metadata.MODULE_DEPENDENCIES" />
+144-->[host.exp.exponent:expo.modules.imagepicker:17.0.8] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\83319ca2c23cc197c27f3f3c82215f5e\transformed\expo.modules.imagepicker-17.0.8\AndroidManifest.xml:34:17-94
+144-->[host.exp.exponent:expo.modules.imagepicker:17.0.8] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\83319ca2c23cc197c27f3f3c82215f5e\transformed\expo.modules.imagepicker-17.0.8\AndroidManifest.xml:34:25-91
+145            </intent-filter>
+146
+147            <meta-data
+147-->[host.exp.exponent:expo.modules.imagepicker:17.0.8] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\83319ca2c23cc197c27f3f3c82215f5e\transformed\expo.modules.imagepicker-17.0.8\AndroidManifest.xml:37:13-39:36
+148                android:name="photopicker_activity:0:required"
+148-->[host.exp.exponent:expo.modules.imagepicker:17.0.8] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\83319ca2c23cc197c27f3f3c82215f5e\transformed\expo.modules.imagepicker-17.0.8\AndroidManifest.xml:38:17-63
+149                android:value="" />
+149-->[host.exp.exponent:expo.modules.imagepicker:17.0.8] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\83319ca2c23cc197c27f3f3c82215f5e\transformed\expo.modules.imagepicker-17.0.8\AndroidManifest.xml:39:17-33
+150        </service>
+151
+152        <activity
+152-->[host.exp.exponent:expo.modules.imagepicker:17.0.8] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\83319ca2c23cc197c27f3f3c82215f5e\transformed\expo.modules.imagepicker-17.0.8\AndroidManifest.xml:42:9-46:48
+153            android:name="expo.modules.imagepicker.ExpoCropImageActivity"
+153-->[host.exp.exponent:expo.modules.imagepicker:17.0.8] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\83319ca2c23cc197c27f3f3c82215f5e\transformed\expo.modules.imagepicker-17.0.8\AndroidManifest.xml:43:13-74
+154            android:exported="false"
+154-->[host.exp.exponent:expo.modules.imagepicker:17.0.8] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\83319ca2c23cc197c27f3f3c82215f5e\transformed\expo.modules.imagepicker-17.0.8\AndroidManifest.xml:44:13-37
+155            android:theme="@style/Base.Theme.AppCompat" /> <!-- https://developer.android.com/guide/topics/manifest/provider-element.html -->
+155-->[host.exp.exponent:expo.modules.imagepicker:17.0.8] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\83319ca2c23cc197c27f3f3c82215f5e\transformed\expo.modules.imagepicker-17.0.8\AndroidManifest.xml:45:13-56
+156        <provider
+156-->[host.exp.exponent:expo.modules.imagepicker:17.0.8] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\83319ca2c23cc197c27f3f3c82215f5e\transformed\expo.modules.imagepicker-17.0.8\AndroidManifest.xml:48:9-56:20
+157            android:name="expo.modules.imagepicker.fileprovider.ImagePickerFileProvider"
+157-->[host.exp.exponent:expo.modules.imagepicker:17.0.8] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\83319ca2c23cc197c27f3f3c82215f5e\transformed\expo.modules.imagepicker-17.0.8\AndroidManifest.xml:49:13-89
+158            android:authorities="com.genchio.TechRentMobile.ImagePickerFileProvider"
+158-->[host.exp.exponent:expo.modules.imagepicker:17.0.8] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\83319ca2c23cc197c27f3f3c82215f5e\transformed\expo.modules.imagepicker-17.0.8\AndroidManifest.xml:50:13-75
+159            android:exported="false"
+159-->[host.exp.exponent:expo.modules.imagepicker:17.0.8] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\83319ca2c23cc197c27f3f3c82215f5e\transformed\expo.modules.imagepicker-17.0.8\AndroidManifest.xml:51:13-37
+160            android:grantUriPermissions="true" >
+160-->[host.exp.exponent:expo.modules.imagepicker:17.0.8] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\83319ca2c23cc197c27f3f3c82215f5e\transformed\expo.modules.imagepicker-17.0.8\AndroidManifest.xml:52:13-47
+161            <meta-data
+161-->[host.exp.exponent:expo.modules.filesystem:19.0.17] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\c73a388dca1f3de84a64fcadf7718e07\transformed\expo.modules.filesystem-19.0.17\AndroidManifest.xml:27:13-29:70
+162                android:name="android.support.FILE_PROVIDER_PATHS"
+162-->[host.exp.exponent:expo.modules.filesystem:19.0.17] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\c73a388dca1f3de84a64fcadf7718e07\transformed\expo.modules.filesystem-19.0.17\AndroidManifest.xml:28:17-67
+163                android:resource="@xml/image_picker_provider_paths" />
+163-->[host.exp.exponent:expo.modules.filesystem:19.0.17] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\c73a388dca1f3de84a64fcadf7718e07\transformed\expo.modules.filesystem-19.0.17\AndroidManifest.xml:29:17-67
+164        </provider>
+165
+166        <meta-data
+166-->[com.github.bumptech.glide:okhttp3-integration:4.11.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\37a0f287fec11b12f39c1af32da20d6c\transformed\okhttp3-integration-4.11.0\AndroidManifest.xml:11:9-13:43
+167            android:name="com.bumptech.glide.integration.okhttp3.OkHttpGlideModule"
+167-->[com.github.bumptech.glide:okhttp3-integration:4.11.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\37a0f287fec11b12f39c1af32da20d6c\transformed\okhttp3-integration-4.11.0\AndroidManifest.xml:12:13-84
+168            android:value="GlideModule" />
+168-->[com.github.bumptech.glide:okhttp3-integration:4.11.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\37a0f287fec11b12f39c1af32da20d6c\transformed\okhttp3-integration-4.11.0\AndroidManifest.xml:13:13-40
+169
+170        <service
+170-->[com.google.android.gms:play-services-mlkit-text-recognition-common:19.1.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\0f361fede27ea1fb2fb065f5ce30f070\transformed\play-services-mlkit-text-recognition-common-19.1.0\AndroidManifest.xml:9:9-15:19
+171            android:name="com.google.mlkit.common.internal.MlKitComponentDiscoveryService"
+171-->[com.google.android.gms:play-services-mlkit-text-recognition-common:19.1.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\0f361fede27ea1fb2fb065f5ce30f070\transformed\play-services-mlkit-text-recognition-common-19.1.0\AndroidManifest.xml:10:13-91
+172            android:directBootAware="true"
+172-->[com.google.mlkit:common:18.11.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\45204437a57a27621c1b2f02048421dd\transformed\common-18.11.0\AndroidManifest.xml:17:13-43
+173            android:exported="false" >
+173-->[com.google.android.gms:play-services-mlkit-text-recognition-common:19.1.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\0f361fede27ea1fb2fb065f5ce30f070\transformed\play-services-mlkit-text-recognition-common-19.1.0\AndroidManifest.xml:11:13-37
+174            <meta-data
+174-->[com.google.android.gms:play-services-mlkit-text-recognition-common:19.1.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\0f361fede27ea1fb2fb065f5ce30f070\transformed\play-services-mlkit-text-recognition-common-19.1.0\AndroidManifest.xml:12:13-14:85
+175                android:name="com.google.firebase.components:com.google.mlkit.vision.text.internal.TextRegistrar"
+175-->[com.google.android.gms:play-services-mlkit-text-recognition-common:19.1.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\0f361fede27ea1fb2fb065f5ce30f070\transformed\play-services-mlkit-text-recognition-common-19.1.0\AndroidManifest.xml:13:17-114
+176                android:value="com.google.firebase.components.ComponentRegistrar" />
+176-->[com.google.android.gms:play-services-mlkit-text-recognition-common:19.1.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\0f361fede27ea1fb2fb065f5ce30f070\transformed\play-services-mlkit-text-recognition-common-19.1.0\AndroidManifest.xml:14:17-82
+177            <meta-data
+177-->[com.google.mlkit:vision-common:17.3.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\52c9192a962e76deaaa0111ba69915a7\transformed\vision-common-17.3.0\AndroidManifest.xml:12:13-14:85
+178                android:name="com.google.firebase.components:com.google.mlkit.vision.common.internal.VisionCommonRegistrar"
+178-->[com.google.mlkit:vision-common:17.3.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\52c9192a962e76deaaa0111ba69915a7\transformed\vision-common-17.3.0\AndroidManifest.xml:13:17-124
+179                android:value="com.google.firebase.components.ComponentRegistrar" />
+179-->[com.google.mlkit:vision-common:17.3.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\52c9192a962e76deaaa0111ba69915a7\transformed\vision-common-17.3.0\AndroidManifest.xml:14:17-82
+180            <meta-data
+180-->[com.google.mlkit:common:18.11.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\45204437a57a27621c1b2f02048421dd\transformed\common-18.11.0\AndroidManifest.xml:20:13-22:85
+181                android:name="com.google.firebase.components:com.google.mlkit.common.internal.CommonComponentRegistrar"
+181-->[com.google.mlkit:common:18.11.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\45204437a57a27621c1b2f02048421dd\transformed\common-18.11.0\AndroidManifest.xml:21:17-120
+182                android:value="com.google.firebase.components.ComponentRegistrar" />
+182-->[com.google.mlkit:common:18.11.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\45204437a57a27621c1b2f02048421dd\transformed\common-18.11.0\AndroidManifest.xml:22:17-82
+183        </service>
+184
+185        <provider
+185-->[com.google.mlkit:common:18.11.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\45204437a57a27621c1b2f02048421dd\transformed\common-18.11.0\AndroidManifest.xml:9:9-13:38
+186            android:name="com.google.mlkit.common.internal.MlKitInitProvider"
+186-->[com.google.mlkit:common:18.11.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\45204437a57a27621c1b2f02048421dd\transformed\common-18.11.0\AndroidManifest.xml:10:13-78
+187            android:authorities="com.genchio.TechRentMobile.mlkitinitprovider"
+187-->[com.google.mlkit:common:18.11.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\45204437a57a27621c1b2f02048421dd\transformed\common-18.11.0\AndroidManifest.xml:11:13-69
+188            android:exported="false"
+188-->[com.google.mlkit:common:18.11.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\45204437a57a27621c1b2f02048421dd\transformed\common-18.11.0\AndroidManifest.xml:12:13-37
+189            android:initOrder="99" />
+189-->[com.google.mlkit:common:18.11.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\45204437a57a27621c1b2f02048421dd\transformed\common-18.11.0\AndroidManifest.xml:13:13-35
+190        <provider
+190-->[com.vanniktech:android-image-cropper:4.6.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\07be8b25de477fa0b6dccf83f6ebb0b7\transformed\android-image-cropper-4.6.0\AndroidManifest.xml:21:9-29:20
+191            android:name="com.canhub.cropper.CropFileProvider"
+191-->[com.vanniktech:android-image-cropper:4.6.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\07be8b25de477fa0b6dccf83f6ebb0b7\transformed\android-image-cropper-4.6.0\AndroidManifest.xml:22:13-63
+192            android:authorities="com.genchio.TechRentMobile.cropper.fileprovider"
+192-->[com.vanniktech:android-image-cropper:4.6.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\07be8b25de477fa0b6dccf83f6ebb0b7\transformed\android-image-cropper-4.6.0\AndroidManifest.xml:23:13-72
+193            android:exported="false"
+193-->[com.vanniktech:android-image-cropper:4.6.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\07be8b25de477fa0b6dccf83f6ebb0b7\transformed\android-image-cropper-4.6.0\AndroidManifest.xml:24:13-37
+194            android:grantUriPermissions="true" >
+194-->[com.vanniktech:android-image-cropper:4.6.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\07be8b25de477fa0b6dccf83f6ebb0b7\transformed\android-image-cropper-4.6.0\AndroidManifest.xml:25:13-47
+195            <meta-data
+195-->[host.exp.exponent:expo.modules.filesystem:19.0.17] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\c73a388dca1f3de84a64fcadf7718e07\transformed\expo.modules.filesystem-19.0.17\AndroidManifest.xml:27:13-29:70
+196                android:name="android.support.FILE_PROVIDER_PATHS"
+196-->[host.exp.exponent:expo.modules.filesystem:19.0.17] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\c73a388dca1f3de84a64fcadf7718e07\transformed\expo.modules.filesystem-19.0.17\AndroidManifest.xml:28:17-67
+197                android:resource="@xml/library_file_paths" />
+197-->[host.exp.exponent:expo.modules.filesystem:19.0.17] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\c73a388dca1f3de84a64fcadf7718e07\transformed\expo.modules.filesystem-19.0.17\AndroidManifest.xml:29:17-67
+198        </provider>
+199
+200        <activity
+200-->[com.vanniktech:android-image-cropper:4.6.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\07be8b25de477fa0b6dccf83f6ebb0b7\transformed\android-image-cropper-4.6.0\AndroidManifest.xml:31:9-33:39
+201            android:name="com.canhub.cropper.CropImageActivity"
+201-->[com.vanniktech:android-image-cropper:4.6.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\07be8b25de477fa0b6dccf83f6ebb0b7\transformed\android-image-cropper-4.6.0\AndroidManifest.xml:32:13-64
+202            android:exported="true" />
+202-->[com.vanniktech:android-image-cropper:4.6.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\07be8b25de477fa0b6dccf83f6ebb0b7\transformed\android-image-cropper-4.6.0\AndroidManifest.xml:33:13-36
+203        <activity
+203-->[com.google.android.gms:play-services-base:18.5.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\6a088742c96884b4a7e0dea03e05a54c\transformed\play-services-base-18.5.0\AndroidManifest.xml:5:9-173
+204            android:name="com.google.android.gms.common.api.GoogleApiActivity"
+204-->[com.google.android.gms:play-services-base:18.5.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\6a088742c96884b4a7e0dea03e05a54c\transformed\play-services-base-18.5.0\AndroidManifest.xml:5:19-85
+205            android:exported="false"
+205-->[com.google.android.gms:play-services-base:18.5.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\6a088742c96884b4a7e0dea03e05a54c\transformed\play-services-base-18.5.0\AndroidManifest.xml:5:146-170
+206            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+206-->[com.google.android.gms:play-services-base:18.5.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\6a088742c96884b4a7e0dea03e05a54c\transformed\play-services-base-18.5.0\AndroidManifest.xml:5:86-145
+207
+208        <meta-data
+208-->[com.google.android.gms:play-services-basement:18.4.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\d49f9009ffc4f68f093192e759a0e813\transformed\play-services-basement-18.4.0\AndroidManifest.xml:6:9-122
+209            android:name="com.google.android.gms.version"
+209-->[com.google.android.gms:play-services-basement:18.4.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\d49f9009ffc4f68f093192e759a0e813\transformed\play-services-basement-18.4.0\AndroidManifest.xml:6:20-65
+210            android:value="@integer/google_play_services_version" />
+210-->[com.google.android.gms:play-services-basement:18.4.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\d49f9009ffc4f68f093192e759a0e813\transformed\play-services-basement-18.4.0\AndroidManifest.xml:6:66-119
+211
+212        <provider
+212-->[androidx.emoji2:emoji2:1.3.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\8d3ca1535a94aaeb642055a3bb739b96\transformed\emoji2-1.3.0\AndroidManifest.xml:24:9-32:20
+213            android:name="androidx.startup.InitializationProvider"
+213-->[androidx.emoji2:emoji2:1.3.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\8d3ca1535a94aaeb642055a3bb739b96\transformed\emoji2-1.3.0\AndroidManifest.xml:25:13-67
+214            android:authorities="com.genchio.TechRentMobile.androidx-startup"
+214-->[androidx.emoji2:emoji2:1.3.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\8d3ca1535a94aaeb642055a3bb739b96\transformed\emoji2-1.3.0\AndroidManifest.xml:26:13-68
+215            android:exported="false" >
+215-->[androidx.emoji2:emoji2:1.3.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\8d3ca1535a94aaeb642055a3bb739b96\transformed\emoji2-1.3.0\AndroidManifest.xml:27:13-37
+216            <meta-data
+216-->[androidx.emoji2:emoji2:1.3.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\8d3ca1535a94aaeb642055a3bb739b96\transformed\emoji2-1.3.0\AndroidManifest.xml:29:13-31:52
+217                android:name="androidx.emoji2.text.EmojiCompatInitializer"
+217-->[androidx.emoji2:emoji2:1.3.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\8d3ca1535a94aaeb642055a3bb739b96\transformed\emoji2-1.3.0\AndroidManifest.xml:30:17-75
+218                android:value="androidx.startup" />
+218-->[androidx.emoji2:emoji2:1.3.0] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\8d3ca1535a94aaeb642055a3bb739b96\transformed\emoji2-1.3.0\AndroidManifest.xml:31:17-49
+219            <meta-data
+219-->[androidx.lifecycle:lifecycle-process:2.8.7] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\491c23e54e4db72acfd10eabdbb15235\transformed\lifecycle-process-2.8.7\AndroidManifest.xml:29:13-31:52
+220                android:name="androidx.lifecycle.ProcessLifecycleInitializer"
+220-->[androidx.lifecycle:lifecycle-process:2.8.7] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\491c23e54e4db72acfd10eabdbb15235\transformed\lifecycle-process-2.8.7\AndroidManifest.xml:30:17-78
+221                android:value="androidx.startup" />
+221-->[androidx.lifecycle:lifecycle-process:2.8.7] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\491c23e54e4db72acfd10eabdbb15235\transformed\lifecycle-process-2.8.7\AndroidManifest.xml:31:17-49
+222            <meta-data
+222-->[androidx.profileinstaller:profileinstaller:1.4.1] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\7b30fd8f78753129b1dde4dc40735643\transformed\profileinstaller-1.4.1\AndroidManifest.xml:29:13-31:52
+223                android:name="androidx.profileinstaller.ProfileInstallerInitializer"
+223-->[androidx.profileinstaller:profileinstaller:1.4.1] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\7b30fd8f78753129b1dde4dc40735643\transformed\profileinstaller-1.4.1\AndroidManifest.xml:30:17-85
+224                android:value="androidx.startup" />
+224-->[androidx.profileinstaller:profileinstaller:1.4.1] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\7b30fd8f78753129b1dde4dc40735643\transformed\profileinstaller-1.4.1\AndroidManifest.xml:31:17-49
+225        </provider>
+226
+227        <receiver
+227-->[androidx.profileinstaller:profileinstaller:1.4.1] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\7b30fd8f78753129b1dde4dc40735643\transformed\profileinstaller-1.4.1\AndroidManifest.xml:34:9-52:20
+228            android:name="androidx.profileinstaller.ProfileInstallReceiver"
+228-->[androidx.profileinstaller:profileinstaller:1.4.1] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\7b30fd8f78753129b1dde4dc40735643\transformed\profileinstaller-1.4.1\AndroidManifest.xml:35:13-76
+229            android:directBootAware="false"
+229-->[androidx.profileinstaller:profileinstaller:1.4.1] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\7b30fd8f78753129b1dde4dc40735643\transformed\profileinstaller-1.4.1\AndroidManifest.xml:36:13-44
+230            android:enabled="true"
+230-->[androidx.profileinstaller:profileinstaller:1.4.1] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\7b30fd8f78753129b1dde4dc40735643\transformed\profileinstaller-1.4.1\AndroidManifest.xml:37:13-35
+231            android:exported="true"
+231-->[androidx.profileinstaller:profileinstaller:1.4.1] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\7b30fd8f78753129b1dde4dc40735643\transformed\profileinstaller-1.4.1\AndroidManifest.xml:38:13-36
+232            android:permission="android.permission.DUMP" >
+232-->[androidx.profileinstaller:profileinstaller:1.4.1] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\7b30fd8f78753129b1dde4dc40735643\transformed\profileinstaller-1.4.1\AndroidManifest.xml:39:13-57
+233            <intent-filter>
+233-->[androidx.profileinstaller:profileinstaller:1.4.1] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\7b30fd8f78753129b1dde4dc40735643\transformed\profileinstaller-1.4.1\AndroidManifest.xml:40:13-42:29
+234                <action android:name="androidx.profileinstaller.action.INSTALL_PROFILE" />
+234-->[androidx.profileinstaller:profileinstaller:1.4.1] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\7b30fd8f78753129b1dde4dc40735643\transformed\profileinstaller-1.4.1\AndroidManifest.xml:41:17-91
+234-->[androidx.profileinstaller:profileinstaller:1.4.1] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\7b30fd8f78753129b1dde4dc40735643\transformed\profileinstaller-1.4.1\AndroidManifest.xml:41:25-88
+235            </intent-filter>
+236            <intent-filter>
+236-->[androidx.profileinstaller:profileinstaller:1.4.1] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\7b30fd8f78753129b1dde4dc40735643\transformed\profileinstaller-1.4.1\AndroidManifest.xml:43:13-45:29
+237                <action android:name="androidx.profileinstaller.action.SKIP_FILE" />
+237-->[androidx.profileinstaller:profileinstaller:1.4.1] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\7b30fd8f78753129b1dde4dc40735643\transformed\profileinstaller-1.4.1\AndroidManifest.xml:44:17-85
+237-->[androidx.profileinstaller:profileinstaller:1.4.1] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\7b30fd8f78753129b1dde4dc40735643\transformed\profileinstaller-1.4.1\AndroidManifest.xml:44:25-82
+238            </intent-filter>
+239            <intent-filter>
+239-->[androidx.profileinstaller:profileinstaller:1.4.1] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\7b30fd8f78753129b1dde4dc40735643\transformed\profileinstaller-1.4.1\AndroidManifest.xml:46:13-48:29
+240                <action android:name="androidx.profileinstaller.action.SAVE_PROFILE" />
+240-->[androidx.profileinstaller:profileinstaller:1.4.1] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\7b30fd8f78753129b1dde4dc40735643\transformed\profileinstaller-1.4.1\AndroidManifest.xml:47:17-88
+240-->[androidx.profileinstaller:profileinstaller:1.4.1] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\7b30fd8f78753129b1dde4dc40735643\transformed\profileinstaller-1.4.1\AndroidManifest.xml:47:25-85
+241            </intent-filter>
+242            <intent-filter>
+242-->[androidx.profileinstaller:profileinstaller:1.4.1] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\7b30fd8f78753129b1dde4dc40735643\transformed\profileinstaller-1.4.1\AndroidManifest.xml:49:13-51:29
+243                <action android:name="androidx.profileinstaller.action.BENCHMARK_OPERATION" />
+243-->[androidx.profileinstaller:profileinstaller:1.4.1] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\7b30fd8f78753129b1dde4dc40735643\transformed\profileinstaller-1.4.1\AndroidManifest.xml:50:17-95
+243-->[androidx.profileinstaller:profileinstaller:1.4.1] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\7b30fd8f78753129b1dde4dc40735643\transformed\profileinstaller-1.4.1\AndroidManifest.xml:50:25-92
+244            </intent-filter>
+245        </receiver>
+246
+247        <service
+247-->[com.google.android.datatransport:transport-backend-cct:2.3.3] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\cc4118ddc936d76d054fc93bd93ad095\transformed\transport-backend-cct-2.3.3\AndroidManifest.xml:29:9-35:19
+248            android:name="com.google.android.datatransport.runtime.backends.TransportBackendDiscovery"
+248-->[com.google.android.datatransport:transport-backend-cct:2.3.3] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\cc4118ddc936d76d054fc93bd93ad095\transformed\transport-backend-cct-2.3.3\AndroidManifest.xml:30:13-103
+249            android:exported="false" >
+249-->[com.google.android.datatransport:transport-backend-cct:2.3.3] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\cc4118ddc936d76d054fc93bd93ad095\transformed\transport-backend-cct-2.3.3\AndroidManifest.xml:31:13-37
+250            <meta-data
+250-->[com.google.android.datatransport:transport-backend-cct:2.3.3] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\cc4118ddc936d76d054fc93bd93ad095\transformed\transport-backend-cct-2.3.3\AndroidManifest.xml:32:13-34:39
+251                android:name="backend:com.google.android.datatransport.cct.CctBackendFactory"
+251-->[com.google.android.datatransport:transport-backend-cct:2.3.3] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\cc4118ddc936d76d054fc93bd93ad095\transformed\transport-backend-cct-2.3.3\AndroidManifest.xml:33:17-94
+252                android:value="cct" />
+252-->[com.google.android.datatransport:transport-backend-cct:2.3.3] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\cc4118ddc936d76d054fc93bd93ad095\transformed\transport-backend-cct-2.3.3\AndroidManifest.xml:34:17-36
+253        </service>
+254        <service
+254-->[com.google.android.datatransport:transport-runtime:2.2.6] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\96a7564a301b6eedd13308c2f28ccc50\transformed\transport-runtime-2.2.6\AndroidManifest.xml:26:9-30:19
+255            android:name="com.google.android.datatransport.runtime.scheduling.jobscheduling.JobInfoSchedulerService"
+255-->[com.google.android.datatransport:transport-runtime:2.2.6] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\96a7564a301b6eedd13308c2f28ccc50\transformed\transport-runtime-2.2.6\AndroidManifest.xml:27:13-117
+256            android:exported="false"
+256-->[com.google.android.datatransport:transport-runtime:2.2.6] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\96a7564a301b6eedd13308c2f28ccc50\transformed\transport-runtime-2.2.6\AndroidManifest.xml:28:13-37
+257            android:permission="android.permission.BIND_JOB_SERVICE" >
+257-->[com.google.android.datatransport:transport-runtime:2.2.6] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\96a7564a301b6eedd13308c2f28ccc50\transformed\transport-runtime-2.2.6\AndroidManifest.xml:29:13-69
+258        </service>
+259
+260        <receiver
+260-->[com.google.android.datatransport:transport-runtime:2.2.6] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\96a7564a301b6eedd13308c2f28ccc50\transformed\transport-runtime-2.2.6\AndroidManifest.xml:32:9-34:40
+261            android:name="com.google.android.datatransport.runtime.scheduling.jobscheduling.AlarmManagerSchedulerBroadcastReceiver"
+261-->[com.google.android.datatransport:transport-runtime:2.2.6] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\96a7564a301b6eedd13308c2f28ccc50\transformed\transport-runtime-2.2.6\AndroidManifest.xml:33:13-132
+262            android:exported="false" />
+262-->[com.google.android.datatransport:transport-runtime:2.2.6] C:\Users\Hyun\.gradle\caches\8.14.3\transforms\96a7564a301b6eedd13308c2f28ccc50\transformed\transport-runtime-2.2.6\AndroidManifest.xml:34:13-37
+263    </application>
+264
+265</manifest>

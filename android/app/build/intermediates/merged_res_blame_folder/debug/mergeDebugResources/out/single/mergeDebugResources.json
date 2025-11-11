@@ -1,0 +1,138 @@
+[
+    {
+        "merged": "com.genchio.TechRentMobile.app-debug-66:/drawable-xhdpi_splashscreen_logo.png.flat",
+        "source": "com.genchio.TechRentMobile.app-main-68:/drawable-xhdpi/splashscreen_logo.png"
+    },
+    {
+        "merged": "com.genchio.TechRentMobile.app-debug-66:/drawable-xxxhdpi_splashscreen_logo.png.flat",
+        "source": "com.genchio.TechRentMobile.app-main-68:/drawable-xxxhdpi/splashscreen_logo.png"
+    },
+    {
+        "merged": "com.genchio.TechRentMobile.app-debug-66:/mipmap-xhdpi_ic_launcher_monochrome.webp.flat",
+        "source": "com.genchio.TechRentMobile.app-main-68:/mipmap-xhdpi/ic_launcher_monochrome.webp"
+    },
+    {
+        "merged": "com.genchio.TechRentMobile.app-debug-66:/drawable_rn_edit_text_material.xml.flat",
+        "source": "com.genchio.TechRentMobile.app-main-68:/drawable/rn_edit_text_material.xml"
+    },
+    {
+        "merged": "com.genchio.TechRentMobile.app-debug-66:/drawable_ic_launcher_background.xml.flat",
+        "source": "com.genchio.TechRentMobile.app-main-68:/drawable/ic_launcher_background.xml"
+    },
+    {
+        "merged": "com.genchio.TechRentMobile.app-debug-66:/mipmap-xxxhdpi_ic_launcher_round.webp.flat",
+        "source": "com.genchio.TechRentMobile.app-main-68:/mipmap-xxxhdpi/ic_launcher_round.webp"
+    },
+    {
+        "merged": "com.genchio.TechRentMobile.app-debug-66:/drawable-xxhdpi_splashscreen_logo.png.flat",
+        "source": "com.genchio.TechRentMobile.app-main-68:/drawable-xxhdpi/splashscreen_logo.png"
+    },
+    {
+        "merged": "com.genchio.TechRentMobile.app-debug-66:/mipmap-xxxhdpi_ic_launcher.webp.flat",
+        "source": "com.genchio.TechRentMobile.app-main-68:/mipmap-xxxhdpi/ic_launcher.webp"
+    },
+    {
+        "merged": "com.genchio.TechRentMobile.app-debug-66:/mipmap-xxhdpi_ic_launcher_foreground.webp.flat",
+        "source": "com.genchio.TechRentMobile.app-main-68:/mipmap-xxhdpi/ic_launcher_foreground.webp"
+    },
+    {
+        "merged": "com.genchio.TechRentMobile.app-debug-66:/mipmap-xhdpi_ic_launcher_background.webp.flat",
+        "source": "com.genchio.TechRentMobile.app-main-68:/mipmap-xhdpi/ic_launcher_background.webp"
+    },
+    {
+        "merged": "com.genchio.TechRentMobile.app-debug-66:/mipmap-anydpi-v26_ic_launcher_round.xml.flat",
+        "source": "com.genchio.TechRentMobile.app-main-68:/mipmap-anydpi-v26/ic_launcher_round.xml"
+    },
+    {
+        "merged": "com.genchio.TechRentMobile.app-debug-66:/drawable-mdpi_splashscreen_logo.png.flat",
+        "source": "com.genchio.TechRentMobile.app-main-68:/drawable-mdpi/splashscreen_logo.png"
+    },
+    {
+        "merged": "com.genchio.TechRentMobile.app-debug-66:/mipmap-hdpi_ic_launcher_round.webp.flat",
+        "source": "com.genchio.TechRentMobile.app-main-68:/mipmap-hdpi/ic_launcher_round.webp"
+    },
+    {
+        "merged": "com.genchio.TechRentMobile.app-debug-66:/mipmap-mdpi_ic_launcher.webp.flat",
+        "source": "com.genchio.TechRentMobile.app-main-68:/mipmap-mdpi/ic_launcher.webp"
+    },
+    {
+        "merged": "com.genchio.TechRentMobile.app-debug-66:/mipmap-mdpi_ic_launcher_round.webp.flat",
+        "source": "com.genchio.TechRentMobile.app-main-68:/mipmap-mdpi/ic_launcher_round.webp"
+    },
+    {
+        "merged": "com.genchio.TechRentMobile.app-debug-66:/mipmap-xxxhdpi_ic_launcher_foreground.webp.flat",
+        "source": "com.genchio.TechRentMobile.app-main-68:/mipmap-xxxhdpi/ic_launcher_foreground.webp"
+    },
+    {
+        "merged": "com.genchio.TechRentMobile.app-debug-66:/mipmap-mdpi_ic_launcher_foreground.webp.flat",
+        "source": "com.genchio.TechRentMobile.app-main-68:/mipmap-mdpi/ic_launcher_foreground.webp"
+    },
+    {
+        "merged": "com.genchio.TechRentMobile.app-debug-66:/mipmap-hdpi_ic_launcher_monochrome.webp.flat",
+        "source": "com.genchio.TechRentMobile.app-main-68:/mipmap-hdpi/ic_launcher_monochrome.webp"
+    },
+    {
+        "merged": "com.genchio.TechRentMobile.app-debug-66:/drawable-hdpi_splashscreen_logo.png.flat",
+        "source": "com.genchio.TechRentMobile.app-main-68:/drawable-hdpi/splashscreen_logo.png"
+    },
+    {
+        "merged": "com.genchio.TechRentMobile.app-debug-66:/mipmap-hdpi_ic_launcher_background.webp.flat",
+        "source": "com.genchio.TechRentMobile.app-main-68:/mipmap-hdpi/ic_launcher_background.webp"
+    },
+    {
+        "merged": "com.genchio.TechRentMobile.app-debug-66:/mipmap-xxxhdpi_ic_launcher_background.webp.flat",
+        "source": "com.genchio.TechRentMobile.app-main-68:/mipmap-xxxhdpi/ic_launcher_background.webp"
+    },
+    {
+        "merged": "com.genchio.TechRentMobile.app-debug-66:/mipmap-xxhdpi_ic_launcher.webp.flat",
+        "source": "com.genchio.TechRentMobile.app-main-68:/mipmap-xxhdpi/ic_launcher.webp"
+    },
+    {
+        "merged": "com.genchio.TechRentMobile.app-debug-66:/mipmap-xhdpi_ic_launcher_round.webp.flat",
+        "source": "com.genchio.TechRentMobile.app-main-68:/mipmap-xhdpi/ic_launcher_round.webp"
+    },
+    {
+        "merged": "com.genchio.TechRentMobile.app-debug-66:/mipmap-mdpi_ic_launcher_background.webp.flat",
+        "source": "com.genchio.TechRentMobile.app-main-68:/mipmap-mdpi/ic_launcher_background.webp"
+    },
+    {
+        "merged": "com.genchio.TechRentMobile.app-debug-66:/mipmap-hdpi_ic_launcher_foreground.webp.flat",
+        "source": "com.genchio.TechRentMobile.app-main-68:/mipmap-hdpi/ic_launcher_foreground.webp"
+    },
+    {
+        "merged": "com.genchio.TechRentMobile.app-debug-66:/mipmap-xxhdpi_ic_launcher_round.webp.flat",
+        "source": "com.genchio.TechRentMobile.app-main-68:/mipmap-xxhdpi/ic_launcher_round.webp"
+    },
+    {
+        "merged": "com.genchio.TechRentMobile.app-debug-66:/mipmap-xxhdpi_ic_launcher_background.webp.flat",
+        "source": "com.genchio.TechRentMobile.app-main-68:/mipmap-xxhdpi/ic_launcher_background.webp"
+    },
+    {
+        "merged": "com.genchio.TechRentMobile.app-debug-66:/mipmap-xhdpi_ic_launcher_foreground.webp.flat",
+        "source": "com.genchio.TechRentMobile.app-main-68:/mipmap-xhdpi/ic_launcher_foreground.webp"
+    },
+    {
+        "merged": "com.genchio.TechRentMobile.app-debug-66:/mipmap-xhdpi_ic_launcher.webp.flat",
+        "source": "com.genchio.TechRentMobile.app-main-68:/mipmap-xhdpi/ic_launcher.webp"
+    },
+    {
+        "merged": "com.genchio.TechRentMobile.app-debug-66:/mipmap-xxhdpi_ic_launcher_monochrome.webp.flat",
+        "source": "com.genchio.TechRentMobile.app-main-68:/mipmap-xxhdpi/ic_launcher_monochrome.webp"
+    },
+    {
+        "merged": "com.genchio.TechRentMobile.app-debug-66:/mipmap-hdpi_ic_launcher.webp.flat",
+        "source": "com.genchio.TechRentMobile.app-main-68:/mipmap-hdpi/ic_launcher.webp"
+    },
+    {
+        "merged": "com.genchio.TechRentMobile.app-debug-66:/mipmap-mdpi_ic_launcher_monochrome.webp.flat",
+        "source": "com.genchio.TechRentMobile.app-main-68:/mipmap-mdpi/ic_launcher_monochrome.webp"
+    },
+    {
+        "merged": "com.genchio.TechRentMobile.app-debug-66:/mipmap-anydpi-v26_ic_launcher.xml.flat",
+        "source": "com.genchio.TechRentMobile.app-main-68:/mipmap-anydpi-v26/ic_launcher.xml"
+    },
+    {
+        "merged": "com.genchio.TechRentMobile.app-debug-66:/mipmap-xxxhdpi_ic_launcher_monochrome.webp.flat",
+        "source": "com.genchio.TechRentMobile.app-main-68:/mipmap-xxxhdpi/ic_launcher_monochrome.webp"
+    }
+]
