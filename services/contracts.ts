@@ -23,6 +23,8 @@ export type ContractResponse = {
   startDate: string | null;
   endDate: string | null;
   signedAt: string | null;
+  customerSignedBy?: number | string | null;
+  customerSignedAt?: string | null;
   expiresAt: string | null;
   createdAt: string | null;
   updatedAt: string | null;

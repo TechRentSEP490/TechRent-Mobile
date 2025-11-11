@@ -512,6 +512,34 @@ const deriveDeviceSummary = (order: RentalOrderResponse, deviceNames: Map<string
   return `${firstName} + ${rest.length} more`;
 };
 
+const isContractSignedByCustomer = (contract?: ContractResponse | null): boolean => {
+  if (!contract) {
+    return false;
+  }
+
+  const { customerSignedBy } = contract;
+
+  if (typeof customerSignedBy === 'number') {
+    return Number.isFinite(customerSignedBy) && customerSignedBy > 0;
+  }
+
+  if (typeof customerSignedBy === 'string') {
+    const trimmed = customerSignedBy.trim();
+    if (trimmed.length === 0) {
+      return false;
+    }
+
+    const parsed = Number.parseInt(trimmed, 10);
+    if (!Number.isNaN(parsed)) {
+      return parsed > 0;
+    }
+
+    return true;
+  }
+
+  return false;
+};
+
 const mapOrderResponseToCard = (
   order: RentalOrderResponse,
   deviceNames: Map<string, string>,
@@ -519,7 +547,8 @@ const mapOrderResponseToCard = (
 ): OrderCard => {
   const statusMeta = mapStatusToMeta(order.orderStatus);
   const normalizedContractStatus = contract?.status?.trim().toUpperCase();
-  const isContractSigned = normalizedContractStatus === 'SIGNED';
+  const isContractSigned =
+    normalizedContractStatus === 'SIGNED' || isContractSignedByCustomer(contract);
   const action = isContractSigned
     ? { label: 'Download Contract', type: 'downloadContract' as const }
     : statusMeta.action;
@@ -605,8 +634,10 @@ export default function OrdersScreen() {
 
   const progressWidth = useMemo<DimensionValue>(() => `${(currentStep / 3) * 100}%`, [currentStep]);
   const isContractAlreadySigned = useMemo(
-    () => activeContract?.status?.trim().toUpperCase() === 'SIGNED',
-    [activeContract?.status],
+    () =>
+      isContractSignedByCustomer(activeContract) ||
+      activeContract?.status?.trim().toUpperCase() === 'SIGNED',
+    [activeContract],
   );
   const contractForSelectedOrder = useMemo(
     () => (orderDetailsTargetId ? contractsByOrderId[String(orderDetailsTargetId)] ?? null : null),
@@ -772,16 +803,17 @@ export default function OrdersScreen() {
 
   const openFlow = useCallback(
     (order: OrderCard) => {
+      const shouldSkipToPayment = isContractSignedByCustomer(order.contract);
       lastContractLoadRef.current = { orderId: null, requestId: 0 };
       setActiveOrder(order);
       setActiveContract(order.contract ?? null);
       setContractErrorMessage(null);
       setContractLoading(false);
       setModalVisible(true);
-      setCurrentStep(1);
+      setCurrentStep(shouldSkipToPayment ? 3 : 1);
       setOtpDigits(Array(6).fill(''));
       setSelectedPayment(PAYMENT_OPTIONS[0].id);
-      setHasAgreed(false);
+      setHasAgreed(shouldSkipToPayment);
       setVerificationEmail(defaultVerificationEmail);
       setPendingEmailInput(defaultVerificationEmail);
       setVerificationError(null);
@@ -938,6 +970,19 @@ export default function OrdersScreen() {
     isModalVisible,
     session,
   ]);
+
+  useEffect(() => {
+    if (!isModalVisible) {
+      return;
+    }
+
+    if (!isContractSignedByCustomer(activeContract)) {
+      return;
+    }
+
+    setHasAgreed(true);
+    setCurrentStep((previous) => (previous < 3 ? 3 : previous));
+  }, [activeContract, isModalVisible]);
 
   useEffect(() => {
     const flowParam = Array.isArray(flow) ? flow[0] : flow;
