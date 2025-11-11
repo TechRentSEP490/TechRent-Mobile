@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
-import { scanOCRFromImageAsync } from 'expo-mlkit-ocr';
+import * as MlkitOcr from 'expo-mlkit-ocr';
 import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import {
@@ -58,6 +58,54 @@ const documentCopy: Record<DocumentType, { title: string; description: string }>
     title: 'Selfie with ID',
     description: 'Take a selfie while holding your ID next to your face.',
   },
+};
+
+const scanDocumentForText = async (uri: string): Promise<unknown> => {
+  const candidates: Array<{
+    fn: unknown;
+    invoke: (fn: (...args: any[]) => any) => Promise<unknown>;
+  }> = [
+    {
+      fn: MlkitOcr.scanOCRFromImageAsync,
+      invoke: (fn) => fn(uri, { shouldGroup: true }),
+    },
+    {
+      fn: MlkitOcr.scanFromURLAsync,
+      invoke: (fn) => fn(uri, { shouldGroup: true }),
+    },
+    {
+      fn: MlkitOcr.scanOCRAsync,
+      invoke: (fn) => fn(uri, { shouldGroup: true }),
+    },
+    {
+      fn: MlkitOcr.recognize,
+      invoke: (fn) => fn(uri, { shouldGroup: true }),
+    },
+  ];
+
+  let lastError: unknown;
+
+  for (const candidate of candidates) {
+    if (typeof candidate.fn !== 'function') {
+      continue;
+    }
+
+    try {
+      return await candidate.invoke(candidate.fn as (...args: any[]) => any);
+    } catch (error) {
+      lastError = error;
+
+      if (error instanceof TypeError) {
+        try {
+          return await (candidate.fn as (...args: any[]) => any)(uri);
+        } catch (fallbackError) {
+          lastError = fallbackError;
+        }
+      }
+    }
+  }
+
+  throw lastError ?? new Error('ML Kit OCR module is unavailable.');
 };
 
 const extractTextFromResult = (result: unknown): string => {
@@ -233,9 +281,7 @@ export default function KycDocumentsScreen() {
       }));
 
       try {
-        const detectionResult = await scanOCRFromImageAsync(asset.uri, {
-          shouldGroup: true,
-        });
+        const detectionResult = await scanDocumentForText(asset.uri);
         const detectedText = extractTextFromResult(
           (detectionResult as { blocks?: unknown })?.blocks ?? detectionResult,
         );
