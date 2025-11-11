@@ -26,6 +26,7 @@
         <category android:name="android.intent.category.DEFAULT"/>
         <category android:name="android.intent.category.BROWSABLE"/>
         <data android:scheme="techrentmobile"/>
+        <data android:scheme="exp+techrent-mobile"/>
       </intent-filter>
     </activity>
   </application>
