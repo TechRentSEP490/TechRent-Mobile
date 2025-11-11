@@ -4,6 +4,8 @@ import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
+  Linking,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -155,9 +157,35 @@ export default function KycStatusScreen() {
 
   const documentRows = useMemo(() => buildDocumentRows(details), [details]);
 
+  const handleOpenDocument = useCallback(async (uri: string | null | undefined) => {
+    if (!uri) {
+      return;
+    }
+
+    try {
+      const canOpen = await Linking.canOpenURL(uri);
+
+      if (!canOpen) {
+        Alert.alert('Unsupported link', 'We could not open this document. Please try again later.');
+        return;
+      }
+
+      await Linking.openURL(uri);
+    } catch (err) {
+      console.warn('Failed to open document link', err);
+      Alert.alert('Unable to open document', 'An unexpected error occurred while opening this file.');
+    }
+  }, []);
+
   const renderDocument = useCallback(
     (label: string, uri: string | null | undefined) => (
-      <View key={label} style={styles.documentItem}>
+      <TouchableOpacity
+        key={label}
+        style={[styles.documentItem, !uri && styles.documentItemDisabled]}
+        onPress={() => void handleOpenDocument(uri)}
+        activeOpacity={0.85}
+        disabled={!uri}
+      >
         {uri ? (
           <Image source={{ uri }} style={styles.documentImage} contentFit="cover" />
         ) : (
@@ -166,9 +194,10 @@ export default function KycStatusScreen() {
           </View>
         )}
         <Text style={styles.documentLabel}>{label}</Text>
-      </View>
+        <Text style={styles.documentHint}>{uri ? 'Tap to view the Cloudinary image.' : 'Document not submitted yet.'}</Text>
+      </TouchableOpacity>
     ),
-    [],
+    [handleOpenDocument],
   );
 
   return (
@@ -384,6 +413,9 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     gap: 8,
   },
+  documentItemDisabled: {
+    opacity: 0.6,
+  },
   documentImage: {
     width: '100%',
     aspectRatio: 3 / 4,
@@ -402,6 +434,10 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: '#4b5563',
+  },
+  documentHint: {
+    fontSize: 11,
+    color: '#6b7280',
   },
   placeholderText: {
     fontSize: 14,
