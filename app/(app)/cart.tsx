@@ -47,6 +47,26 @@ const formatCurrencyValue = (value: number, currency: 'USD' | 'VND') =>
     maximumFractionDigits: currency === 'USD' ? 2 : 0,
   }).format(value);
 
+const getDepositRatio = (product: ProductDetail) => {
+  if (typeof product.depositPercent === 'number') {
+    return product.depositPercent;
+  }
+
+  if (typeof product.depositPercentage === 'number') {
+    return product.depositPercentage / 100;
+  }
+
+  return null;
+};
+
+const getDeviceValue = (product: ProductDetail) => {
+  if (typeof product.deviceValue === 'number' && Number.isFinite(product.deviceValue)) {
+    return product.deviceValue;
+  }
+
+  return null;
+};
+
 const determineCurrency = (product: ProductDetail): 'USD' | 'VND' => {
   if (product.currency) {
     return product.currency;
@@ -213,7 +233,13 @@ export default function CartScreen() {
     };
   }, [product, quantity]);
 
-  const items = cartItems.length > 0 ? cartItems : fallbackItem ? [fallbackItem] : [];
+  const items = useMemo(() => {
+    if (cartItems.length > 0) {
+      return cartItems;
+    }
+
+    return fallbackItem ? [fallbackItem] : [];
+  }, [cartItems, fallbackItem]);
   const hasItems = items.length > 0;
   const isContextBacked = cartItems.length > 0;
 
@@ -234,6 +260,71 @@ export default function CartScreen() {
   const minimumEndDate = useMemo(() => addDays(startDate, 1), [startDate]);
   const isRangeInvalid = endDate.getTime() <= startDate.getTime();
 
+  const summaryCurrency = useMemo(() => {
+    if (!hasItems) {
+      return null;
+    }
+
+    const uniqueCurrencies = new Set<ReturnType<typeof determineCurrency>>(
+      items.map((item) => determineCurrency(item.product))
+    );
+
+    if (uniqueCurrencies.size !== 1) {
+      return null;
+    }
+
+    return uniqueCurrencies.values().next().value ?? null;
+  }, [hasItems, items]);
+
+  const totalAmount =
+    summaryCurrency !== null
+      ? items.reduce((sum, item) => sum + getDailyRate(item.product) * item.quantity, 0)
+      : null;
+  const formattedTotal =
+    hasItems && totalAmount !== null && summaryCurrency
+      ? formatCurrencyValue(totalAmount, summaryCurrency)
+      : '—';
+
+  const { depositTotalLabel, deviceValueTotalLabel } = useMemo(() => {
+    if (!hasItems || summaryCurrency === null) {
+      return {
+        depositTotalLabel: '—',
+        deviceValueTotalLabel: '—',
+      };
+    }
+
+    let depositSum = 0;
+    let hasDepositAmount = false;
+    let deviceValueSum = 0;
+    let hasDeviceValue = false;
+
+    items.forEach((item) => {
+      const depositRatio = getDepositRatio(item.product);
+      const deviceValue = getDeviceValue(item.product);
+
+      if (depositRatio !== null && deviceValue !== null) {
+        depositSum += depositRatio * deviceValue * item.quantity;
+        hasDepositAmount = true;
+      }
+
+      if (deviceValue !== null) {
+        deviceValueSum += deviceValue * item.quantity;
+        hasDeviceValue = true;
+      }
+    });
+
+    return {
+      depositTotalLabel:
+        hasDepositAmount && summaryCurrency
+          ? formatCurrencyValue(depositSum, summaryCurrency)
+          : '—',
+      deviceValueTotalLabel:
+        hasDeviceValue && summaryCurrency
+          ? formatCurrencyValue(deviceValueSum, summaryCurrency)
+          : '—',
+    };
+  }, [hasItems, items, summaryCurrency]);
+
   if (!hasItems && !product) {
     return (
       <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
@@ -247,14 +338,6 @@ export default function CartScreen() {
       </SafeAreaView>
     );
   }
-
-  const primaryItem = items[0] ?? null;
-  const currency = primaryItem ? determineCurrency(primaryItem.product) : 'VND';
-  const totalAmount = items.reduce(
-    (sum, item) => sum + getDailyRate(item.product) * item.quantity,
-    0
-  );
-  const formattedTotal = hasItems ? formatCurrencyValue(totalAmount, currency) : '—';
 
   const totalQuantity = items.reduce((sum, item) => sum + item.quantity, 0);
   const deviceLabel = hasItems
@@ -376,14 +459,17 @@ export default function CartScreen() {
         )}
 
         <View style={styles.summaryRow}>
-          <View>
-            <Text style={styles.summaryLabel}>Total Items</Text>
-            <Text style={styles.summaryValue}>{deviceLabel}</Text>
-          </View>
-          <View style={styles.summaryRight}>
-            <Text style={styles.summaryLabel}>Daily Total</Text>
-            <Text style={styles.summaryAmount}>{formattedTotal}</Text>
-          </View>
+          {[
+            { label: 'Total Items', value: deviceLabel },
+            { label: 'Daily Total', value: formattedTotal },
+            { label: 'Deposit Total', value: depositTotalLabel },
+            { label: 'Device Value Total', value: deviceValueTotalLabel },
+          ].map((metric) => (
+            <View key={metric.label} style={styles.summaryMetric}>
+              <Text style={styles.summaryLabel}>{metric.label}</Text>
+              <Text style={styles.summaryValue}>{metric.value}</Text>
+            </View>
+          ))}
         </View>
 
         <View style={styles.orderCard}>
@@ -410,30 +496,87 @@ export default function CartScreen() {
           <View style={styles.orderBody}>
             {hasItems ? (
               items.map((item) => {
+                const itemCurrency = determineCurrency(item.product);
                 const itemDailyRate = getDailyRate(item.product);
-                const itemTotal = formatCurrencyValue(itemDailyRate * item.quantity, determineCurrency(item.product));
+                const itemLineTotal = formatCurrencyValue(itemDailyRate * item.quantity, itemCurrency);
                 const itemLabel = item.product.model || item.product.name;
+                const itemDailyRateLabel = `${formatCurrencyValue(itemDailyRate, itemCurrency)} / day`;
+                const depositRatio = getDepositRatio(item.product);
+                const deviceValue = getDeviceValue(item.product);
+                const depositPercentageLabel =
+                  depositRatio !== null ? `${Math.round(depositRatio * 100)}%` : null;
+                const depositAmountPerUnit =
+                  depositRatio !== null && deviceValue !== null ? depositRatio * deviceValue : null;
+                const depositSummary = depositPercentageLabel
+                  ? depositAmountPerUnit !== null
+                    ? `${depositPercentageLabel} (~${formatCurrencyValue(depositAmountPerUnit, itemCurrency)})`
+                    : depositPercentageLabel
+                  : null;
+                const itemDepositTotalLabel =
+                  depositAmountPerUnit !== null && item.quantity > 1
+                    ? formatCurrencyValue(depositAmountPerUnit * item.quantity, itemCurrency)
+                    : null;
+                const deviceValueLabel =
+                  deviceValue !== null ? formatCurrencyValue(deviceValue, itemCurrency) : null;
+                const itemDeviceValueTotalLabel =
+                  deviceValue !== null && item.quantity > 1
+                    ? formatCurrencyValue(deviceValue * item.quantity, itemCurrency)
+                    : null;
 
                 return (
                   <View key={item.product.id} style={styles.orderItem}>
-                    <View style={styles.productBadge}>
-                      <Ionicons name="phone-portrait-outline" size={24} color="#6f6f6f" />
+                    <View style={styles.orderItemHeader}>
+                      <View style={styles.orderItemTitle}>
+                        <View style={styles.productBadge}>
+                          <Ionicons name="phone-portrait-outline" size={24} color="#6f6f6f" />
+                        </View>
+                        <View style={styles.productDetails}>
+                          <Text style={styles.productName}>{itemLabel}</Text>
+                          <Text style={styles.productMeta}>{`Quantity: ${item.quantity}`}</Text>
+                        </View>
+                      </View>
+                      <View style={styles.orderItemHeaderRight}>
+                        <View style={styles.lineTotalGroup}>
+                          <Text style={styles.lineTotalLabel}>Line total</Text>
+                          <Text style={styles.productPrice}>{itemLineTotal}</Text>
+                        </View>
+                        {isContextBacked ? (
+                          <TouchableOpacity
+                            style={styles.removeItemButton}
+                            onPress={() => removeItem(item.product.id)}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Remove ${itemLabel}`}
+                          >
+                            <Ionicons name="close" size={16} color="#6f6f6f" />
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
                     </View>
-                    <View style={styles.productDetails}>
-                      <Text style={styles.productName}>{itemLabel}</Text>
-                      <Text style={styles.productMeta}>{`Quantity: ${item.quantity}`}</Text>
+
+                    <View style={styles.orderItemDetails}>
+                      <View style={styles.orderItemMetric}>
+                        <Text style={styles.orderItemMetricLabel}>Daily rate</Text>
+                        <Text style={styles.orderItemMetricValue}>{itemDailyRateLabel}</Text>
+                      </View>
+                      {depositSummary ? (
+                        <View style={styles.orderItemMetric}>
+                          <Text style={styles.orderItemMetricLabel}>Deposit</Text>
+                          <Text style={styles.orderItemMetricValue}>{depositSummary}</Text>
+                          {itemDepositTotalLabel ? (
+                            <Text style={styles.orderItemMetricSubValue}>{`Total: ${itemDepositTotalLabel}`}</Text>
+                          ) : null}
+                        </View>
+                      ) : null}
+                      {deviceValueLabel ? (
+                        <View style={styles.orderItemMetric}>
+                          <Text style={styles.orderItemMetricLabel}>Device value</Text>
+                          <Text style={styles.orderItemMetricValue}>{deviceValueLabel}</Text>
+                          {itemDeviceValueTotalLabel ? (
+                            <Text style={styles.orderItemMetricSubValue}>{`Total: ${itemDeviceValueTotalLabel}`}</Text>
+                          ) : null}
+                        </View>
+                      ) : null}
                     </View>
-                    <Text style={styles.productPrice}>{itemTotal}</Text>
-                    {isContextBacked ? (
-                      <TouchableOpacity
-                        style={styles.removeItemButton}
-                        onPress={() => removeItem(item.product.id)}
-                        accessibilityRole="button"
-                        accessibilityLabel={`Remove ${itemLabel}`}
-                      >
-                        <Ionicons name="close" size={16} color="#6f6f6f" />
-                      </TouchableOpacity>
-                    ) : null}
                   </View>
                 );
               })
@@ -566,27 +709,24 @@ const styles = StyleSheet.create({
   },
   summaryRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    flexWrap: 'wrap',
     backgroundColor: '#f8f8f8',
     padding: 16,
     borderRadius: 16,
     borderWidth: 1,
     borderColor: '#ededed',
+    gap: 16,
+  },
+  summaryMetric: {
+    flexGrow: 1,
+    flexShrink: 0,
+    minWidth: 140,
   },
   summaryLabel: {
     color: '#6f6f6f',
     fontSize: 13,
   },
   summaryValue: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#111111',
-    marginTop: 4,
-  },
-  summaryRight: {
-    alignItems: 'flex-end',
-  },
-  summaryAmount: {
     fontSize: 18,
     fontWeight: '600',
     color: '#111111',
@@ -619,9 +759,37 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   orderItem: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#f0f0f0',
+    backgroundColor: '#fafafa',
+    padding: 16,
+    gap: 12,
+  },
+  orderItemHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  orderItemTitle: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+    flex: 1,
+  },
+  orderItemHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  lineTotalGroup: {
+    alignItems: 'flex-end',
+    gap: 4,
+  },
+  lineTotalLabel: {
+    color: '#6f6f6f',
+    fontSize: 12,
   },
   productBadge: {
     width: 48,
@@ -647,9 +815,32 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#111111',
   },
+  orderItemDetails: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 16,
+  },
+  orderItemMetric: {
+    flexGrow: 1,
+    flexShrink: 0,
+    minWidth: 140,
+    gap: 4,
+  },
+  orderItemMetricLabel: {
+    fontSize: 13,
+    color: '#6f6f6f',
+  },
+  orderItemMetricValue: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#111111',
+  },
+  orderItemMetricSubValue: {
+    fontSize: 13,
+    color: '#6f6f6f',
+  },
   removeItemButton: {
     padding: 4,
-    marginLeft: 4,
   },
   emptyOrderBody: {
     paddingVertical: 12,
