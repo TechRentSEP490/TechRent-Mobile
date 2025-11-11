@@ -1,10 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  NativeScrollEvent,
-  NativeSyntheticEvent,
+  Modal,
   ScrollView,
   StyleSheet,
   Text,
@@ -85,19 +84,6 @@ const getDailyRate = (product: ProductDetail) => {
   return Number.isNaN(parsed) ? 0 : parsed;
 };
 
-const DATE_SCROLL_ITEM_HEIGHT = 48;
-const DATE_SCROLL_VISIBLE_ROWS = 5;
-const DATE_SCROLL_RANGE_DAYS = 365;
-
-const createDateSequence = (start: Date, totalDays: number) => {
-  const normalizedStart = clampToStartOfDay(start);
-  const length = Math.max(totalDays, 1);
-  return Array.from({ length }, (_, index) => addDays(normalizedStart, index));
-};
-
-const findDateIndex = (dates: Date[], target: Date) =>
-  dates.findIndex((item) => item.getTime() === target.getTime());
-
 const parseDateParam = (value: unknown, fallback: Date) => {
   if (typeof value === 'string') {
     const parsed = new Date(value);
@@ -109,98 +95,182 @@ const parseDateParam = (value: unknown, fallback: Date) => {
   return clampToStartOfDay(fallback);
 };
 
-type DateScrollPickerProps = {
+const startOfMonth = (date: Date) => {
+  const firstDay = clampToStartOfDay(date);
+  firstDay.setDate(1);
+  return clampToStartOfDay(firstDay);
+};
+
+const addMonths = (date: Date, months: number) => {
+  const base = startOfMonth(date);
+  const next = new Date(base);
+  next.setMonth(base.getMonth() + months);
+  return startOfMonth(next);
+};
+
+const endOfMonth = (date: Date) => addDays(addMonths(startOfMonth(date), 1), -1);
+
+const isSameDay = (a: Date, b: Date) => a.getTime() === b.getTime();
+
+const generateCalendarDays = (monthStart: Date) => {
+  const firstDayOfMonth = startOfMonth(monthStart);
+  const firstWeekday = firstDayOfMonth.getDay();
+  const calendarStart = addDays(firstDayOfMonth, -firstWeekday);
+  return Array.from({ length: 42 }, (_, index) => addDays(calendarStart, index));
+};
+
+const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+type DatePickerFieldProps = {
   value: Date;
   minimumDate: Date;
   onChange: (date: Date) => void;
-  rangeInDays?: number;
 };
 
-function DateScrollPicker({ value, minimumDate, onChange, rangeInDays = DATE_SCROLL_RANGE_DAYS }: DateScrollPickerProps) {
-  const dates = useMemo(() => createDateSequence(minimumDate, rangeInDays), [minimumDate, rangeInDays]);
-  const scrollRef = useRef<ScrollView | null>(null);
-  const isInteractingRef = useRef(false);
-
-  const selectedIndex = useMemo(() => {
-    const index = findDateIndex(dates, clampToStartOfDay(value));
-    if (index >= 0) {
-      return index;
-    }
-
-    if (dates.length === 0) {
-      return 0;
-    }
-
-    if (value.getTime() < dates[0].getTime()) {
-      return 0;
-    }
-
-    return dates.length - 1;
-  }, [dates, value]);
+function DatePickerField({ value, minimumDate, onChange }: DatePickerFieldProps) {
+  const [isPickerVisible, setIsPickerVisible] = useState(false);
+  const [activeMonth, setActiveMonth] = useState(() => startOfMonth(value));
+  const normalizedMinimum = useMemo(() => clampToStartOfDay(minimumDate), [minimumDate]);
 
   useEffect(() => {
-    if (!scrollRef.current) {
+    if (!isPickerVisible) {
+      setActiveMonth(startOfMonth(value));
+    }
+  }, [isPickerVisible, value]);
+
+  const calendarDays = useMemo(() => generateCalendarDays(activeMonth), [activeMonth]);
+
+  const handleOpen = () => {
+    setIsPickerVisible(true);
+  };
+
+  const handleClose = () => {
+    setIsPickerVisible(false);
+  };
+
+  const handleSelect = (nextDate: Date) => {
+    const normalized = clampToStartOfDay(nextDate);
+    if (normalized.getTime() < normalizedMinimum.getTime()) {
       return;
     }
 
-    const targetOffset = selectedIndex * DATE_SCROLL_ITEM_HEIGHT;
-    scrollRef.current.scrollTo({ y: targetOffset, animated: !isInteractingRef.current });
-  }, [selectedIndex]);
+    setIsPickerVisible(false);
+    onChange(normalized);
+  };
 
-  const handleMomentumEnd = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const offsetY = event.nativeEvent.contentOffset.y;
-      const rawIndex = Math.round(offsetY / DATE_SCROLL_ITEM_HEIGHT);
-      const clampedIndex = Math.min(Math.max(rawIndex, 0), Math.max(dates.length - 1, 0));
-      const nextDate = dates[clampedIndex];
+  const goToPreviousMonth = () => {
+    setActiveMonth((current) => addMonths(current, -1));
+  };
 
-      if (nextDate && nextDate.getTime() !== value.getTime()) {
-        onChange(nextDate);
-      }
+  const goToNextMonth = () => {
+    setActiveMonth((current) => addMonths(current, 1));
+  };
 
-      isInteractingRef.current = false;
-    },
-    [dates, onChange, value]
-  );
-
-  const handleScrollBegin = useCallback(() => {
-    isInteractingRef.current = true;
-  }, []);
-
-  const handleScrollEndDrag = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      handleMomentumEnd(event);
-    },
-    [handleMomentumEnd]
-  );
+  const canNavigatePrev = useMemo(() => {
+    const previousMonthEnd = endOfMonth(addMonths(activeMonth, -1));
+    return previousMonthEnd.getTime() >= normalizedMinimum.getTime();
+  }, [activeMonth, normalizedMinimum]);
 
   return (
-    <View style={styles.dateScrollPickerContainer}>
-      <ScrollView
-        ref={scrollRef}
-        showsVerticalScrollIndicator={false}
-        snapToInterval={DATE_SCROLL_ITEM_HEIGHT}
-        decelerationRate="fast"
-        onMomentumScrollEnd={handleMomentumEnd}
-        onScrollBeginDrag={handleScrollBegin}
-        onScrollEndDrag={handleScrollEndDrag}
-        contentContainerStyle={styles.dateScrollContent}
+    <>
+      <TouchableOpacity
+        style={styles.datePickerButton}
+        onPress={handleOpen}
+        accessibilityRole="button"
+        accessibilityLabel="Select date"
+        activeOpacity={0.85}
       >
-        {dates.map((date) => {
-          const key = date.getTime();
-          const isSelected = date.getTime() === value.getTime();
+        <Ionicons name="calendar-outline" size={18} color="#6f6f6f" style={styles.datePickerIcon} />
+        <Text style={styles.datePickerValue}>{formatDisplayDate(value)}</Text>
+      </TouchableOpacity>
 
-          return (
-            <View key={key} style={[styles.dateScrollItem, isSelected && styles.dateScrollItemSelected]}>
-              <Text style={[styles.dateScrollText, isSelected && styles.dateScrollTextSelected]}>
-                {formatDisplayDate(date)}
-              </Text>
+      {isPickerVisible && (
+        <Modal transparent animationType="fade" visible onRequestClose={handleClose}>
+          <View style={styles.datePickerModalBackdrop}>
+            <View style={styles.datePickerModalContent}>
+              <View style={styles.datePickerModalHeader}>
+                <TouchableOpacity
+                  style={[styles.datePickerModalButton, !canNavigatePrev && styles.datePickerModalButtonDisabled]}
+                  onPress={canNavigatePrev ? goToPreviousMonth : undefined}
+                  disabled={!canNavigatePrev}
+                  accessibilityRole="button"
+                  accessibilityLabel="Previous month"
+                >
+                  <Ionicons
+                    name="chevron-back"
+                    size={20}
+                    color={!canNavigatePrev ? '#c5c5c5' : '#111111'}
+                  />
+                </TouchableOpacity>
+                <Text style={styles.datePickerModalTitle}>
+                  {activeMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                </Text>
+                <TouchableOpacity
+                  style={styles.datePickerModalButton}
+                  onPress={goToNextMonth}
+                  accessibilityRole="button"
+                  accessibilityLabel="Next month"
+                >
+                  <Ionicons name="chevron-forward" size={20} color="#111111" />
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.datePickerWeekdaysRow}>
+                {WEEKDAY_LABELS.map((label) => (
+                  <Text key={label} style={styles.datePickerWeekday}>
+                    {label}
+                  </Text>
+                ))}
+              </View>
+
+              <View style={styles.datePickerDaysGrid}>
+                {calendarDays.map((day) => {
+                  const isFromCurrentMonth = day.getMonth() === activeMonth.getMonth();
+                  const isDisabled = day.getTime() < normalizedMinimum.getTime();
+                  const isSelected = isSameDay(day, value);
+
+                  return (
+                    <TouchableOpacity
+                      key={day.getTime()}
+                      style={[
+                        styles.datePickerDayButton,
+                        !isFromCurrentMonth && styles.datePickerDayOutside,
+                        isSelected && styles.datePickerDaySelected,
+                        isDisabled && styles.datePickerDayDisabled,
+                      ]}
+                      onPress={() => handleSelect(day)}
+                      disabled={isDisabled}
+                      accessibilityRole="button"
+                      accessibilityLabel={formatDisplayDate(day)}
+                    >
+                      <Text
+                        style={[
+                          styles.datePickerDayText,
+                          !isFromCurrentMonth && styles.datePickerDayTextOutside,
+                          isSelected && styles.datePickerDayTextSelected,
+                          isDisabled && styles.datePickerDayTextDisabled,
+                        ]}
+                      >
+                        {day.getDate()}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              <TouchableOpacity
+                style={styles.datePickerCloseButton}
+                onPress={handleClose}
+                accessibilityRole="button"
+                accessibilityLabel="Close date picker"
+              >
+                <Text style={styles.datePickerCloseButtonText}>Cancel</Text>
+              </TouchableOpacity>
             </View>
-          );
-        })}
-      </ScrollView>
-      <View pointerEvents="none" style={styles.dateScrollHighlight} />
-    </View>
+          </View>
+        </Modal>
+      )}
+    </>
   );
 }
 
@@ -605,11 +675,15 @@ export default function CartScreen() {
           <View style={styles.dateRow}>
             <View style={styles.dateColumn}>
               <Text style={styles.dateLabel}>Start Date</Text>
-              <DateScrollPicker value={startDate} minimumDate={minimumStartDate} onChange={handleStartDateChange} />
+              <DatePickerField
+                value={startDate}
+                minimumDate={minimumStartDate}
+                onChange={handleStartDateChange}
+              />
             </View>
             <View style={styles.dateColumn}>
               <Text style={styles.dateLabel}>End Date</Text>
-              <DateScrollPicker value={endDate} minimumDate={minimumEndDate} onChange={handleEndDateChange} />
+              <DatePickerField value={endDate} minimumDate={minimumEndDate} onChange={handleEndDateChange} />
             </View>
           </View>
           {isRangeInvalid && (
@@ -897,43 +971,119 @@ const styles = StyleSheet.create({
     color: '#c53030',
     fontSize: 13,
   },
-  dateScrollPickerContainer: {
-    width: '100%',
-    height: DATE_SCROLL_ITEM_HEIGHT * DATE_SCROLL_VISIBLE_ROWS,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#e5e5e5',
-    backgroundColor: '#fafafa',
-  },
-  dateScrollContent: {
-    paddingVertical: (DATE_SCROLL_ITEM_HEIGHT * DATE_SCROLL_VISIBLE_ROWS - DATE_SCROLL_ITEM_HEIGHT) / 2,
-  },
-  dateScrollItem: {
-    height: DATE_SCROLL_ITEM_HEIGHT,
+  datePickerButton: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dateScrollItemSelected: {
+    gap: 8,
+    borderWidth: 1,
+    borderColor: '#d9d9d9',
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     backgroundColor: '#ffffff',
   },
-  dateScrollText: {
-    fontSize: 15,
+  datePickerIcon: {
     color: '#6f6f6f',
   },
-  dateScrollTextSelected: {
+  datePickerValue: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#111111',
+  },
+  datePickerModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.35)',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+  },
+  datePickerModalContent: {
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    paddingBottom: 12,
+    overflow: 'hidden',
+  },
+  datePickerModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderColor: '#ededed',
+  },
+  datePickerModalButton: {
+    paddingHorizontal: 4,
+    paddingVertical: 6,
+    borderRadius: 12,
+  },
+  datePickerModalButtonDisabled: {
+    opacity: 0.35,
+  },
+  datePickerModalTitle: {
     fontSize: 16,
     fontWeight: '600',
     color: '#111111',
   },
-  dateScrollHighlight: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: (DATE_SCROLL_ITEM_HEIGHT * DATE_SCROLL_VISIBLE_ROWS - DATE_SCROLL_ITEM_HEIGHT) / 2,
-    height: DATE_SCROLL_ITEM_HEIGHT,
-    borderTopWidth: 1,
-    borderBottomWidth: 1,
-    borderColor: '#d4d4d4',
+  datePickerWeekdaysRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+  },
+  datePickerWeekday: {
+    flex: 1,
+    textAlign: 'center',
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#6f6f6f',
+  },
+  datePickerDaysGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingHorizontal: 12,
+    paddingBottom: 4,
+  },
+  datePickerDayButton: {
+    width: '14.2857%',
+    aspectRatio: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 4,
+    borderRadius: 999,
+  },
+  datePickerDayOutside: {
+    opacity: 0.5,
+  },
+  datePickerDaySelected: {
+    backgroundColor: '#111111',
+  },
+  datePickerDayDisabled: {
+    opacity: 0.35,
+  },
+  datePickerDayText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#111111',
+  },
+  datePickerDayTextOutside: {
+    color: '#6f6f6f',
+  },
+  datePickerDayTextSelected: {
+    color: '#ffffff',
+    fontWeight: '700',
+  },
+  datePickerDayTextDisabled: {
+    color: '#9c9c9c',
+  },
+  datePickerCloseButton: {
+    alignItems: 'center',
+    paddingVertical: 12,
+    marginTop: 4,
+  },
+  datePickerCloseButtonText: {
+    fontSize: 15,
+    color: '#0057ff',
+    fontWeight: '600',
   },
   submitErrorBanner: {
     borderRadius: 12,
