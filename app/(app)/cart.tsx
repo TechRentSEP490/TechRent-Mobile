@@ -16,6 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import type { ProductDetail } from '@/constants/products';
 import { useAuth } from '@/contexts/AuthContext';
+import { useCart } from '@/contexts/CartContext';
 import { useDeviceModel } from '@/hooks/use-device-model';
 import { createRentalOrder } from '@/services/rental-orders';
 
@@ -194,11 +195,27 @@ export default function CartScreen() {
       endDate?: string;
     }>();
   const { data: product, loading, error } = useDeviceModel(productId);
+  const { items: cartItems, removeItem, clear } = useCart();
 
   const quantity = useMemo(() => {
     const parsed = Number.parseInt(typeof quantityParam === 'string' ? quantityParam : '1', 10);
     return Number.isNaN(parsed) || parsed <= 0 ? 1 : parsed;
   }, [quantityParam]);
+
+  const fallbackItem = useMemo(() => {
+    if (!product) {
+      return null;
+    }
+
+    return {
+      product,
+      quantity,
+    };
+  }, [product, quantity]);
+
+  const items = cartItems.length > 0 ? cartItems : fallbackItem ? [fallbackItem] : [];
+  const hasItems = items.length > 0;
+  const isContextBacked = cartItems.length > 0;
 
   const today = clampToStartOfDay(new Date());
   const initialStartDate = parseDateParam(startParam, today);
@@ -217,7 +234,7 @@ export default function CartScreen() {
   const minimumEndDate = useMemo(() => addDays(startDate, 1), [startDate]);
   const isRangeInvalid = endDate.getTime() <= startDate.getTime();
 
-  if (!product) {
+  if (!hasItems && !product) {
     return (
       <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
         <View style={styles.loadingState}>
@@ -231,13 +248,18 @@ export default function CartScreen() {
     );
   }
 
-  const currency = determineCurrency(product);
-  const dailyRate = getDailyRate(product);
-  const totalAmount = dailyRate * quantity;
-  const formattedTotal = formatCurrencyValue(totalAmount, currency);
+  const primaryItem = items[0] ?? null;
+  const currency = primaryItem ? determineCurrency(primaryItem.product) : 'VND';
+  const totalAmount = items.reduce(
+    (sum, item) => sum + getDailyRate(item.product) * item.quantity,
+    0
+  );
+  const formattedTotal = hasItems ? formatCurrencyValue(totalAmount, currency) : '—';
 
-  const productLabel = product.model || product.name;
-  const deviceLabel = `${quantity} ${quantity === 1 ? 'device' : 'devices'}`;
+  const totalQuantity = items.reduce((sum, item) => sum + item.quantity, 0);
+  const deviceLabel = hasItems
+    ? `${totalQuantity} ${totalQuantity === 1 ? 'device' : 'devices'}`
+    : '0 devices';
   const rentalRangeLabel =
     endDate.getTime() === startDate.getTime()
       ? formatDisplayDate(startDate)
@@ -259,11 +281,12 @@ export default function CartScreen() {
     setEndDate(normalized);
   };
 
+  const hasInvalidItemId = items.some(
+    (item) => !Number.isFinite(Number.parseInt(item.product.id, 10))
+  );
+
   const isCheckoutDisabled =
-    !shippingAddress.trim() ||
-    isRangeInvalid ||
-    isSubmitting ||
-    !Number.isFinite(Number.parseInt(product.id, 10));
+    !hasItems || !shippingAddress.trim() || isRangeInvalid || isSubmitting || hasInvalidItemId;
 
   const handleCheckout = async () => {
     if (isCheckoutDisabled) {
@@ -275,10 +298,16 @@ export default function CartScreen() {
       return;
     }
 
-    const deviceModelId = Number.parseInt(product.id, 10);
+    const orderDetails = items.map((item) => {
+      const deviceModelId = Number.parseInt(item.product.id, 10);
+      return {
+        quantity: item.quantity,
+        deviceModelId,
+      };
+    });
 
-    if (!Number.isFinite(deviceModelId)) {
-      setSubmitError('Unable to determine the selected device. Please try again.');
+    if (orderDetails.some((detail) => !Number.isFinite(detail.deviceModelId))) {
+      setSubmitError('Unable to determine one or more selected devices. Please try again.');
       return;
     }
 
@@ -291,18 +320,15 @@ export default function CartScreen() {
           startDate: startDate.toISOString(),
           endDate: endDate.toISOString(),
           shippingAddress: shippingAddress.trim(),
-          orderDetails: [
-            {
-              quantity,
-              deviceModelId,
-            },
-          ],
+          orderDetails,
         },
         {
           accessToken: session.accessToken,
           tokenType: session.tokenType,
         }
       );
+
+      clear();
 
       Alert.alert(
         'Rental order created',
@@ -366,18 +392,56 @@ export default function CartScreen() {
               <Text style={styles.orderTitle}>Rental Summary</Text>
               <Text style={styles.orderSubtitle}>{rentalRangeLabel}</Text>
             </View>
-            <Ionicons name="trash-outline" size={20} color="#9c9c9c" />
+            <TouchableOpacity
+              style={[styles.clearButton, (!hasItems || !isContextBacked) && styles.clearButtonDisabled]}
+              onPress={clear}
+              disabled={!hasItems || !isContextBacked}
+              accessibilityRole="button"
+              accessibilityLabel="Clear cart"
+            >
+              <Ionicons
+                name="trash-outline"
+                size={20}
+                color={!hasItems || !isContextBacked ? '#d0d0d0' : '#9c9c9c'}
+              />
+            </TouchableOpacity>
           </View>
 
           <View style={styles.orderBody}>
-            <View style={styles.productBadge}>
-              <Ionicons name="phone-portrait-outline" size={24} color="#6f6f6f" />
-            </View>
-            <View style={styles.productDetails}>
-              <Text style={styles.productName}>{productLabel}</Text>
-              <Text style={styles.productMeta}>{`Quantity: ${quantity}`}</Text>
-            </View>
-            <Text style={styles.productPrice}>{formattedTotal}</Text>
+            {hasItems ? (
+              items.map((item) => {
+                const itemDailyRate = getDailyRate(item.product);
+                const itemTotal = formatCurrencyValue(itemDailyRate * item.quantity, determineCurrency(item.product));
+                const itemLabel = item.product.model || item.product.name;
+
+                return (
+                  <View key={item.product.id} style={styles.orderItem}>
+                    <View style={styles.productBadge}>
+                      <Ionicons name="phone-portrait-outline" size={24} color="#6f6f6f" />
+                    </View>
+                    <View style={styles.productDetails}>
+                      <Text style={styles.productName}>{itemLabel}</Text>
+                      <Text style={styles.productMeta}>{`Quantity: ${item.quantity}`}</Text>
+                    </View>
+                    <Text style={styles.productPrice}>{itemTotal}</Text>
+                    {isContextBacked ? (
+                      <TouchableOpacity
+                        style={styles.removeItemButton}
+                        onPress={() => removeItem(item.product.id)}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Remove ${itemLabel}`}
+                      >
+                        <Ionicons name="close" size={16} color="#6f6f6f" />
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+                );
+              })
+            ) : (
+              <View style={styles.emptyOrderBody}>
+                <Text style={styles.emptyOrderText}>Add devices to your cart to create a rental.</Text>
+              </View>
+            )}
           </View>
         </View>
 
@@ -552,6 +616,9 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   orderBody: {
+    gap: 12,
+  },
+  orderItem: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
@@ -579,6 +646,23 @@ const styles = StyleSheet.create({
   productPrice: {
     fontWeight: '600',
     color: '#111111',
+  },
+  removeItemButton: {
+    padding: 4,
+    marginLeft: 4,
+  },
+  emptyOrderBody: {
+    paddingVertical: 12,
+  },
+  emptyOrderText: {
+    color: '#6f6f6f',
+  },
+  clearButton: {
+    padding: 8,
+    borderRadius: 18,
+  },
+  clearButtonDisabled: {
+    opacity: 0.4,
   },
   formCard: {
     borderRadius: 20,
