@@ -163,10 +163,10 @@ export async function fetchRentalOrders(
   return json.data;
 }
 
-export async function fetchRentalOrderById(
+export const fetchRentalOrderById = async (
   session: SessionCredentials,
-  orderId: number,
-): Promise<RentalOrderResponse> {
+  orderId: number
+): Promise<RentalOrderResponse> => {
   if (!session?.accessToken) {
     throw new Error('An access token is required to load the rental order.');
   }
@@ -200,4 +200,12 @@ export async function fetchRentalOrderById(
   }
 
   return json.data;
-}
+};
+
+export const rentalOrdersApi = {
+  createRentalOrder,
+  fetchRentalOrders,
+  fetchRentalOrderById,
+};
+
+export default rentalOrdersApi;
