@@ -349,6 +349,50 @@ const buildContractPdfHtml = (
   const sanitizedContent = sanitizeRichHtml(contract.contractContent);
   const sanitizedTerms = sanitizeRichHtml(contract.termsAndConditions);
 
+  const resolveSignatureName = (
+    value: number | string | null | undefined,
+    fallback: string,
+  ): string => {
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed.length > 0) {
+        return trimmed;
+      }
+    }
+
+    if (typeof value === 'number') {
+      return `${fallback} #${value}`;
+    }
+
+    return fallback;
+  };
+
+  const normalizeSignatureDateLabel = (value: string | null | undefined): string | null => {
+    if (!value) {
+      return null;
+    }
+
+    const formatted = formatDateTime(value);
+
+    if (!formatted || formatted === '—') {
+      return null;
+    }
+
+    return formatted;
+  };
+
+  const isCustomerSigned =
+    contract.customerSignedBy !== null && contract.customerSignedBy !== undefined;
+  const isAdminSigned = contract.adminSignedBy !== null && contract.adminSignedBy !== undefined;
+  const customerBaseName = resolveSignatureName(contract.customerSignedBy ?? null, 'Khách hàng');
+  const adminBaseName = resolveSignatureName(contract.adminSignedBy ?? null, 'CÔNG TY TECHRENT');
+  const customerSignedCaption = `${customerBaseName} đã ký`;
+  const adminSignedCaption = `${adminBaseName} đã ký`;
+  const customerUnsignedCaption = '(Ký, ghi rõ họ tên)';
+  const adminUnsignedCaption = adminBaseName;
+  const customerSignedAtLabel = normalizeSignatureDateLabel(contract.customerSignedAt ?? null);
+  const adminSignedAtLabel = normalizeSignatureDateLabel(contract.adminSignedAt ?? null);
+
   const sections: string[] = [];
 
   if (sanitizedContent.length > 0) {
@@ -362,6 +406,48 @@ const buildContractPdfHtml = (
   if (sections.length === 0) {
     sections.push('<section><p>No contract content is available at this time.</p></section>');
   }
+
+  const signatureSection = `
+    <section class="signature-section">
+      <h2>Chữ ký</h2>
+      <div class="signature-grid">
+        <div class="signature-card">
+          <p class="signature-role">Đại diện bên A</p>
+          <div class="signature-box">
+            ${isAdminSigned ? '<span class="signature-check">✔</span>' : ''}
+          </div>
+          ${
+            isAdminSigned
+              ? `<p class="signature-caption">${escapeHtml(adminSignedCaption)}</p>`
+              : `<p class="signature-caption signature-placeholder">${escapeHtml(adminUnsignedCaption)}</p>`
+          }
+          ${
+            adminSignedAtLabel
+              ? `<p class="signature-date">Ký ngày: ${escapeHtml(adminSignedAtLabel)}</p>`
+              : ''
+          }
+        </div>
+        <div class="signature-card">
+          <p class="signature-role">Đại diện bên B</p>
+          <div class="signature-box">
+            ${isCustomerSigned ? '<span class="signature-check">✔</span>' : ''}
+          </div>
+          ${
+            isCustomerSigned
+              ? `<p class="signature-caption">${escapeHtml(customerSignedCaption)}</p>`
+              : `<p class="signature-caption signature-placeholder">${escapeHtml(customerUnsignedCaption)}</p>`
+          }
+          ${
+            customerSignedAtLabel
+              ? `<p class="signature-date">Ký ngày: ${escapeHtml(customerSignedAtLabel)}</p>`
+              : ''
+          }
+        </div>
+      </div>
+    </section>
+  `;
+
+  sections.push(signatureSection);
 
   const metadataHtml = metadata
     .map(
@@ -452,6 +538,61 @@ const buildContractPdfHtml = (
 
         strong {
           font-weight: 600;
+        }
+
+        .signature-section {
+          margin-top: 32px;
+        }
+
+        .signature-grid {
+          display: flex;
+          gap: 24px;
+          justify-content: space-between;
+          flex-wrap: wrap;
+        }
+
+        .signature-card {
+          flex: 1 1 240px;
+          text-align: center;
+        }
+
+        .signature-role {
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+          margin-bottom: 12px;
+        }
+
+        .signature-box {
+          border: 2px solid #d1d5db;
+          border-radius: 12px;
+          height: 120px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          margin-bottom: 12px;
+        }
+
+        .signature-check {
+          color: #22c55e;
+          font-size: 48px;
+          line-height: 1;
+        }
+
+        .signature-caption {
+          font-weight: 600;
+          margin-bottom: 4px;
+        }
+
+        .signature-date {
+          color: #6b7280;
+          font-size: 12px;
+        }
+
+        .signature-placeholder {
+          color: #6b7280;
+          font-weight: 500;
+          font-style: italic;
         }
       </style>
     </head>
@@ -1261,7 +1402,6 @@ export default function OrdersScreen() {
   const handleDownloadContract = useCallback(
     async (contract: ContractResponse | null, contextLabel?: string) => {
       const contractId = contract?.contractId;
-      const hasCustomerSignature = isContractSignedByCustomer(contract);
 
       if (!contractId) {
         Alert.alert(
@@ -1269,16 +1409,6 @@ export default function OrdersScreen() {
           contextLabel
             ? `A downloadable contract for ${contextLabel} is not available yet.`
             : 'This rental does not have a downloadable contract yet.',
-        );
-        return;
-      }
-
-      if (!hasCustomerSignature) {
-        Alert.alert(
-          'Contract pending',
-          contextLabel
-            ? `The contract for ${contextLabel} must include the customer signature before it can be downloaded.`
-            : 'The contract must include the customer signature before it can be downloaded.',
         );
         return;
       }
@@ -2257,37 +2387,34 @@ export default function OrdersScreen() {
                           : `#${contractForSelectedOrder.contractId}`}
                       </Text>
                     </View>
-                    {isContractSignedByCustomer(contractForSelectedOrder) ? (
-                      <Pressable
-                        style={[
-                          styles.detailDownloadButton,
-                          activeContractDownloadId === contractForSelectedOrder.contractId &&
-                            styles.detailDownloadButtonDisabled,
-                        ]}
-                        onPress={() => {
-                          if (activeContractDownloadId !== contractForSelectedOrder.contractId) {
-                            handleDownloadContract(
-                              contractForSelectedOrder,
-                              `Order #${orderDetailsData.orderId}`,
-                            );
-                          }
-                        }}
-                        disabled={activeContractDownloadId === contractForSelectedOrder.contractId}
-                      >
-                        {activeContractDownloadId === contractForSelectedOrder.contractId ? (
-                          <ActivityIndicator color="#1f7df4" />
-                        ) : (
-                          <>
-                            <Ionicons name="download-outline" size={18} color="#1f7df4" />
-                            <Text style={styles.detailDownloadLabel}>Download Contract</Text>
-                          </>
-                        )}
-                      </Pressable>
-                    ) : (
-                      <Text style={styles.detailDownloadHint}>
-                        The contract can be downloaded once it has been signed by the customer.
-                      </Text>
-                    )}
+                    <Pressable
+                      style={[
+                        styles.detailDownloadButton,
+                        activeContractDownloadId === contractForSelectedOrder.contractId &&
+                          styles.detailDownloadButtonDisabled,
+                      ]}
+                      onPress={() => {
+                        if (activeContractDownloadId !== contractForSelectedOrder.contractId) {
+                          handleDownloadContract(
+                            contractForSelectedOrder,
+                            `Order #${orderDetailsData.orderId}`,
+                          );
+                        }
+                      }}
+                      disabled={activeContractDownloadId === contractForSelectedOrder.contractId}
+                    >
+                      {activeContractDownloadId === contractForSelectedOrder.contractId ? (
+                        <ActivityIndicator color="#1f7df4" />
+                      ) : (
+                        <>
+                          <Ionicons name="download-outline" size={18} color="#1f7df4" />
+                          <Text style={styles.detailDownloadLabel}>Download Contract</Text>
+                        </>
+                      )}
+                    </Pressable>
+                    <Text style={styles.detailDownloadHint}>
+                      The contract PDF includes signature placeholders for both parties.
+                    </Text>
                   </View>
                 ) : null}
               </ScrollView>
