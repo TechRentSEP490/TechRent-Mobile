@@ -1,4 +1,5 @@
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -13,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 
 import { useAuth } from '@/contexts/AuthContext';
+import { getMyKycDetails, type CustomerKycDetails } from '@/services/kyc';
 
 const formatAccountStatus = (status?: string | null) => {
   if (!status) {
@@ -26,33 +28,72 @@ const formatAccountStatus = (status?: string | null) => {
     .join(' ');
 };
 
-const VERIFIED_KYC_STATUSES = new Set([
-  'VERIFIED',
-  'APPROVED',
-  'COMPLETED',
-]);
+const formatDateTime = (value?: string | null) => {
+  if (!value) {
+    return null;
+  }
 
-const PENDING_KYC_STATUSES = new Set([
-  'PENDING',
-  'PENDING_VERIFICATION',
-  'IN_REVIEW',
-  'UNDER_REVIEW',
-  'PROCESSING',
-  'AWAITING_APPROVAL',
-]);
+  const date = new Date(value);
 
-const REJECTED_KYC_STATUSES = new Set(['REJECTED', 'FAILED', 'DECLINED']);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return date.toLocaleString();
+};
 
 export default function ProfileScreen() {
   const router = useRouter();
-  const { isSignedIn, isHydrating, user, isFetchingProfile, refreshProfile, signOut } = useAuth();
+  const { isSignedIn, isHydrating, user, isFetchingProfile, refreshProfile, signOut, ensureSession } = useAuth();
   const [profileError, setProfileError] = useState<string | null>(null);
+  const [kycDetails, setKycDetails] = useState<CustomerKycDetails | null>(null);
+  const [isLoadingKyc, setIsLoadingKyc] = useState(false);
+  const [kycError, setKycError] = useState<string | null>(null);
 
   useEffect(() => {
     if (user && profileError) {
       setProfileError(null);
     }
   }, [user, profileError]);
+
+  const loadKycDetails = useCallback(async () => {
+    if (!user) {
+      setKycDetails(null);
+      setKycError(null);
+      return null;
+    }
+
+    setIsLoadingKyc(true);
+    setKycError(null);
+
+    try {
+      const session = await ensureSession();
+
+      if (!session?.accessToken) {
+        throw new Error('Please sign in again to view your KYC details.');
+      }
+
+      const details = await getMyKycDetails({
+        accessToken: session.accessToken,
+        tokenType: session.tokenType,
+      });
+
+      setKycDetails(details);
+
+      return details;
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Failed to load KYC information. Please try again later.';
+      setKycError(message);
+      return null;
+    } finally {
+      setIsLoadingKyc(false);
+    }
+  }, [ensureSession, user]);
+
+  useEffect(() => {
+    void loadKycDetails();
+  }, [loadKycDetails]);
 
   const handleLogout = useCallback(async () => {
     await signOut();
@@ -65,6 +106,7 @@ export default function ProfileScreen() {
     }
 
     setProfileError(null);
+    setKycError(null);
 
     try {
       await refreshProfile();
@@ -75,7 +117,8 @@ export default function ProfileScreen() {
           : 'Unable to refresh your profile. Please try again.';
       setProfileError(message);
     }
-  }, [isFetchingProfile, refreshProfile]);
+    await loadKycDetails();
+  }, [isFetchingProfile, refreshProfile, loadKycDetails]);
 
   const contactItems = useMemo(() => {
     if (!user) {
@@ -119,45 +162,84 @@ export default function ProfileScreen() {
     ];
   }, [user]);
 
-  const kycReminder = useMemo(() => {
-    if (!user) {
-      return null;
+  const normalizedKycStatus = (kycDetails?.kycStatus ?? user?.kycStatus ?? 'NOT_STARTED').toUpperCase();
+
+  const kycStatusMeta = useMemo(() => {
+    const friendlyStatus = formatAccountStatus(normalizedKycStatus);
+
+    if (normalizedKycStatus === 'VERIFIED') {
+      const verifiedAt = formatDateTime(kycDetails?.verifiedAt);
+
+      return {
+        friendlyStatus,
+        badgeStyle: styles.kycStatusBadgeSuccess,
+        badgeTextStyle: styles.kycStatusBadgeTextSuccess,
+        description: verifiedAt
+          ? `Your identity was verified on ${verifiedAt}.`
+          : 'Your identity has been verified. You are ready to rent devices.',
+        actionLabel: null,
+        actionType: null,
+      } as const;
     }
 
-    const normalizedStatus = (user.kycStatus ?? '').toUpperCase();
-    const friendlyStatus =
-      normalizedStatus && normalizedStatus.length > 0
-        ? formatAccountStatus(normalizedStatus)
-        : 'Not Started';
-
-    if (VERIFIED_KYC_STATUSES.has(normalizedStatus)) {
+    if (normalizedKycStatus === 'DOCUMENTS_SUBMITTED') {
       return {
-        description: `Status: ${friendlyStatus}. Your identity has been verified and you are ready to create rental orders.`,
-        buttonLabel: 'View KYC',
-        buttonDisabled: true,
-      };
+        friendlyStatus,
+        badgeStyle: styles.kycStatusBadgeWarning,
+        badgeTextStyle: styles.kycStatusBadgeTextWarning,
+        description: 'Thank you! Your documents were submitted and are awaiting review.',
+        actionLabel: 'Refresh Status',
+        actionType: 'refresh' as const,
+      } as const;
     }
 
-    if (REJECTED_KYC_STATUSES.has(normalizedStatus)) {
+    if (normalizedKycStatus === 'NOT_STARTED') {
       return {
-        description: `Status: ${friendlyStatus}. We could not verify your documents. Please review your information and resubmit.`,
-        buttonLabel: 'Resubmit KYC',
-      };
-    }
-
-    if (PENDING_KYC_STATUSES.has(normalizedStatus)) {
-      return {
-        description: `Status: ${friendlyStatus}. Thank you! Your documents are under review. We will notify you once verification is complete.`,
-        buttonLabel: 'Refresh Status',
-        buttonDisabled: true,
-      };
+        friendlyStatus,
+        badgeStyle: styles.kycStatusBadgeDanger,
+        badgeTextStyle: styles.kycStatusBadgeTextDanger,
+        description: 'Complete identity verification to unlock faster approvals and rentals.',
+        actionLabel: 'Start KYC Process',
+        actionType: 'start' as const,
+      } as const;
     }
 
     return {
-      description: `Status: ${friendlyStatus}. Complete identity verification to unlock all rental features and faster approvals.`,
-      buttonLabel: 'Complete KYC',
-    };
-  }, [user]);
+      friendlyStatus,
+      badgeStyle: styles.kycStatusBadgeNeutral,
+      badgeTextStyle: styles.kycStatusBadgeTextNeutral,
+      description: 'Keep your documents up to date to avoid delays with future rentals.',
+      actionLabel: 'Refresh Status',
+      actionType: 'refresh' as const,
+    } as const;
+  }, [kycDetails?.verifiedAt, normalizedKycStatus]);
+
+  const handleKycAction = useCallback(() => {
+    if (kycStatusMeta.actionType === 'start') {
+      router.push('/(app)/kyc-documents');
+      return;
+    }
+
+    if (kycStatusMeta.actionType === 'refresh') {
+      void loadKycDetails();
+    }
+  }, [kycStatusMeta.actionType, loadKycDetails, router]);
+
+  const renderKycDocument = useCallback(
+    (label: string, uri: string | null | undefined) => (
+      <View key={label} style={styles.kycDocumentItem}>
+        {uri ? (
+          <Image source={{ uri }} style={styles.kycDocumentImage} contentFit="cover" />
+        ) : (
+          <View style={styles.kycDocumentPlaceholder}>
+            <Ionicons name="image-outline" size={24} color="#9ca3af" />
+          </View>
+        )}
+        <Text style={styles.kycDocumentLabel}>{label}</Text>
+      </View>
+    ),
+    [],
+  );
 
   const isAccountActive = user?.status?.toUpperCase() === 'ACTIVE';
 
@@ -320,27 +402,89 @@ export default function ProfileScreen() {
           </View>
         </View>
 
-        {kycReminder && (
-          <View style={styles.kycCard}>
-            <View style={styles.kycHeader}>
-              <Ionicons name="shield-checkmark-outline" size={24} color="#f6a609" />
-              <Text style={styles.kycTitle}>KYC Reminder</Text>
-            </View>
-            <Text style={styles.kycDescription}>{kycReminder.description}</Text>
-            {kycReminder.buttonLabel ? (
-              <TouchableOpacity
-                style={[
-                  styles.kycButton,
-                  kycReminder.buttonDisabled && styles.kycButtonDisabled,
-                ]}
-                onPress={() => router.push('/(app)/kyc-documents')}
-                disabled={kycReminder.buttonDisabled}
-              >
-                <Text style={styles.kycButtonText}>{kycReminder.buttonLabel}</Text>
-              </TouchableOpacity>
-            ) : null}
+        <View style={styles.kycCard}>
+          <View style={styles.kycHeader}>
+            <Ionicons name="shield-checkmark-outline" size={24} color="#111111" />
+            <Text style={styles.kycTitle}>Identity Verification</Text>
+            {isLoadingKyc ? <ActivityIndicator size="small" color="#111111" /> : null}
           </View>
-        )}
+          <View style={[styles.kycStatusBadge, kycStatusMeta.badgeStyle]}>
+            <Text style={[styles.kycStatusBadgeText, kycStatusMeta.badgeTextStyle]}>{kycStatusMeta.friendlyStatus}</Text>
+          </View>
+          <Text style={styles.kycDescription}>{kycStatusMeta.description}</Text>
+          {kycError ? <Text style={styles.kycErrorText}>{kycError}</Text> : null}
+          {kycDetails ? (
+            <View style={styles.kycInfoList}>
+              <View style={styles.kycInfoRow}>
+                <Text style={styles.kycInfoLabel}>Full name</Text>
+                <Text style={styles.kycInfoValue}>
+                  {kycDetails.fullName && kycDetails.fullName.trim().length > 0
+                    ? kycDetails.fullName
+                    : 'Not provided'}
+                </Text>
+              </View>
+              <View style={styles.kycInfoRow}>
+                <Text style={styles.kycInfoLabel}>Identification number</Text>
+                <Text style={styles.kycInfoValue}>
+                  {kycDetails.identificationCode && kycDetails.identificationCode.trim().length > 0
+                    ? kycDetails.identificationCode
+                    : 'Not provided'}
+                </Text>
+              </View>
+              <View style={styles.kycInfoRow}>
+                <Text style={styles.kycInfoLabel}>Document type</Text>
+                <Text style={styles.kycInfoValue}>
+                  {kycDetails.typeOfIdentification && kycDetails.typeOfIdentification.trim().length > 0
+                    ? kycDetails.typeOfIdentification
+                    : 'Not provided'}
+                </Text>
+              </View>
+              <View style={[styles.kycInfoRow, styles.kycInfoRowLast]}>
+                <Text style={styles.kycInfoLabel}>Permanent address</Text>
+                <Text style={styles.kycInfoValue}>
+                  {kycDetails.permanentAddress && kycDetails.permanentAddress.trim().length > 0
+                    ? kycDetails.permanentAddress
+                    : 'Not provided'}
+                </Text>
+              </View>
+            </View>
+          ) : !kycError && !isLoadingKyc ? (
+            <Text style={styles.kycPlaceholderText}>
+              {normalizedKycStatus === 'NOT_STARTED'
+                ? 'You have not started the KYC process yet.'
+                : 'We could not find any KYC documents for your account.'}
+            </Text>
+          ) : null}
+          <Text style={styles.kycDocumentsTitle}>Submitted documents</Text>
+          <View style={styles.kycDocumentGrid}>
+            {['Front of ID', 'Back of ID', 'Selfie with ID'].map((label, index) => {
+              const uri = index === 0 ? kycDetails?.frontCCCDUrl : index === 1 ? kycDetails?.backCCCDUrl : kycDetails?.selfieUrl;
+              return renderKycDocument(label, uri ?? null);
+            })}
+          </View>
+          {kycStatusMeta.actionLabel ? (
+            <TouchableOpacity
+              style={[
+                styles.kycActionButton,
+                kycStatusMeta.actionType === 'start' ? styles.kycActionButtonPrimary : styles.kycActionButtonSecondary,
+                isLoadingKyc && styles.kycActionButtonDisabled,
+              ]}
+              onPress={handleKycAction}
+              disabled={isLoadingKyc}
+            >
+              <Text
+                style={[
+                  styles.kycActionButtonText,
+                  kycStatusMeta.actionType === 'start'
+                    ? styles.kycActionButtonTextPrimary
+                    : styles.kycActionButtonTextSecondary,
+                ]}
+              >
+                {kycStatusMeta.actionLabel}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
 
         <TouchableOpacity style={styles.logoutButton} onPress={() => void handleLogout()}>
           <Text style={styles.logoutText}>Log Out</Text>
@@ -562,9 +706,11 @@ const styles = StyleSheet.create({
   },
   kycCard: {
     borderRadius: 16,
-    backgroundColor: '#fff6e5',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#ffffff',
     padding: 20,
-    gap: 12,
+    gap: 16,
   },
   kycHeader: {
     flexDirection: 'row',
@@ -575,24 +721,155 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: '#111111',
+    flex: 1,
   },
   kycDescription: {
     fontSize: 14,
     color: '#555555',
+    lineHeight: 20,
   },
-  kycButton: {
+  kycErrorText: {
+    fontSize: 13,
+    color: '#b91c1c',
+    backgroundColor: '#fee2e2',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontWeight: '600',
+  },
+  kycStatusBadge: {
     alignSelf: 'flex-start',
-    backgroundColor: '#f6a609',
-    borderRadius: 20,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+  },
+  kycStatusBadgeSuccess: {
+    backgroundColor: '#dcfce7',
+  },
+  kycStatusBadgeWarning: {
+    backgroundColor: '#fef3c7',
+  },
+  kycStatusBadgeDanger: {
+    backgroundColor: '#fee2e2',
+  },
+  kycStatusBadgeNeutral: {
+    backgroundColor: '#e5e7eb',
+  },
+  kycStatusBadgeText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#111111',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  kycStatusBadgeTextSuccess: {
+    color: '#166534',
+  },
+  kycStatusBadgeTextWarning: {
+    color: '#92400e',
+  },
+  kycStatusBadgeTextDanger: {
+    color: '#b91c1c',
+  },
+  kycStatusBadgeTextNeutral: {
+    color: '#1f2937',
+  },
+  kycInfoList: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#f3f4f6',
+    overflow: 'hidden',
+  },
+  kycInfoRow: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+    gap: 4,
+  },
+  kycInfoRowLast: {
+    borderBottomWidth: 0,
+  },
+  kycInfoLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#6b7280',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  kycInfoValue: {
+    fontSize: 14,
+    color: '#111111',
+  },
+  kycPlaceholderText: {
+    fontSize: 14,
+    color: '#6b7280',
+    backgroundColor: '#f3f4f6',
+    padding: 12,
+    borderRadius: 12,
+  },
+  kycDocumentsTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#111111',
+  },
+  kycDocumentGrid: {
+    flexDirection: 'row',
+    gap: 12,
+    flexWrap: 'wrap',
+  },
+  kycDocumentItem: {
+    width: '30%',
+    minWidth: 100,
+    flexGrow: 1,
+    gap: 8,
+  },
+  kycDocumentImage: {
+    width: '100%',
+    aspectRatio: 3 / 4,
+    borderRadius: 12,
+    backgroundColor: '#f3f4f6',
+  },
+  kycDocumentPlaceholder: {
+    width: '100%',
+    aspectRatio: 3 / 4,
+    borderRadius: 12,
+    backgroundColor: '#f3f4f6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  kycDocumentLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#4b5563',
+  },
+  kycActionButton: {
+    marginTop: 4,
+    alignSelf: 'flex-start',
+    borderRadius: 999,
     paddingHorizontal: 20,
     paddingVertical: 10,
+    borderWidth: 1,
   },
-  kycButtonDisabled: {
+  kycActionButtonPrimary: {
+    backgroundColor: '#111111',
+    borderColor: '#111111',
+  },
+  kycActionButtonSecondary: {
+    backgroundColor: '#ffffff',
+    borderColor: '#111111',
+  },
+  kycActionButtonDisabled: {
     opacity: 0.6,
   },
-  kycButtonText: {
+  kycActionButtonText: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '700',
+  },
+  kycActionButtonTextPrimary: {
+    color: '#ffffff',
+  },
+  kycActionButtonTextSecondary: {
     color: '#111111',
   },
   logoutButton: {
