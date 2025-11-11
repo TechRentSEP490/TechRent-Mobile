@@ -318,6 +318,11 @@ export async function signContract(
   }
 
   const endpointUrl = buildApiUrl('contracts', payload.contractId, 'sign');
+
+  console.log('[Contracts] signContract request', {
+    endpointUrl,
+    payload,
+  });
   let response: Response;
 
   try {
@@ -357,6 +362,12 @@ export async function signContract(
   }
 
   const json = (await response.json()) as SignContractResult | null;
+
+  console.log('[Contracts] signContract response', {
+    status: response.status,
+    ok: response.ok,
+    body: json,
+  });
 
   if (!json || json.status !== 'SUCCESS') {
     const error = new Error(
