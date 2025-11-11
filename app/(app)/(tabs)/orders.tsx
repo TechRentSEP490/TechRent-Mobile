@@ -517,27 +517,7 @@ const isContractSignedByCustomer = (contract?: ContractResponse | null): boolean
     return false;
   }
 
-  const { customerSignedBy } = contract;
-
-  if (typeof customerSignedBy === 'number') {
-    return Number.isFinite(customerSignedBy) && customerSignedBy > 0;
-  }
-
-  if (typeof customerSignedBy === 'string') {
-    const trimmed = customerSignedBy.trim();
-    if (trimmed.length === 0) {
-      return false;
-    }
-
-    const parsed = Number.parseInt(trimmed, 10);
-    if (!Number.isNaN(parsed)) {
-      return parsed > 0;
-    }
-
-    return true;
-  }
-
-  return false;
+  return contract.customerSignedBy !== null && contract.customerSignedBy !== undefined;
 };
 
 const mapOrderResponseToCard = (
@@ -546,10 +526,8 @@ const mapOrderResponseToCard = (
   contract?: ContractResponse | null,
 ): OrderCard => {
   const statusMeta = mapStatusToMeta(order.orderStatus);
-  const normalizedContractStatus = contract?.status?.trim().toUpperCase();
-  const isContractSigned =
-    normalizedContractStatus === 'SIGNED' || isContractSignedByCustomer(contract);
-  const action = isContractSigned
+  const hasCustomerSignature = isContractSignedByCustomer(contract);
+  const action = hasCustomerSignature
     ? { label: 'Download Contract', type: 'downloadContract' as const }
     : statusMeta.action;
 
@@ -634,9 +612,7 @@ export default function OrdersScreen() {
 
   const progressWidth = useMemo<DimensionValue>(() => `${(currentStep / 3) * 100}%`, [currentStep]);
   const isContractAlreadySigned = useMemo(
-    () =>
-      isContractSignedByCustomer(activeContract) ||
-      activeContract?.status?.trim().toUpperCase() === 'SIGNED',
+    () => isContractSignedByCustomer(activeContract),
     [activeContract],
   );
   const contractForSelectedOrder = useMemo(
@@ -1291,7 +1267,7 @@ export default function OrdersScreen() {
   const handleDownloadContract = useCallback(
     async (contract: ContractResponse | null, contextLabel?: string) => {
       const contractId = contract?.contractId;
-      const normalizedStatus = contract?.status?.trim().toUpperCase();
+      const hasCustomerSignature = isContractSignedByCustomer(contract);
 
       if (!contractId) {
         Alert.alert(
@@ -1303,12 +1279,12 @@ export default function OrdersScreen() {
         return;
       }
 
-      if (normalizedStatus !== 'SIGNED') {
+      if (!hasCustomerSignature) {
         Alert.alert(
           'Contract pending',
           contextLabel
-            ? `The contract for ${contextLabel} must be signed before it can be downloaded.`
-            : 'The contract must be signed before it can be downloaded.',
+            ? `The contract for ${contextLabel} must include the customer signature before it can be downloaded.`
+            : 'The contract must include the customer signature before it can be downloaded.',
         );
         return;
       }
