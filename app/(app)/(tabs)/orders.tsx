@@ -1601,6 +1601,8 @@ export default function OrdersScreen() {
           throw new Error('You must be signed in to view this rental order.');
         }
 
+        console.log('[Orders] Loading rental order details', { orderId });
+
         const details = await fetchRentalOrderById(activeSession, orderId);
 
         if (requestMarker.cancelled || orderDetailsTargetIdRef.current !== orderId) {
@@ -1614,6 +1616,11 @@ export default function OrdersScreen() {
         if (requestMarker.cancelled || orderDetailsTargetIdRef.current !== orderId) {
           return;
         }
+
+        console.error('[Orders] Failed to load rental order details', {
+          orderId,
+          error,
+        });
 
         const fallbackMessage = 'Failed to load the rental order details. Please try again.';
         const normalizedError = error instanceof Error ? error : new Error(fallbackMessage);
