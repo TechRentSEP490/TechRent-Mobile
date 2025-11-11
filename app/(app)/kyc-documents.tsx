@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
-import * as MlkitOcr from 'expo-mlkit-ocr';
+import * as TextExtractor from 'expo-text-extractor';
 import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import {
@@ -60,52 +60,53 @@ const documentCopy: Record<DocumentType, { title: string; description: string }>
   },
 };
 
+type TextExtractorFunction = (uri: string, options?: Record<string, unknown>) => Promise<unknown>;
+
 const scanDocumentForText = async (uri: string): Promise<unknown> => {
-  const candidates: Array<{
-    fn: unknown;
-    invoke: (fn: (...args: any[]) => any) => Promise<unknown>;
-  }> = [
-    {
-      fn: MlkitOcr.scanOCRFromImageAsync,
-      invoke: (fn) => fn(uri, { shouldGroup: true }),
-    },
-    {
-      fn: MlkitOcr.scanFromURLAsync,
-      invoke: (fn) => fn(uri, { shouldGroup: true }),
-    },
-    {
-      fn: MlkitOcr.scanOCRAsync,
-      invoke: (fn) => fn(uri, { shouldGroup: true }),
-    },
-    {
-      fn: MlkitOcr.recognize,
-      invoke: (fn) => fn(uri, { shouldGroup: true }),
-    },
-  ];
+  const moduleEntries = Object.entries(TextExtractor ?? {})
+    .map(([name, fn]) => ({ name, fn }))
+    .filter(({ fn }) => typeof fn === 'function')
+    .filter(({ name }) => /extract|recognize|scan/i.test(name));
+
+  const defaultExport = (TextExtractor as { default?: unknown }).default;
+  if (typeof defaultExport === 'function') {
+    moduleEntries.unshift({ name: 'default', fn: defaultExport });
+  }
+
+  if (moduleEntries.length === 0) {
+    throw new Error('Text extractor module does not expose a usable method.');
+  }
 
   let lastError: unknown;
 
-  for (const candidate of candidates) {
-    if (typeof candidate.fn !== 'function') {
-      continue;
-    }
+  for (const { fn, name } of moduleEntries) {
+    const extractor = fn as TextExtractorFunction;
 
     try {
-      return await candidate.invoke(candidate.fn as (...args: any[]) => any);
+      return await extractor(uri, { shouldGroup: true });
     } catch (error) {
       lastError = error;
 
-      if (error instanceof TypeError) {
+      if (error instanceof TypeError || error instanceof RangeError) {
         try {
-          return await (candidate.fn as (...args: any[]) => any)(uri);
+          return await extractor(uri);
         } catch (fallbackError) {
           lastError = fallbackError;
         }
+
+        const acceptsObjectArg = extractor as unknown as (input: unknown) => Promise<unknown>;
+        try {
+          return await acceptsObjectArg({ uri });
+        } catch (objectArgError) {
+          lastError = objectArgError;
+        }
       }
+
+      console.warn(`Text extraction failed using ${name}`, error);
     }
   }
 
-  throw lastError ?? new Error('ML Kit OCR module is unavailable.');
+  throw lastError ?? new Error('Unable to extract text from document.');
 };
 
 const extractTextFromResult = (result: unknown): string => {
@@ -132,9 +133,19 @@ const extractTextFromResult = (result: unknown): string => {
       return text;
     }
 
+    const { value } = result as { value?: string };
+    if (typeof value === 'string' && value.length > 0) {
+      return value;
+    }
+
     const blocks = (result as { blocks?: unknown }).blocks;
     if (blocks) {
       return extractTextFromResult(blocks);
+    }
+
+    const pages = (result as { pages?: unknown }).pages;
+    if (pages) {
+      return extractTextFromResult(pages);
     }
 
     const lines = (result as { lines?: unknown }).lines;
