@@ -53,6 +53,7 @@ type OrderActionType =
   | 'rentAgain';
 
 type OrderCard = {
+  orderId: number;
   id: string;
   title: string;
   deviceSummary: string;
@@ -667,6 +668,7 @@ const mapOrderResponseToCard = (
 ): OrderCard => {
   const statusMeta = mapStatusToMeta(order.orderStatus);
   return {
+    orderId: order.orderId,
     id: String(order.orderId),
     title: `Order #${order.orderId}`,
     deviceSummary: deriveDeviceSummary(order, deviceNames),
@@ -980,9 +982,9 @@ export default function OrdersScreen() {
       return;
     }
 
-    const targetOrderId = Number.parseInt(activeOrder.id, 10);
+    const targetOrderId = activeOrder.orderId;
 
-    if (Number.isNaN(targetOrderId)) {
+    if (!Number.isFinite(targetOrderId)) {
       setContractErrorMessage('Invalid rental order selected.');
       return;
     }
@@ -1637,9 +1639,9 @@ export default function OrdersScreen() {
 
   const handleViewDetails = useCallback(
     (order: OrderCard) => {
-      const parsedId = Number.parseInt(order.id, 10);
+      const parsedId = order.orderId;
 
-      if (Number.isNaN(parsedId) || parsedId <= 0) {
+      if (!Number.isFinite(parsedId) || parsedId <= 0) {
         Alert.alert('Order unavailable', 'Unable to load details for this rental order.');
         return;
       }
