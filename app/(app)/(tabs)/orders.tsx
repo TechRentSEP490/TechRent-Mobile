@@ -50,8 +50,7 @@ type OrderActionType =
   | 'extendRental'
   | 'confirmReceipt'
   | 'cancelOrder'
-  | 'rentAgain'
-  | 'downloadContract';
+  | 'rentAgain';
 
 type OrderCard = {
   id: string;
@@ -526,11 +525,6 @@ const mapOrderResponseToCard = (
   contract?: ContractResponse | null,
 ): OrderCard => {
   const statusMeta = mapStatusToMeta(order.orderStatus);
-  const hasCustomerSignature = isContractSignedByCustomer(contract);
-  const action = hasCustomerSignature
-    ? { label: 'Download Contract', type: 'downloadContract' as const }
-    : statusMeta.action;
-
   return {
     id: String(order.orderId),
     title: `Order #${order.orderId}`,
@@ -541,7 +535,7 @@ const mapOrderResponseToCard = (
     statusLabel: statusMeta.label,
     statusColor: statusMeta.color,
     statusBackground: statusMeta.background,
-    action,
+    action: statusMeta.action,
     contract: contract ?? null,
   };
 };
@@ -1417,14 +1411,11 @@ export default function OrdersScreen() {
         case 'rentAgain':
           Alert.alert('Rent Again', 'We\'ll move this device to your cart so you can rent it again.');
           break;
-        case 'downloadContract':
-          handleDownloadContract(order.contract ?? null, order.title);
-          break;
         default:
           break;
       }
     },
-    [handleDownloadContract, openFlow],
+    [openFlow],
   );
 
   const orderDetailsCacheRef = useRef<Record<number, RentalOrderResponse>>({});
@@ -1939,12 +1930,6 @@ export default function OrdersScreen() {
         onRefresh={handleRefresh}
         renderItem={({ item }) => {
           const isHighlighted = highlightedOrderId === item.id;
-          const isDownloadAction = item.action?.type === 'downloadContract';
-          const isDownloadingCardContract = Boolean(
-            isDownloadAction &&
-              item.contract?.contractId &&
-              activeContractDownloadId === item.contract.contractId,
-          );
           return (
             <View
               style={[
@@ -1990,22 +1975,10 @@ export default function OrdersScreen() {
                   </Pressable>
                   {item.action ? (
                     <Pressable
-                      style={[
-                        styles.cardActionButton,
-                        isDownloadingCardContract && styles.cardActionButtonDisabled,
-                      ]}
-                      onPress={() => {
-                        if (!isDownloadingCardContract) {
-                          handleCardAction(item);
-                        }
-                      }}
-                      disabled={isDownloadingCardContract}
+                      style={styles.cardActionButton}
+                      onPress={() => handleCardAction(item)}
                     >
-                      {isDownloadingCardContract ? (
-                        <ActivityIndicator color="#ffffff" size="small" />
-                      ) : (
-                        <Text style={styles.cardActionLabel}>{item.action.label}</Text>
-                      )}
+                      <Text style={styles.cardActionLabel}>{item.action.label}</Text>
                     </Pressable>
                   ) : null}
                 </View>
@@ -2284,31 +2257,37 @@ export default function OrdersScreen() {
                           : `#${contractForSelectedOrder.contractId}`}
                       </Text>
                     </View>
-                    <Pressable
-                      style={[
-                        styles.detailDownloadButton,
-                        activeContractDownloadId === contractForSelectedOrder.contractId &&
-                          styles.detailDownloadButtonDisabled,
-                      ]}
-                      onPress={() => {
-                        if (activeContractDownloadId !== contractForSelectedOrder.contractId) {
-                          handleDownloadContract(
-                            contractForSelectedOrder,
-                            `Order #${orderDetailsData.orderId}`,
-                          );
-                        }
-                      }}
-                      disabled={activeContractDownloadId === contractForSelectedOrder.contractId}
-                    >
-                      {activeContractDownloadId === contractForSelectedOrder.contractId ? (
-                        <ActivityIndicator color="#1f7df4" />
-                      ) : (
-                        <>
-                          <Ionicons name="download-outline" size={18} color="#1f7df4" />
-                          <Text style={styles.detailDownloadLabel}>Download Contract</Text>
-                        </>
-                      )}
-                    </Pressable>
+                    {isContractSignedByCustomer(contractForSelectedOrder) ? (
+                      <Pressable
+                        style={[
+                          styles.detailDownloadButton,
+                          activeContractDownloadId === contractForSelectedOrder.contractId &&
+                            styles.detailDownloadButtonDisabled,
+                        ]}
+                        onPress={() => {
+                          if (activeContractDownloadId !== contractForSelectedOrder.contractId) {
+                            handleDownloadContract(
+                              contractForSelectedOrder,
+                              `Order #${orderDetailsData.orderId}`,
+                            );
+                          }
+                        }}
+                        disabled={activeContractDownloadId === contractForSelectedOrder.contractId}
+                      >
+                        {activeContractDownloadId === contractForSelectedOrder.contractId ? (
+                          <ActivityIndicator color="#1f7df4" />
+                        ) : (
+                          <>
+                            <Ionicons name="download-outline" size={18} color="#1f7df4" />
+                            <Text style={styles.detailDownloadLabel}>Download Contract</Text>
+                          </>
+                        )}
+                      </Pressable>
+                    ) : (
+                      <Text style={styles.detailDownloadHint}>
+                        The contract can be downloaded once it has been signed by the customer.
+                      </Text>
+                    )}
                   </View>
                 ) : null}
               </ScrollView>
@@ -2502,9 +2481,6 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 16,
     paddingVertical: 10,
-  },
-  cardActionButtonDisabled: {
-    opacity: 0.6,
   },
   cardActionLabel: {
     fontSize: 13,
@@ -3100,6 +3076,11 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: '#1f7df4',
+  },
+  detailDownloadHint: {
+    marginTop: 12,
+    fontSize: 12,
+    color: '#6b7280',
   },
   orderDetailsState: {
     alignItems: 'center',
