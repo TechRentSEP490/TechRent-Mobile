@@ -10,8 +10,17 @@ export type CartItem = {
 type CartContextValue = {
   items: CartItem[];
   addItem: (product: ProductDetail, quantity: number, options?: { replace?: boolean }) => void;
+  updateQuantity: (productId: string, quantity: number) => void;
   removeItem: (productId: string) => void;
   clear: () => void;
+};
+
+const resolveAvailableStock = (product: ProductDetail) => {
+  if (typeof product.stock === 'number' && Number.isFinite(product.stock)) {
+    return Math.max(0, Math.floor(product.stock));
+  }
+
+  return Number.POSITIVE_INFINITY;
 };
 
 const CartContext = createContext<CartContextValue | undefined>(undefined);
@@ -24,11 +33,22 @@ export function CartProvider({ children }: { children: ReactNode }) {
       const normalizedQuantity = Number.isFinite(quantity) && quantity > 0 ? Math.floor(quantity) : 1;
       const replace = options?.replace ?? false;
       const existingIndex = current.findIndex((item) => item.product.id === product.id);
+      const stockLimit = resolveAvailableStock(product);
+
+      if (stockLimit === 0) {
+        return current;
+      }
 
       if (replace) {
-        const nextItems = existingIndex >= 0 ? [...current] : [...current, { product, quantity: normalizedQuantity }];
+        const clampedQuantity = Math.min(normalizedQuantity, stockLimit);
+
+        if (clampedQuantity <= 0) {
+          return current.filter((item) => item.product.id !== product.id);
+        }
+
+        const nextItems = existingIndex >= 0 ? [...current] : [...current, { product, quantity: clampedQuantity }];
         if (existingIndex >= 0) {
-          nextItems[existingIndex] = { product, quantity: normalizedQuantity };
+          nextItems[existingIndex] = { product, quantity: clampedQuantity };
         }
         return nextItems;
       }
@@ -36,14 +56,61 @@ export function CartProvider({ children }: { children: ReactNode }) {
       if (existingIndex >= 0) {
         const nextItems = [...current];
         const existing = nextItems[existingIndex];
+        const desiredQuantity = existing.quantity + normalizedQuantity;
+        const clampedQuantity = Math.min(desiredQuantity, stockLimit);
+
         nextItems[existingIndex] = {
           product: existing.product,
-          quantity: existing.quantity + normalizedQuantity,
+          quantity: clampedQuantity,
         };
         return nextItems;
       }
 
-      return [...current, { product, quantity: normalizedQuantity }];
+      const clampedQuantity = Math.min(normalizedQuantity, stockLimit);
+
+      if (clampedQuantity <= 0) {
+        return current;
+      }
+
+      return [...current, { product, quantity: clampedQuantity }];
+    });
+  };
+
+  const updateQuantity: CartContextValue['updateQuantity'] = (productId, quantity) => {
+    setItems((current) => {
+      const normalizedQuantity = Math.floor(Number(quantity));
+      const nextItems = [...current];
+      const index = nextItems.findIndex((item) => item.product.id === productId);
+
+      if (index === -1) {
+        return current;
+      }
+
+      const targetItem = nextItems[index];
+      const stockLimit = resolveAvailableStock(targetItem.product);
+
+      if (!Number.isFinite(normalizedQuantity) || normalizedQuantity <= 0) {
+        nextItems.splice(index, 1);
+        return nextItems;
+      }
+
+      const clampedQuantity = Math.min(normalizedQuantity, stockLimit);
+
+      if (clampedQuantity <= 0) {
+        nextItems.splice(index, 1);
+        return nextItems;
+      }
+
+      if (clampedQuantity === targetItem.quantity) {
+        return current;
+      }
+
+      nextItems[index] = {
+        product: targetItem.product,
+        quantity: clampedQuantity,
+      };
+
+      return nextItems;
     });
   };
 
@@ -59,6 +126,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
     () => ({
       items,
       addItem,
+      updateQuantity,
       removeItem,
       clear,
     }),

@@ -4,13 +4,13 @@ import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
-  Linking,
+  Modal,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -88,6 +88,8 @@ export default function KycStatusScreen() {
   const [details, setDetails] = useState<CustomerKycDetails | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [preview, setPreview] = useState<{ label: string; uri: string } | null>(null);
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
 
   const loadDetails = useCallback(async () => {
     setIsLoading(true);
@@ -157,32 +159,35 @@ export default function KycStatusScreen() {
 
   const documentRows = useMemo(() => buildDocumentRows(details), [details]);
 
-  const handleOpenDocument = useCallback(async (uri: string | null | undefined) => {
+  const handlePreviewDocument = useCallback((label: string, uri: string | null | undefined) => {
     if (!uri) {
       return;
     }
 
-    try {
-      const canOpen = await Linking.canOpenURL(uri);
-
-      if (!canOpen) {
-        Alert.alert('Unsupported link', 'We could not open this document. Please try again later.');
-        return;
-      }
-
-      await Linking.openURL(uri);
-    } catch (err) {
-      console.warn('Failed to open document link', err);
-      Alert.alert('Unable to open document', 'An unexpected error occurred while opening this file.');
-    }
+    setPreview({ label, uri });
   }, []);
+
+  const closePreview = useCallback(() => {
+    setPreview(null);
+  }, []);
+
+  const previewImageDimensions = useMemo(() => {
+    const maxWidth = Math.min(windowWidth - 64, 420);
+    const aspectRatio = 3 / 4;
+    const derivedHeight = maxWidth / aspectRatio;
+    const maxHeight = windowHeight * 0.65;
+    const height = Math.min(derivedHeight, maxHeight);
+    const width = height * aspectRatio;
+
+    return { width, height };
+  }, [windowHeight, windowWidth]);
 
   const renderDocument = useCallback(
     (label: string, uri: string | null | undefined) => (
       <TouchableOpacity
         key={label}
         style={[styles.documentItem, !uri && styles.documentItemDisabled]}
-        onPress={() => void handleOpenDocument(uri)}
+        onPress={() => handlePreviewDocument(label, uri)}
         activeOpacity={0.85}
         disabled={!uri}
       >
@@ -194,10 +199,10 @@ export default function KycStatusScreen() {
           </View>
         )}
         <Text style={styles.documentLabel}>{label}</Text>
-        <Text style={styles.documentHint}>{uri ? 'Tap to view the Cloudinary image.' : 'Document not submitted yet.'}</Text>
+        <Text style={styles.documentHint}>{uri ? 'Tap to preview this document.' : 'Document not submitted yet.'}</Text>
       </TouchableOpacity>
     ),
-    [handleOpenDocument],
+    [handlePreviewDocument],
   );
 
   return (
@@ -268,6 +273,32 @@ export default function KycStatusScreen() {
           ) : null}
         </ScrollView>
       </View>
+
+      {preview ? (
+        <Modal transparent animationType="fade" visible onRequestClose={closePreview}>
+          <View style={styles.previewBackdrop}>
+            <View style={styles.previewContent}>
+              <View style={styles.previewHeader}>
+                <Text style={styles.previewTitle}>{preview.label}</Text>
+                <TouchableOpacity
+                  style={styles.previewCloseButton}
+                  onPress={closePreview}
+                  accessibilityRole="button"
+                  accessibilityLabel="Close document preview"
+                >
+                  <Ionicons name="close" size={20} color="#111111" />
+                </TouchableOpacity>
+              </View>
+              <Image
+                source={{ uri: preview.uri }}
+                style={[styles.previewImage, previewImageDimensions]}
+                contentFit="contain"
+              />
+              <Text style={styles.previewHint}>Use the close button to return to your documents.</Text>
+            </View>
+          </View>
+        </Modal>
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -445,5 +476,48 @@ const styles = StyleSheet.create({
     backgroundColor: '#f3f4f6',
     padding: 12,
     borderRadius: 12,
+  },
+  previewBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(17, 17, 17, 0.85)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  previewContent: {
+    width: '100%',
+    maxWidth: 440,
+    alignItems: 'center',
+    gap: 16,
+  },
+  previewHeader: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  previewTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  previewCloseButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#ffffff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  previewImage: {
+    width: '100%',
+    aspectRatio: 3 / 4,
+    borderRadius: 18,
+    backgroundColor: '#0f172a',
+  },
+  previewHint: {
+    fontSize: 12,
+    color: '#e5e7eb',
+    textAlign: 'center',
   },
 });

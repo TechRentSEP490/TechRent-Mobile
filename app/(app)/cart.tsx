@@ -285,7 +285,7 @@ export default function CartScreen() {
       endDate?: string;
     }>();
   const { data: product, loading, error } = useDeviceModel(productId);
-  const { items: cartItems, removeItem, clear } = useCart();
+  const { items: cartItems, updateQuantity, removeItem, clear } = useCart();
 
   const quantity = useMemo(() => {
     const parsed = Number.parseInt(typeof quantityParam === 'string' ? quantityParam : '1', 10);
@@ -592,6 +592,14 @@ export default function CartScreen() {
                   deviceValue !== null && item.quantity > 1
                     ? formatCurrencyValue(deviceValue * item.quantity, itemCurrency)
                     : null;
+                const availableStock = Number.isFinite(item.product.stock)
+                  ? Math.max(0, Math.floor(item.product.stock))
+                  : Number.POSITIVE_INFINITY;
+                const isAdjustable = isContextBacked;
+                const canDecrease = isAdjustable && item.quantity > 1;
+                const canIncrease =
+                  isAdjustable &&
+                  (availableStock === Number.POSITIVE_INFINITY ? true : item.quantity < availableStock);
 
                 return (
                   <View key={item.product.id} style={styles.orderItem}>
@@ -602,7 +610,30 @@ export default function CartScreen() {
                         </View>
                         <View style={styles.productDetails}>
                           <Text style={styles.productName}>{itemLabel}</Text>
-                          <Text style={styles.productMeta}>{`Quantity: ${item.quantity}`}</Text>
+                          <View style={styles.quantityRow}>
+                            <TouchableOpacity
+                              style={[styles.quantityButton, !canDecrease && styles.quantityButtonDisabled]}
+                              onPress={() => updateQuantity(item.product.id, item.quantity - 1)}
+                              disabled={!canDecrease}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Decrease quantity for ${itemLabel}`}
+                            >
+                              <Ionicons name="remove" size={16} color="#111111" />
+                            </TouchableOpacity>
+                            <Text style={styles.quantityValue}>{item.quantity}</Text>
+                            <TouchableOpacity
+                              style={[styles.quantityButton, !canIncrease && styles.quantityButtonDisabled]}
+                              onPress={() => updateQuantity(item.product.id, item.quantity + 1)}
+                              disabled={!canIncrease}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Increase quantity for ${itemLabel}`}
+                            >
+                              <Ionicons name="add" size={16} color="#111111" />
+                            </TouchableOpacity>
+                          </View>
+                          {Number.isFinite(availableStock) ? (
+                            <Text style={styles.productMeta}>{`Stock available: ${availableStock}`}</Text>
+                          ) : null}
                         </View>
                       </View>
                       <View style={styles.orderItemHeaderRight}>
@@ -878,6 +909,32 @@ const styles = StyleSheet.create({
   },
   productName: {
     fontSize: 16,
+    fontWeight: '600',
+    color: '#111111',
+  },
+  quantityRow: {
+    marginTop: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  quantityButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ffffff',
+  },
+  quantityButtonDisabled: {
+    opacity: 0.4,
+  },
+  quantityValue: {
+    minWidth: 28,
+    textAlign: 'center',
+    fontSize: 15,
     fontWeight: '600',
     color: '#111111',
   },
