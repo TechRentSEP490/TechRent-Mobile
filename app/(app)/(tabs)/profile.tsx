@@ -1,5 +1,4 @@
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { Image } from 'expo-image';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -225,22 +224,6 @@ export default function ProfileScreen() {
     }
   }, [kycStatusMeta.actionType, loadKycDetails, router]);
 
-  const renderKycDocument = useCallback(
-    (label: string, uri: string | null | undefined) => (
-      <View key={label} style={styles.kycDocumentItem}>
-        {uri ? (
-          <Image source={{ uri }} style={styles.kycDocumentImage} contentFit="cover" />
-        ) : (
-          <View style={styles.kycDocumentPlaceholder}>
-            <Ionicons name="image-outline" size={24} color="#9ca3af" />
-          </View>
-        )}
-        <Text style={styles.kycDocumentLabel}>{label}</Text>
-      </View>
-    ),
-    [],
-  );
-
   const isAccountActive = user?.status?.toUpperCase() === 'ACTIVE';
 
   const isInitialLoading = isHydrating || (!user && isFetchingProfile);
@@ -414,40 +397,24 @@ export default function ProfileScreen() {
           <Text style={styles.kycDescription}>{kycStatusMeta.description}</Text>
           {kycError ? <Text style={styles.kycErrorText}>{kycError}</Text> : null}
           {kycDetails ? (
-            <View style={styles.kycInfoList}>
-              <View style={styles.kycInfoRow}>
-                <Text style={styles.kycInfoLabel}>Full name</Text>
-                <Text style={styles.kycInfoValue}>
-                  {kycDetails.fullName && kycDetails.fullName.trim().length > 0
-                    ? kycDetails.fullName
-                    : 'Not provided'}
-                </Text>
+            <TouchableOpacity
+              style={styles.kycLinkButton}
+              onPress={() => router.push('/(app)/kyc-status')}
+              activeOpacity={0.85}
+            >
+              <View style={styles.kycLinkButtonContent}>
+                <View style={styles.kycLinkIconWrapper}>
+                  <Ionicons name="images-outline" size={18} color="#111111" />
+                </View>
+                <View style={styles.kycLinkCopy}>
+                  <Text style={styles.kycLinkTitle}>Show my KYC documents</Text>
+                  <Text style={styles.kycLinkSubtitle}>
+                    View the photos and details you previously submitted for verification.
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color="#9ca3af" />
               </View>
-              <View style={styles.kycInfoRow}>
-                <Text style={styles.kycInfoLabel}>Identification number</Text>
-                <Text style={styles.kycInfoValue}>
-                  {kycDetails.identificationCode && kycDetails.identificationCode.trim().length > 0
-                    ? kycDetails.identificationCode
-                    : 'Not provided'}
-                </Text>
-              </View>
-              <View style={styles.kycInfoRow}>
-                <Text style={styles.kycInfoLabel}>Document type</Text>
-                <Text style={styles.kycInfoValue}>
-                  {kycDetails.typeOfIdentification && kycDetails.typeOfIdentification.trim().length > 0
-                    ? kycDetails.typeOfIdentification
-                    : 'Not provided'}
-                </Text>
-              </View>
-              <View style={[styles.kycInfoRow, styles.kycInfoRowLast]}>
-                <Text style={styles.kycInfoLabel}>Permanent address</Text>
-                <Text style={styles.kycInfoValue}>
-                  {kycDetails.permanentAddress && kycDetails.permanentAddress.trim().length > 0
-                    ? kycDetails.permanentAddress
-                    : 'Not provided'}
-                </Text>
-              </View>
-            </View>
+            </TouchableOpacity>
           ) : !kycError && !isLoadingKyc ? (
             <Text style={styles.kycPlaceholderText}>
               {normalizedKycStatus === 'NOT_STARTED'
@@ -455,13 +422,6 @@ export default function ProfileScreen() {
                 : 'We could not find any KYC documents for your account.'}
             </Text>
           ) : null}
-          <Text style={styles.kycDocumentsTitle}>Submitted documents</Text>
-          <View style={styles.kycDocumentGrid}>
-            {['Front of ID', 'Back of ID', 'Selfie with ID'].map((label, index) => {
-              const uri = index === 0 ? kycDetails?.frontCCCDUrl : index === 1 ? kycDetails?.backCCCDUrl : kycDetails?.selfieUrl;
-              return renderKycDocument(label, uri ?? null);
-            })}
-          </View>
           {kycStatusMeta.actionLabel ? (
             <TouchableOpacity
               style={[
@@ -774,33 +734,6 @@ const styles = StyleSheet.create({
   kycStatusBadgeTextNeutral: {
     color: '#1f2937',
   },
-  kycInfoList: {
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#f3f4f6',
-    overflow: 'hidden',
-  },
-  kycInfoRow: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f1f5f9',
-    gap: 4,
-  },
-  kycInfoRowLast: {
-    borderBottomWidth: 0,
-  },
-  kycInfoLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#6b7280',
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-  },
-  kycInfoValue: {
-    fontSize: 14,
-    color: '#111111',
-  },
   kycPlaceholderText: {
     fontSize: 14,
     color: '#6b7280',
@@ -808,40 +741,39 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 12,
   },
-  kycDocumentsTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#111111',
+  kycLinkButton: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    padding: 16,
+    backgroundColor: '#f9fafb',
   },
-  kycDocumentGrid: {
+  kycLinkButtonContent: {
     flexDirection: 'row',
+    alignItems: 'center',
     gap: 12,
-    flexWrap: 'wrap',
   },
-  kycDocumentItem: {
-    width: '30%',
-    minWidth: 100,
-    flexGrow: 1,
-    gap: 8,
-  },
-  kycDocumentImage: {
-    width: '100%',
-    aspectRatio: 3 / 4,
-    borderRadius: 12,
-    backgroundColor: '#f3f4f6',
-  },
-  kycDocumentPlaceholder: {
-    width: '100%',
-    aspectRatio: 3 / 4,
-    borderRadius: 12,
-    backgroundColor: '#f3f4f6',
+  kycLinkIconWrapper: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#eef2ff',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  kycDocumentLabel: {
-    fontSize: 12,
-    fontWeight: '600',
+  kycLinkCopy: {
+    flex: 1,
+    gap: 2,
+  },
+  kycLinkTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#111111',
+  },
+  kycLinkSubtitle: {
+    fontSize: 13,
     color: '#4b5563',
+    lineHeight: 18,
   },
   kycActionButton: {
     marginTop: 4,
