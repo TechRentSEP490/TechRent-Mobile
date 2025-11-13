@@ -48,6 +48,12 @@ type CurrentUserResponse = ApiSuccessResponse<AuthenticatedUser | null>;
 
 type ApiErrorWithStatus = Error & { status?: number };
 
+export type UpdateProfilePayload = {
+  email: string;
+  phoneNumber: string;
+  fullName: string;
+};
+
 const jsonHeaders = {
   'Content-Type': 'application/json',
   Accept: 'application/json',
@@ -66,6 +72,16 @@ const parseErrorMessage = async (response: Response) => {
     console.warn('Failed to parse API error response', error);
     return null;
   }
+};
+
+const normalizeAuthenticatedUser = (user: AuthenticatedUser) => {
+  const normalizedPhoneNumber = user.phoneNumber?.trim() ?? null;
+
+  return {
+    ...user,
+    phoneNumber:
+      normalizedPhoneNumber && normalizedPhoneNumber.length > 0 ? normalizedPhoneNumber : null,
+  };
 };
 
 export async function registerUser(payload: RegisterPayload): Promise<RegisterResponse> {
@@ -174,10 +190,56 @@ export async function getCurrentUser({
     throw error;
   }
 
-  const normalizedPhoneNumber = json.data.phoneNumber?.trim() ?? null;
+  return normalizeAuthenticatedUser(json.data);
+}
 
-  return {
-    ...json.data,
-    phoneNumber: normalizedPhoneNumber && normalizedPhoneNumber.length > 0 ? normalizedPhoneNumber : null,
-  };
+export async function updateCustomerProfile({
+  accessToken,
+  tokenType,
+  payload,
+}: {
+  accessToken: string;
+  tokenType?: string | null;
+  payload: UpdateProfilePayload;
+}) {
+  if (!accessToken) {
+    throw new Error('Access token is required to update the profile.');
+  }
+
+  const response = await fetch(buildApiUrl('customers', 'profile'), {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      Authorization: `${tokenType && tokenType.length > 0 ? tokenType : 'Bearer'} ${accessToken}`,
+    },
+    body: JSON.stringify({
+      email: payload.email,
+      phoneNumber: payload.phoneNumber,
+      fullName: payload.fullName,
+      bankName: 'string',
+      bankAccountHolder: 'string',
+    }),
+  });
+
+  if (!response.ok) {
+    const apiMessage = await parseErrorMessage(response);
+    const error = new Error(
+      apiMessage ?? `Failed to update profile (status ${response.status}).`,
+    ) as ApiErrorWithStatus;
+    error.status = response.status;
+    throw error;
+  }
+
+  const json = (await response.json()) as CurrentUserResponse | null;
+
+  if (!json || json.status !== 'SUCCESS' || !json.data) {
+    const error = new Error(json?.message ?? 'Failed to update profile. Please try again.') as ApiErrorWithStatus;
+    if (typeof json?.code === 'number') {
+      error.status = json.code;
+    }
+    throw error;
+  }
+
+  return normalizeAuthenticatedUser(json.data);
 }

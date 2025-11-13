@@ -2,6 +2,9 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
+  Modal,
+  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -48,6 +51,28 @@ export default function ProfileScreen() {
   const [kycDetails, setKycDetails] = useState<CustomerKycDetails | null>(null);
   const [isLoadingKyc, setIsLoadingKyc] = useState(false);
   const [kycError, setKycError] = useState<string | null>(null);
+  const [isSettingsVisible, setIsSettingsVisible] = useState(false);
+
+  const openSettings = useCallback(() => {
+    setIsSettingsVisible(true);
+  }, []);
+
+  const closeSettings = useCallback(() => {
+    setIsSettingsVisible(false);
+  }, []);
+
+  const handleUpdateProfilePress = useCallback(() => {
+    closeSettings();
+    router.push('/(app)/update-profile');
+  }, [closeSettings, router]);
+
+  const handleAddShippingAddressPress = useCallback(() => {
+    closeSettings();
+    Alert.alert(
+      'Coming soon',
+      'Shipping address management will be available in a future update.',
+    );
+  }, [closeSettings]);
 
   useEffect(() => {
     if (user && profileError) {
@@ -326,6 +351,14 @@ export default function ProfileScreen() {
                 <Ionicons name="refresh-outline" size={22} color="#111" />
               )}
             </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.headerActionButton}
+              onPress={openSettings}
+              accessibilityLabel="Open profile settings"
+              accessibilityRole="button"
+            >
+              <Ionicons name="settings-outline" size={22} color="#111" />
+            </TouchableOpacity>
           </View>
         </View>
 
@@ -450,6 +483,60 @@ export default function ProfileScreen() {
           <Text style={styles.logoutText}>Log Out</Text>
         </TouchableOpacity>
       </ScrollView>
+      <Modal
+        visible={isSettingsVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={closeSettings}
+      >
+        <View style={styles.settingsModalBackdrop}>
+          <Pressable style={styles.settingsModalDismissArea} onPress={closeSettings} />
+          <View style={styles.settingsModalContainer}>
+            <Text style={styles.settingsModalTitle}>Profile settings</Text>
+            <View style={styles.settingsModalOptions}>
+              <TouchableOpacity
+                style={styles.settingsOption}
+                onPress={handleUpdateProfilePress}
+                accessibilityRole="button"
+                accessibilityLabel="Update profile"
+              >
+                <View style={styles.settingsOptionIcon}>
+                  <Ionicons name="person-outline" size={20} color="#111111" />
+                </View>
+                <View style={styles.settingsOptionCopy}>
+                  <Text style={styles.settingsOptionTitle}>Update profile</Text>
+                  <Text style={styles.settingsOptionSubtitle}>
+                    Edit your contact details and keep your account current.
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color="#9ca3af" />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.settingsOption, styles.settingsOptionComingSoon]}
+                onPress={handleAddShippingAddressPress}
+                accessibilityRole="button"
+                accessibilityLabel="Add shipping address"
+              >
+                <View style={[styles.settingsOptionIcon, styles.settingsOptionIconDisabled]}>
+                  <Ionicons name="location-outline" size={20} color="#9ca3af" />
+                </View>
+                <View style={styles.settingsOptionCopy}>
+                  <Text style={styles.settingsOptionTitle}>Add shipping address</Text>
+                  <Text style={styles.settingsOptionSubtitle}>Available in an upcoming update.</Text>
+                </View>
+                <Ionicons name="time-outline" size={18} color="#d1d5db" />
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity
+              style={styles.settingsCancelButton}
+              onPress={closeSettings}
+              accessibilityRole="button"
+            >
+              <Text style={styles.settingsCancelText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -802,6 +889,77 @@ const styles = StyleSheet.create({
     color: '#ffffff',
   },
   kycActionButtonTextSecondary: {
+    color: '#111111',
+  },
+  settingsModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(17, 24, 39, 0.45)',
+    justifyContent: 'flex-end',
+    padding: 16,
+  },
+  settingsModalDismissArea: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  settingsModalContainer: {
+    backgroundColor: '#ffffff',
+    borderRadius: 24,
+    paddingVertical: 20,
+    paddingHorizontal: 20,
+    gap: 16,
+    zIndex: 1,
+  },
+  settingsModalTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#111111',
+  },
+  settingsModalOptions: {
+    gap: 12,
+  },
+  settingsOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#f9fafb',
+    borderRadius: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+  },
+  settingsOptionComingSoon: {
+    opacity: 0.85,
+  },
+  settingsOptionIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#eef2ff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  settingsOptionIconDisabled: {
+    backgroundColor: '#f1f5f9',
+  },
+  settingsOptionCopy: {
+    flex: 1,
+    gap: 2,
+  },
+  settingsOptionTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#111111',
+  },
+  settingsOptionSubtitle: {
+    fontSize: 13,
+    color: '#4b5563',
+    lineHeight: 18,
+  },
+  settingsCancelButton: {
+    alignItems: 'center',
+    paddingVertical: 12,
+  },
+  settingsCancelText: {
+    fontSize: 15,
+    fontWeight: '600',
     color: '#111111',
   },
   logoutButton: {
