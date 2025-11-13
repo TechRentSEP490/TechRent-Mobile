@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
+import type { MediaType } from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import {
@@ -44,6 +45,8 @@ const initialOcrState: OcrStateMap = {
   front: { isProcessing: false, error: null, text: '' },
   back: { isProcessing: false, error: null, text: '' },
 };
+
+const IMAGE_MEDIA_TYPE: MediaType = 'images';
 
 const documentCopy: Record<DocumentType, { title: string; description: string }> = {
   front: {
@@ -262,14 +265,14 @@ export default function KycDocumentsScreen() {
       const pickerResult =
         source === 'camera'
           ? await ImagePicker.launchCameraAsync({
-              mediaTypes: ImagePicker.MediaTypeOptions.Images,
+              mediaTypes: IMAGE_MEDIA_TYPE,
               allowsEditing: false,
               quality: 1,
               preferredAssetRepresentationMode:
                 ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible,
             })
           : await ImagePicker.launchImageLibraryAsync({
-              mediaTypes: ImagePicker.MediaTypeOptions.Images,
+              mediaTypes: IMAGE_MEDIA_TYPE,
               allowsEditing: false,
               quality: 1,
             });

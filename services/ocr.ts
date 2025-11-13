@@ -44,7 +44,7 @@ export const extractTextFromImage = async ({ uri, mimeType }: ExtractTextArgs) =
   }
 
   const base64 = await FileSystem.readAsStringAsync(uri, {
-    encoding: FileSystem.EncodingType.Base64,
+    encoding: 'base64',
   });
 
   const dataUri = `data:${mimeType ?? 'image/jpeg'};base64,${base64}`;
