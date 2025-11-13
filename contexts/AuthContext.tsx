@@ -1,7 +1,14 @@
 import * as SecureStore from 'expo-secure-store';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
-import { getCurrentUser, loginUser, type AuthenticatedUser, type LoginPayload } from '@/services/auth';
+import {
+  getCurrentUser,
+  loginUser,
+  updateCustomerProfile,
+  type AuthenticatedUser,
+  type LoginPayload,
+  type UpdateProfilePayload,
+} from '@/services/auth';
 
 export type AuthSession = {
   accessToken: string;
@@ -18,6 +25,7 @@ type AuthContextType = {
   signIn: (payload: LoginPayload) => Promise<void>;
   refreshProfile: () => Promise<AuthenticatedUser | null>;
   ensureSession: () => Promise<AuthSession | null>;
+  updateProfile: (payload: UpdateProfilePayload) => Promise<AuthenticatedUser>;
   signOut: () => Promise<void>;
 };
 
@@ -365,6 +373,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const refreshProfile = useCallback(() => fetchProfile(), [fetchProfile]);
 
+  const updateProfile = useCallback(
+    async (payload: UpdateProfilePayload) => {
+      const sessionValue = await ensureSession();
+
+      if (!sessionValue?.accessToken) {
+        throw new Error('Please sign in again to update your profile.');
+      }
+
+      const updatedUser = await updateCustomerProfile({
+        accessToken: sessionValue.accessToken,
+        tokenType: sessionValue.tokenType,
+        payload,
+      });
+
+      if (isMountedRef.current) {
+        setUser(updatedUser);
+      }
+
+      return updatedUser;
+    },
+    [ensureSession]
+  );
+
   const attemptReauthenticate = useCallback(async () => {
     if (reauthenticatePromiseRef.current) {
       return reauthenticatePromiseRef.current;
@@ -493,9 +524,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       signIn,
       refreshProfile,
       ensureSession,
+      updateProfile,
       signOut,
     }),
-    [session, isHydrating, user, isFetchingProfile, signIn, refreshProfile, ensureSession, signOut]
+    [
+      session,
+      isHydrating,
+      user,
+      isFetchingProfile,
+      signIn,
+      refreshProfile,
+      ensureSession,
+      updateProfile,
+      signOut,
+    ]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

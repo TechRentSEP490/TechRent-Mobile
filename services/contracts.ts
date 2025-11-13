@@ -23,6 +23,10 @@ export type ContractResponse = {
   startDate: string | null;
   endDate: string | null;
   signedAt: string | null;
+  customerSignedBy?: number | string | null;
+  customerSignedAt?: string | null;
+  adminSignedBy?: number | string | null;
+  adminSignedAt?: string | null;
   expiresAt: string | null;
   createdAt: string | null;
   updatedAt: string | null;
@@ -316,6 +320,21 @@ export async function signContract(
   }
 
   const endpointUrl = buildApiUrl('contracts', payload.contractId, 'sign');
+
+  const maskedToken =
+    typeof session.accessToken === 'string' && session.accessToken.length > 8
+      ? `${session.accessToken.slice(0, 4)}…${session.accessToken.slice(-4)}`
+      : '***';
+
+  console.log('[Contracts] signContract request', {
+    endpointUrl,
+    payload,
+    headers: {
+      Authorization: `${
+        session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'
+      } ${maskedToken}`,
+    },
+  });
   let response: Response;
 
   try {
@@ -346,6 +365,20 @@ export async function signContract(
   }
 
   if (!response.ok) {
+    let rawBody: string | null = null;
+
+    try {
+      rawBody = await response.clone().text();
+    } catch (cloneError) {
+      console.warn('Failed to read contract signing error body', cloneError);
+    }
+
+    console.warn('[Contracts] signContract response (error)', {
+      status: response.status,
+      ok: response.ok,
+      bodyText: rawBody,
+    });
+
     const apiMessage = await parseErrorMessage(response);
     const error = new Error(
       apiMessage ?? `Unable to sign the contract (status ${response.status}).`,
@@ -356,7 +389,18 @@ export async function signContract(
 
   const json = (await response.json()) as SignContractResult | null;
 
+  console.log('[Contracts] signContract response', {
+    status: response.status,
+    ok: response.ok,
+    body: json,
+  });
+
   if (!json || json.status !== 'SUCCESS') {
+    console.warn('[Contracts] signContract response (API error)', {
+      status: response.status,
+      ok: response.ok,
+      body: json,
+    });
     const error = new Error(
       json?.message ?? 'Failed to sign the contract. Please try again.',
     ) as ApiErrorWithStatus;
