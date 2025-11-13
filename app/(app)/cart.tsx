@@ -276,7 +276,7 @@ function DatePickerField({ value, minimumDate, onChange }: DatePickerFieldProps)
 
 export default function CartScreen() {
   const router = useRouter();
-  const { session } = useAuth();
+  const { session, user } = useAuth();
   const { productId, quantity: quantityParam, startDate: startParam, endDate: endParam } =
     useLocalSearchParams<{
       productId?: string;
@@ -483,9 +483,9 @@ export default function CartScreen() {
 
       clear();
 
-      const normalizedStatus = (createdOrder.orderStatus ?? '').toUpperCase();
+      const normalizedKycStatus = (user?.kycStatus ?? '').toUpperCase();
 
-      if (normalizedStatus === 'PENDING_KYC' || normalizedStatus === 'PENDING_KYX') {
+      if (normalizedKycStatus === 'NOT_STARTED') {
         const goToOrders = () =>
           router.replace({
             pathname: '/(app)/(tabs)/orders',
