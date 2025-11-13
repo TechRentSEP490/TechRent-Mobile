@@ -1,3 +1,18 @@
+export type ParsedKycFields = {
+  fullName?: string;
+  identificationCode?: string;
+  birthday?: string;
+  expirationDate?: string;
+  permanentAddress?: string;
+  typeOfIdentification?: string;
+  verifiedAt?: string;
+};
+
+type ParseKycTextArgs = {
+  frontText?: string | null;
+  backText?: string | null;
+};
+
 const normalizeDateToken = (value: string): string | null => {
   const cleaned = value.replace(/[^0-9/-]/g, '');
   if (cleaned.length === 0) {
@@ -45,16 +60,50 @@ const isLikelyName = (line: string) => {
   return upper === line || upper === line.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 };
 
-export type ParsedKycFields = {
-  fullName?: string;
-  identificationCode?: string;
-  birthday?: string;
-  expirationDate?: string;
-  permanentAddress?: string;
-  typeOfIdentification?: string;
+const buildLineArray = (text?: string | null) => {
+  if (!text) {
+    return [];
+  }
+
+  return text
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
 };
 
-export const parseKycText = (rawText: string): ParsedKycFields => {
+const matchesLabel = (line: string, label: string) => line.toUpperCase().includes(label.toUpperCase());
+
+const extractLabeledValue = (lines: string[], labels: string[]): string | null => {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+
+    for (const label of labels) {
+      if (!matchesLabel(line, label)) {
+        continue;
+      }
+
+      const afterSeparator = line
+        .split(/[:\-]/)
+        .slice(1)
+        .join(':')
+        .trim();
+
+      if (afterSeparator.length > 0 && !matchesLabel(afterSeparator, label)) {
+        return afterSeparator;
+      }
+
+      const nextLine = lines[index + 1]?.trim();
+      if (nextLine && !matchesLabel(nextLine, label)) {
+        return nextLine;
+      }
+    }
+  }
+
+  return null;
+};
+
+const extractLegacyFields = (rawText: string) => {
   const result: ParsedKycFields = {};
 
   if (!rawText || rawText.trim().length === 0) {
@@ -118,6 +167,47 @@ export const parseKycText = (rawText: string): ParsedKycFields => {
     result.typeOfIdentification = 'CCCD';
   } else if (/passport/i.test(concatenated)) {
     result.typeOfIdentification = 'PASSPORT';
+  }
+
+  return result;
+};
+
+const sanitizeIdentificationValue = (value: string) => {
+  const normalized = value.replace(/[^0-9A-Za-z]/g, '');
+  return normalized.length > 0 ? normalized : value.trim();
+};
+
+export const parseKycText = ({ frontText, backText }: ParseKycTextArgs): ParsedKycFields => {
+  const frontLines = buildLineArray(frontText);
+  const backLines = buildLineArray(backText);
+  const combinedText = [frontText, backText]
+    .filter((value): value is string => Boolean(value && value.length > 0))
+    .join('\n');
+
+  const legacy = extractLegacyFields(combinedText);
+  const result: ParsedKycFields = {
+    ...legacy,
+    typeOfIdentification: 'CCCD',
+  };
+
+  const extractedFullName = extractLabeledValue(frontLines, ['FULL NAME']);
+  if (extractedFullName) {
+    result.fullName = extractedFullName;
+  }
+
+  const extractedIdentification = extractLabeledValue(frontLines, ['NO.', 'IDENTIFICATION NUMBER']);
+  if (extractedIdentification) {
+    result.identificationCode = sanitizeIdentificationValue(extractedIdentification);
+  }
+
+  const extractedAddress = extractLabeledValue(frontLines, ['PLACE OF RESIDENCE', 'PERMANENT ADDRESS']);
+  if (extractedAddress) {
+    result.permanentAddress = normalizeAddressLine(extractedAddress);
+  }
+
+  const verifiedAt = extractLabeledValue(backLines, ['VERIFIED AT']);
+  if (verifiedAt) {
+    result.verifiedAt = verifiedAt;
   }
 
   return result;
