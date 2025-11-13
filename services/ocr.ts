@@ -1,4 +1,4 @@
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 
 const OCR_SPACE_ENDPOINT = 'https://api.ocr.space/parse/image';
 
