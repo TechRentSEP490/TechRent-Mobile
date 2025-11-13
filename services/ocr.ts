@@ -1,6 +1,7 @@
 import * as FileSystem from 'expo-file-system/legacy';
 
 const OCR_SPACE_ENDPOINT = 'https://api.ocr.space/parse/image';
+const MAX_IMAGE_SIZE_BYTES = 1024 * 1024; // 1MB limit from OCR.space free tier
 
 type OcrSpaceParsedResult = {
   ParsedText?: string | null;
@@ -41,6 +42,16 @@ export const extractTextFromImage = async ({ uri, mimeType }: ExtractTextArgs) =
 
   if (!apiKey) {
     throw new Error('OCR API key is not configured. Please set EXPO_PUBLIC_OCR_API_KEY.');
+  }
+
+  const fileInfo = await FileSystem.getInfoAsync(uri, { size: true });
+
+  if (!fileInfo.exists) {
+    throw new Error('Selected image could not be found for OCR processing.');
+  }
+
+  if (typeof fileInfo.size === 'number' && fileInfo.size > MAX_IMAGE_SIZE_BYTES) {
+    throw new Error('Image is too large. Please select a file under 1MB for OCR extraction.');
   }
 
   const base64 = await FileSystem.readAsStringAsync(uri, {
