@@ -468,7 +468,7 @@ export default function CartScreen() {
     setSubmitError(null);
 
     try {
-      await createRentalOrder(
+      const createdOrder = await createRentalOrder(
         {
           startDate: startDate.toISOString(),
           endDate: endDate.toISOString(),
@@ -482,6 +482,38 @@ export default function CartScreen() {
       );
 
       clear();
+
+      const normalizedStatus = (createdOrder.orderStatus ?? '').toUpperCase();
+
+      if (normalizedStatus === 'PENDING_KYC' || normalizedStatus === 'PENDING_KYX') {
+        const goToOrders = () =>
+          router.replace({
+            pathname: '/(app)/(tabs)/orders',
+            params: { flow: 'continue', orderId: String(createdOrder.orderId) },
+          });
+
+        Alert.alert(
+          'Complete your KYC',
+          'Your rental order is pending identity verification. Would you like to finish your KYC now?',
+          [
+            {
+              text: 'Later',
+              style: 'cancel',
+              onPress: goToOrders,
+            },
+            {
+              text: 'Start KYC',
+              onPress: () => router.replace('/(app)/kyc-documents'),
+            },
+          ],
+          {
+            cancelable: true,
+            onDismiss: goToOrders,
+          }
+        );
+
+        return;
+      }
 
       Alert.alert(
         'Rental order created',

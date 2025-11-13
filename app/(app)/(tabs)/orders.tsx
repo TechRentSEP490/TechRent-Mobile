@@ -50,7 +50,8 @@ type OrderActionType =
   | 'extendRental'
   | 'confirmReceipt'
   | 'cancelOrder'
-  | 'rentAgain';
+  | 'rentAgain'
+  | 'completeKyc';
 
 type OrderCard = {
   orderId: number;
@@ -121,8 +122,16 @@ const mapStatusToMeta = (status: string | null | undefined): StatusMeta => {
   const normalized = (status ?? '').toUpperCase();
   let filter: OrderStatus = 'Pending';
   let includeAction = true;
+  let overrideLabel: string | null = null;
+  let overrideAction: StatusMeta['action'] | undefined;
 
   switch (normalized) {
+    case 'PENDING_KYC':
+    case 'PENDING_KYX':
+      filter = 'Pending';
+      overrideLabel = 'Pending KYC';
+      overrideAction = { label: 'Complete KYC', type: 'completeKyc' };
+      break;
     case 'PENDING':
     case 'PROCESSING':
     case 'AWAITING_PAYMENT':
@@ -158,14 +167,16 @@ const mapStatusToMeta = (status: string | null | undefined): StatusMeta => {
   }
 
   const template = STATUS_TEMPLATES[filter];
-  const label = normalized.length > 0 ? toTitleCase(normalized) : template.defaultLabel;
+  const label =
+    overrideLabel ?? (normalized.length > 0 ? toTitleCase(normalized) : template.defaultLabel);
+  const action = overrideAction ?? (includeAction ? template.action : undefined);
 
   return {
     filter,
     label,
     color: template.color,
     background: template.background,
-    action: includeAction ? template.action : undefined,
+    action,
   };
 };
 
@@ -1106,7 +1117,10 @@ export default function OrdersScreen() {
     const orderIdParam = Array.isArray(orderId) ? orderId[0] : orderId;
     const targetOrder =
       orders.find((order) => order.id === orderIdParam) ||
-      orders.find((order) => order.action?.type === 'continueProcess');
+      orders.find(
+        (order) =>
+          order.action?.type === 'continueProcess' || order.action?.type === 'completeKyc'
+      );
 
     if (targetOrder) {
       setSelectedFilter(targetOrder.statusFilter);
@@ -1531,6 +1545,9 @@ export default function OrdersScreen() {
         case 'continueProcess':
           openFlow(order);
           break;
+        case 'completeKyc':
+          router.push('/(app)/kyc-documents');
+          break;
         case 'extendRental':
           Alert.alert('Extend Rental', 'Our team will reach out to help extend this rental.');
           break;
@@ -1547,7 +1564,7 @@ export default function OrdersScreen() {
           break;
       }
     },
-    [openFlow],
+    [openFlow, router],
   );
 
   const orderDetailsCacheRef = useRef<Record<number, RentalOrderResponse>>({});
