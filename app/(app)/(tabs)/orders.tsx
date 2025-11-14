@@ -27,6 +27,8 @@ import {
   type DimensionValue,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { WebView } from 'react-native-webview';
+import type { WebViewErrorEvent } from 'react-native-webview/lib/WebViewTypes';
 
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -42,6 +44,11 @@ import {
   fetchRentalOrders,
   type RentalOrderResponse,
 } from '@/services/rental-orders';
+import {
+  createPayment,
+  type PaymentMethod,
+  type PaymentSession,
+} from '@/services/payments';
 
 type OrderStatusFilter = 'All' | 'Pending' | 'Delivered' | 'In Use' | 'Completed';
 type OrderStatus = Exclude<OrderStatusFilter, 'All'>;
@@ -51,14 +58,20 @@ type OrderActionType =
   | 'confirmReceipt'
   | 'cancelOrder'
   | 'rentAgain'
-  | 'downloadContract';
+  | 'completeKyc';
 
 type OrderCard = {
+  orderId: number;
   id: string;
   title: string;
   deviceSummary: string;
   rentalPeriod: string;
   totalAmount: string;
+  totalPrice: number;
+  totalPriceLabel: string;
+  depositAmount: number;
+  depositLabel: string;
+  totalDue: number;
   statusFilter: OrderStatus;
   statusLabel: string;
   statusColor: string;
@@ -109,6 +122,29 @@ const STATUS_TEMPLATES: Record<OrderStatus, { defaultLabel: string; color: strin
   },
 };
 
+const resolvePaymentUrl = (value: string | undefined, fallback: string) =>
+  value && value.trim().length > 0 ? value.trim() : fallback;
+
+const PAYMENT_RETURN_URL = resolvePaymentUrl(
+  process.env.EXPO_PUBLIC_PAYMENT_RETURN_URL,
+  'https://example.com/payments/return',
+);
+
+const PAYMENT_CANCEL_URL = resolvePaymentUrl(
+  process.env.EXPO_PUBLIC_PAYMENT_CANCEL_URL,
+  'https://example.com/payments/cancel',
+);
+
+const PAYMENT_SUCCESS_URL = resolvePaymentUrl(
+  process.env.EXPO_PUBLIC_PAYMENT_SUCCESS_URL,
+  'https://example.com/payments/success',
+);
+
+const PAYMENT_FAILURE_URL = resolvePaymentUrl(
+  process.env.EXPO_PUBLIC_PAYMENT_FAILURE_URL,
+  'https://example.com/payments/failure',
+);
+
 const toTitleCase = (value: string) =>
   value
     .toLowerCase()
@@ -121,8 +157,16 @@ const mapStatusToMeta = (status: string | null | undefined): StatusMeta => {
   const normalized = (status ?? '').toUpperCase();
   let filter: OrderStatus = 'Pending';
   let includeAction = true;
+  let overrideLabel: string | null = null;
+  let overrideAction: StatusMeta['action'] | undefined;
 
   switch (normalized) {
+    case 'PENDING_KYC':
+    case 'PENDING_KYX':
+      filter = 'Pending';
+      overrideLabel = 'Pending KYC';
+      overrideAction = { label: 'Complete KYC', type: 'completeKyc' };
+      break;
     case 'PENDING':
     case 'PROCESSING':
     case 'AWAITING_PAYMENT':
@@ -158,14 +202,16 @@ const mapStatusToMeta = (status: string | null | undefined): StatusMeta => {
   }
 
   const template = STATUS_TEMPLATES[filter];
-  const label = normalized.length > 0 ? toTitleCase(normalized) : template.defaultLabel;
+  const label =
+    overrideLabel ?? (normalized.length > 0 ? toTitleCase(normalized) : template.defaultLabel);
+  const action = overrideAction ?? (includeAction ? template.action : undefined);
 
   return {
     filter,
     label,
     color: template.color,
     background: template.background,
-    action: includeAction ? template.action : undefined,
+    action,
   };
 };
 
@@ -350,6 +396,50 @@ const buildContractPdfHtml = (
   const sanitizedContent = sanitizeRichHtml(contract.contractContent);
   const sanitizedTerms = sanitizeRichHtml(contract.termsAndConditions);
 
+  const resolveSignatureName = (
+    value: number | string | null | undefined,
+    fallback: string,
+  ): string => {
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed.length > 0) {
+        return trimmed;
+      }
+    }
+
+    if (typeof value === 'number') {
+      return `${fallback} #${value}`;
+    }
+
+    return fallback;
+  };
+
+  const normalizeSignatureDateLabel = (value: string | null | undefined): string | null => {
+    if (!value) {
+      return null;
+    }
+
+    const formatted = formatDateTime(value);
+
+    if (!formatted || formatted === '—') {
+      return null;
+    }
+
+    return formatted;
+  };
+
+  const isCustomerSigned =
+    contract.customerSignedBy !== null && contract.customerSignedBy !== undefined;
+  const isAdminSigned = contract.adminSignedBy !== null && contract.adminSignedBy !== undefined;
+  const customerBaseName = resolveSignatureName(contract.customerSignedBy ?? null, 'Khách hàng');
+  const adminBaseName = resolveSignatureName(contract.adminSignedBy ?? null, 'CÔNG TY TECHRENT');
+  const customerSignedCaption = `${customerBaseName} đã ký`;
+  const adminSignedCaption = `${adminBaseName} đã ký`;
+  const customerUnsignedCaption = '(Ký, ghi rõ họ tên)';
+  const adminUnsignedCaption = adminBaseName;
+  const customerSignedAtLabel = normalizeSignatureDateLabel(contract.customerSignedAt ?? null);
+  const adminSignedAtLabel = normalizeSignatureDateLabel(contract.adminSignedAt ?? null);
+
   const sections: string[] = [];
 
   if (sanitizedContent.length > 0) {
@@ -363,6 +453,48 @@ const buildContractPdfHtml = (
   if (sections.length === 0) {
     sections.push('<section><p>No contract content is available at this time.</p></section>');
   }
+
+  const signatureSection = `
+    <section class="signature-section">
+      <h2>Chữ ký</h2>
+      <div class="signature-grid">
+        <div class="signature-card">
+          <p class="signature-role">Đại diện bên A</p>
+          <div class="signature-box">
+            ${isAdminSigned ? '<span class="signature-check">✔</span>' : ''}
+          </div>
+          ${
+            isAdminSigned
+              ? `<p class="signature-caption">${escapeHtml(adminSignedCaption)}</p>`
+              : `<p class="signature-caption signature-placeholder">${escapeHtml(adminUnsignedCaption)}</p>`
+          }
+          ${
+            adminSignedAtLabel
+              ? `<p class="signature-date">Ký ngày: ${escapeHtml(adminSignedAtLabel)}</p>`
+              : ''
+          }
+        </div>
+        <div class="signature-card">
+          <p class="signature-role">Đại diện bên B</p>
+          <div class="signature-box">
+            ${isCustomerSigned ? '<span class="signature-check">✔</span>' : ''}
+          </div>
+          ${
+            isCustomerSigned
+              ? `<p class="signature-caption">${escapeHtml(customerSignedCaption)}</p>`
+              : `<p class="signature-caption signature-placeholder">${escapeHtml(customerUnsignedCaption)}</p>`
+          }
+          ${
+            customerSignedAtLabel
+              ? `<p class="signature-date">Ký ngày: ${escapeHtml(customerSignedAtLabel)}</p>`
+              : ''
+          }
+        </div>
+      </div>
+    </section>
+  `;
+
+  sections.push(signatureSection);
 
   const metadataHtml = metadata
     .map(
@@ -454,6 +586,61 @@ const buildContractPdfHtml = (
         strong {
           font-weight: 600;
         }
+
+        .signature-section {
+          margin-top: 32px;
+        }
+
+        .signature-grid {
+          display: flex;
+          gap: 24px;
+          justify-content: space-between;
+          flex-wrap: wrap;
+        }
+
+        .signature-card {
+          flex: 1 1 240px;
+          text-align: center;
+        }
+
+        .signature-role {
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+          margin-bottom: 12px;
+        }
+
+        .signature-box {
+          border: 2px solid #d1d5db;
+          border-radius: 12px;
+          height: 120px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          margin-bottom: 12px;
+        }
+
+        .signature-check {
+          color: #22c55e;
+          font-size: 48px;
+          line-height: 1;
+        }
+
+        .signature-caption {
+          font-weight: 600;
+          margin-bottom: 4px;
+        }
+
+        .signature-date {
+          color: #6b7280;
+          font-size: 12px;
+        }
+
+        .signature-placeholder {
+          color: #6b7280;
+          font-weight: 500;
+          font-style: italic;
+        }
       </style>
     </head>
     <body>
@@ -512,44 +699,60 @@ const deriveDeviceSummary = (order: RentalOrderResponse, deviceNames: Map<string
   return `${firstName} + ${rest.length} more`;
 };
 
+const isContractSignedByCustomer = (contract?: ContractResponse | null): boolean => {
+  if (!contract) {
+    return false;
+  }
+
+  return contract.customerSignedBy !== null && contract.customerSignedBy !== undefined;
+};
+
 const mapOrderResponseToCard = (
   order: RentalOrderResponse,
   deviceNames: Map<string, string>,
   contract?: ContractResponse | null,
 ): OrderCard => {
   const statusMeta = mapStatusToMeta(order.orderStatus);
-  const normalizedContractStatus = contract?.status?.trim().toUpperCase();
-  const isContractSigned = normalizedContractStatus === 'SIGNED';
-  const action = isContractSigned
-    ? { label: 'Download Contract', type: 'downloadContract' as const }
-    : statusMeta.action;
-
+  const depositAmount = Number.isFinite(order.depositAmount) ? Number(order.depositAmount) : 0;
+  const totalPrice = Number.isFinite(order.totalPrice) ? Number(order.totalPrice) : 0;
+  const totalDue = depositAmount + totalPrice;
   return {
+    orderId: order.orderId,
     id: String(order.orderId),
     title: `Order #${order.orderId}`,
     deviceSummary: deriveDeviceSummary(order, deviceNames),
     rentalPeriod: formatRentalPeriod(order.startDate, order.endDate),
-    totalAmount: formatCurrency(order.totalPrice),
+    totalAmount: formatCurrency(totalDue),
+    totalPrice,
+    totalPriceLabel: formatCurrency(totalPrice),
+    depositAmount,
+    depositLabel: formatCurrency(depositAmount),
+    totalDue,
     statusFilter: statusMeta.filter,
     statusLabel: statusMeta.label,
     statusColor: statusMeta.color,
     statusBackground: statusMeta.background,
-    action,
+    action: statusMeta.action,
     contract: contract ?? null,
   };
 };
 
-const PAYMENT_OPTIONS = [
+const PAYMENT_OPTIONS: {
+  id: PaymentMethod;
+  label: string;
+  description: string;
+  icon: React.ReactNode;
+}[] = [
   {
-    id: 'payos',
-    label: 'PayOS',
-    description: 'Credit/Debit Card',
+    id: 'VNPAY',
+    label: 'VNPay',
+    description: 'Pay with VNPay gateway',
     icon: <Ionicons name="card-outline" size={24} color="#111" />,
   },
   {
-    id: 'momo',
-    label: 'MoMo',
-    description: 'Mobile Wallet',
+    id: 'PAYOS',
+    label: 'PayOS',
+    description: 'Pay with PayOS gateway',
     icon: <MaterialCommunityIcons name="wallet-outline" size={24} color="#111" />,
   },
 ];
@@ -574,7 +777,7 @@ export default function OrdersScreen() {
   const [currentStep, setCurrentStep] = useState(1);
   const [otpDigits, setOtpDigits] = useState<string[]>(Array(6).fill(''));
   const otpRefs = useRef<(TextInput | null)[]>([]);
-  const [selectedPayment, setSelectedPayment] = useState(PAYMENT_OPTIONS[0].id);
+  const [selectedPayment, setSelectedPayment] = useState<PaymentMethod>(PAYMENT_OPTIONS[0].id);
   const [hasAgreed, setHasAgreed] = useState(false);
   const [activeContract, setActiveContract] = useState<ContractResponse | null>(null);
   const [isContractLoading, setContractLoading] = useState(false);
@@ -588,6 +791,12 @@ export default function OrdersScreen() {
   const [isSigningContract, setIsSigningContract] = useState(false);
   const [activeContractDownloadId, setActiveContractDownloadId] = useState<number | null>(null);
   const [verificationError, setVerificationError] = useState<string | null>(null);
+  const [isCreatingPayment, setIsCreatingPayment] = useState(false);
+  const [paymentError, setPaymentError] = useState<string | null>(null);
+  const [isPaymentModalVisible, setPaymentModalVisible] = useState(false);
+  const [paymentCheckoutUrl, setPaymentCheckoutUrl] = useState<string | null>(null);
+  const [activePaymentSession, setActivePaymentSession] = useState<PaymentSession | null>(null);
+  const [paymentModalError, setPaymentModalError] = useState<string | null>(null);
   const lastContractLoadRef = useRef<{ orderId: number | null; requestId: number }>({
     orderId: null,
     requestId: 0,
@@ -605,8 +814,8 @@ export default function OrdersScreen() {
 
   const progressWidth = useMemo<DimensionValue>(() => `${(currentStep / 3) * 100}%`, [currentStep]);
   const isContractAlreadySigned = useMemo(
-    () => activeContract?.status?.trim().toUpperCase() === 'SIGNED',
-    [activeContract?.status],
+    () => isContractSignedByCustomer(activeContract),
+    [activeContract],
   );
   const contractForSelectedOrder = useMemo(
     () => (orderDetailsTargetId ? contractsByOrderId[String(orderDetailsTargetId)] ?? null : null),
@@ -772,16 +981,17 @@ export default function OrdersScreen() {
 
   const openFlow = useCallback(
     (order: OrderCard) => {
+      const shouldSkipToPayment = isContractSignedByCustomer(order.contract);
       lastContractLoadRef.current = { orderId: null, requestId: 0 };
       setActiveOrder(order);
       setActiveContract(order.contract ?? null);
       setContractErrorMessage(null);
       setContractLoading(false);
       setModalVisible(true);
-      setCurrentStep(1);
+      setCurrentStep(shouldSkipToPayment ? 3 : 1);
       setOtpDigits(Array(6).fill(''));
       setSelectedPayment(PAYMENT_OPTIONS[0].id);
-      setHasAgreed(false);
+      setHasAgreed(shouldSkipToPayment);
       setVerificationEmail(defaultVerificationEmail);
       setPendingEmailInput(defaultVerificationEmail);
       setVerificationError(null);
@@ -789,6 +999,12 @@ export default function OrdersScreen() {
       setIsSigningContract(false);
       setEmailEditorVisible(false);
       setEmailEditorError(null);
+      setIsCreatingPayment(false);
+      setPaymentError(null);
+      setPaymentModalVisible(false);
+      setPaymentCheckoutUrl(null);
+      setActivePaymentSession(null);
+      setPaymentModalError(null);
       setContractRequestId((previous) => previous + 1);
     },
     [defaultVerificationEmail],
@@ -812,6 +1028,12 @@ export default function OrdersScreen() {
     setIsSigningContract(false);
     setEmailEditorVisible(false);
     setEmailEditorError(null);
+    setIsCreatingPayment(false);
+    setPaymentError(null);
+    setPaymentModalVisible(false);
+    setPaymentCheckoutUrl(null);
+    setActivePaymentSession(null);
+    setPaymentModalError(null);
   }, [defaultVerificationEmail]);
 
   const handleRetryContract = useCallback(() => {
@@ -837,9 +1059,9 @@ export default function OrdersScreen() {
       return;
     }
 
-    const targetOrderId = Number.parseInt(activeOrder.id, 10);
+    const targetOrderId = activeOrder.orderId;
 
-    if (Number.isNaN(targetOrderId)) {
+    if (!Number.isFinite(targetOrderId)) {
       setContractErrorMessage('Invalid rental order selected.');
       return;
     }
@@ -940,6 +1162,19 @@ export default function OrdersScreen() {
   ]);
 
   useEffect(() => {
+    if (!isModalVisible) {
+      return;
+    }
+
+    if (!isContractSignedByCustomer(activeContract)) {
+      return;
+    }
+
+    setHasAgreed(true);
+    setCurrentStep((previous) => (previous < 3 ? 3 : previous));
+  }, [activeContract, isModalVisible]);
+
+  useEffect(() => {
     const flowParam = Array.isArray(flow) ? flow[0] : flow;
     if (flowParam !== 'continue') {
       return;
@@ -948,7 +1183,10 @@ export default function OrdersScreen() {
     const orderIdParam = Array.isArray(orderId) ? orderId[0] : orderId;
     const targetOrder =
       orders.find((order) => order.id === orderIdParam) ||
-      orders.find((order) => order.action?.type === 'continueProcess');
+      orders.find(
+        (order) =>
+          order.action?.type === 'continueProcess' || order.action?.type === 'completeKyc'
+      );
 
     if (targetOrder) {
       setSelectedFilter(targetOrder.statusFilter);
@@ -1220,6 +1458,133 @@ export default function OrdersScreen() {
     setVerificationEmail,
   ]);
 
+  const handleCreatePayment = useCallback(async () => {
+    if (!activeOrder) {
+      Alert.alert('Payment unavailable', 'Select an order before continuing to payment.');
+      return;
+    }
+
+    if (isCreatingPayment) {
+      return;
+    }
+
+    try {
+      setIsCreatingPayment(true);
+      setPaymentError(null);
+      setPaymentModalError(null);
+
+      const activeSession = session?.accessToken ? session : await ensureSession();
+
+      if (!activeSession?.accessToken) {
+        throw new Error('You must be signed in to continue with payment.');
+      }
+
+      const amount = Number.isFinite(activeOrder.totalDue) ? activeOrder.totalDue : 0;
+
+      if (!Number.isFinite(amount) || amount <= 0) {
+        throw new Error('Unable to determine the total amount due for this order.');
+      }
+
+      const payload = {
+        orderId: activeOrder.orderId,
+        invoiceType: 'RENT_PAYMENT' as const,
+        paymentMethod: selectedPayment,
+        amount,
+        description: `Rent payment for order #${activeOrder.orderId}`,
+        returnUrl: PAYMENT_RETURN_URL,
+        cancelUrl: PAYMENT_CANCEL_URL,
+        frontendSuccessUrl: PAYMENT_SUCCESS_URL,
+        frontendFailureUrl: PAYMENT_FAILURE_URL,
+      };
+
+      console.log('[Orders] Creating payment session', {
+        orderId: activeOrder.orderId,
+        paymentMethod: payload.paymentMethod,
+        amount: payload.amount,
+      });
+
+      const paymentSession = await createPayment(payload, activeSession);
+
+      console.log('[Orders] Payment session created', {
+        orderId: activeOrder.orderId,
+        paymentMethod: selectedPayment,
+        checkoutUrl: paymentSession.checkoutUrl,
+        orderCode: paymentSession.orderCode,
+      });
+
+      const checkoutUrl = paymentSession.checkoutUrl ?? paymentSession.qrCodeUrl;
+
+      if (!checkoutUrl) {
+        throw new Error('The payment provider did not return a checkout link.');
+      }
+
+      setActivePaymentSession(paymentSession);
+      setPaymentCheckoutUrl(checkoutUrl);
+      setPaymentModalVisible(true);
+    } catch (error) {
+      const fallbackMessage = 'Unable to create the payment link. Please try again later.';
+      const normalizedError = error instanceof Error ? error : new Error(fallbackMessage);
+
+      console.error('[Orders] Failed to create payment session', {
+        orderId: activeOrder?.orderId ?? null,
+        error,
+      });
+
+      const message =
+        normalizedError.message && normalizedError.message.trim().length > 0
+          ? normalizedError.message
+          : fallbackMessage;
+
+      setPaymentError(message);
+      Alert.alert('Payment unavailable', message);
+    } finally {
+      setIsCreatingPayment(false);
+    }
+  }, [
+    activeOrder,
+    ensureSession,
+    isCreatingPayment,
+    selectedPayment,
+    session,
+  ]);
+
+  const handleClosePaymentModal = useCallback(() => {
+    setPaymentModalVisible(false);
+    setPaymentModalError(null);
+  }, []);
+
+  const handlePaymentWebViewError = useCallback(
+    (event: WebViewErrorEvent) => {
+      const { description, url, code } = event.nativeEvent ?? {};
+      const baseMessage = description && description.trim().length > 0
+        ? description.trim()
+        : 'An unexpected error occurred while loading the payment page.';
+      const details: string[] = [];
+
+      if (url) {
+        details.push(`URL: ${url}`);
+      }
+
+      if (typeof code === 'number') {
+        details.push(`Code: ${code}`);
+      }
+
+      const combined = details.length > 0 ? `${baseMessage} (${details.join(' · ')})` : baseMessage;
+      setPaymentModalError(combined);
+    },
+    [],
+  );
+
+  const renderPaymentLoading = useCallback(
+    () => (
+      <View style={styles.paymentModalPlaceholder}>
+        <ActivityIndicator size="large" color="#111111" />
+        <Text style={styles.paymentModalPlaceholderText}>Loading checkout…</Text>
+      </View>
+    ),
+    [],
+  );
+
   const handleOtpChange = (value: string, index: number) => {
     const sanitized = value.replace(/[^0-9]/g, '');
     const digits = [...otpDigits];
@@ -1246,7 +1611,6 @@ export default function OrdersScreen() {
   const handleDownloadContract = useCallback(
     async (contract: ContractResponse | null, contextLabel?: string) => {
       const contractId = contract?.contractId;
-      const normalizedStatus = contract?.status?.trim().toUpperCase();
 
       if (!contractId) {
         Alert.alert(
@@ -1254,16 +1618,6 @@ export default function OrdersScreen() {
           contextLabel
             ? `A downloadable contract for ${contextLabel} is not available yet.`
             : 'This rental does not have a downloadable contract yet.',
-        );
-        return;
-      }
-
-      if (normalizedStatus !== 'SIGNED') {
-        Alert.alert(
-          'Contract pending',
-          contextLabel
-            ? `The contract for ${contextLabel} must be signed before it can be downloaded.`
-            : 'The contract must be signed before it can be downloaded.',
         );
         return;
       }
@@ -1384,6 +1738,9 @@ export default function OrdersScreen() {
         case 'continueProcess':
           openFlow(order);
           break;
+        case 'completeKyc':
+          router.push('/(app)/kyc-documents');
+          break;
         case 'extendRental':
           Alert.alert('Extend Rental', 'Our team will reach out to help extend this rental.');
           break;
@@ -1396,14 +1753,11 @@ export default function OrdersScreen() {
         case 'rentAgain':
           Alert.alert('Rent Again', 'We\'ll move this device to your cart so you can rent it again.');
           break;
-        case 'downloadContract':
-          handleDownloadContract(order.contract ?? null, order.title);
-          break;
         default:
           break;
       }
     },
-    [handleDownloadContract, openFlow],
+    [openFlow, router],
   );
 
   const orderDetailsCacheRef = useRef<Record<number, RentalOrderResponse>>({});
@@ -1457,6 +1811,8 @@ export default function OrdersScreen() {
           throw new Error('You must be signed in to view this rental order.');
         }
 
+        console.log('[Orders] Loading rental order details', { orderId });
+
         const details = await fetchRentalOrderById(activeSession, orderId);
 
         if (requestMarker.cancelled || orderDetailsTargetIdRef.current !== orderId) {
@@ -1470,6 +1826,11 @@ export default function OrdersScreen() {
         if (requestMarker.cancelled || orderDetailsTargetIdRef.current !== orderId) {
           return;
         }
+
+        console.error('[Orders] Failed to load rental order details', {
+          orderId,
+          error,
+        });
 
         const fallbackMessage = 'Failed to load the rental order details. Please try again.';
         const normalizedError = error instanceof Error ? error : new Error(fallbackMessage);
@@ -1495,9 +1856,9 @@ export default function OrdersScreen() {
 
   const handleViewDetails = useCallback(
     (order: OrderCard) => {
-      const parsedId = Number.parseInt(order.id, 10);
+      const parsedId = order.orderId;
 
-      if (Number.isNaN(parsedId) || parsedId <= 0) {
+      if (!Number.isFinite(parsedId) || parsedId <= 0) {
         Alert.alert('Order unavailable', 'Unable to load details for this rental order.');
         return;
       }
@@ -1842,15 +2203,29 @@ export default function OrdersScreen() {
             <View style={styles.summaryCard}>
               <View style={styles.summaryRow}>
                 <Text style={styles.summaryLabel}>Order</Text>
-                <Text style={styles.summaryValue}>{activeOrder?.deviceSummary}</Text>
+                <Text style={styles.summaryValue}>{activeOrder?.deviceSummary ?? '—'}</Text>
               </View>
               <View style={styles.summaryRow}>
                 <Text style={styles.summaryLabel}>Rental Period</Text>
-                <Text style={styles.summaryValue}>{activeOrder?.rentalPeriod}</Text>
+                <Text style={styles.summaryValue}>{activeOrder?.rentalPeriod ?? '—'}</Text>
               </View>
               <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Total Amount</Text>
-                <Text style={styles.summaryTotal}>{activeOrder?.totalAmount ?? '$0.00'}</Text>
+                <Text style={styles.summaryLabel}>Rental Fees</Text>
+                <Text style={styles.summaryValue}>
+                  {activeOrder?.totalPriceLabel ?? formatCurrency(0)}
+                </Text>
+              </View>
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>Deposit</Text>
+                <Text style={styles.summaryValue}>
+                  {activeOrder?.depositLabel ?? formatCurrency(0)}
+                </Text>
+              </View>
+              <View style={[styles.summaryRow, styles.summaryRowEmphasis]}>
+                <Text style={styles.summaryLabel}>Total Due</Text>
+                <Text style={styles.summaryTotal}>
+                  {activeOrder?.totalAmount ?? formatCurrency(0)}
+                </Text>
               </View>
             </View>
             <View style={styles.paymentList}>
@@ -1860,7 +2235,12 @@ export default function OrdersScreen() {
                   <Pressable
                     key={option.id}
                     style={[styles.paymentOption, isSelected && styles.paymentOptionSelected]}
-                    onPress={() => setSelectedPayment(option.id)}
+                    onPress={() => {
+                      setSelectedPayment(option.id);
+                      if (paymentError) {
+                        setPaymentError(null);
+                      }
+                    }}
                   >
                     <View style={styles.paymentIcon}>{option.icon}</View>
                     <View style={styles.paymentDetails}>
@@ -1876,27 +2256,30 @@ export default function OrdersScreen() {
                 );
               })}
             </View>
+            {paymentError ? (
+              <Text style={styles.paymentErrorText} accessibilityRole="alert">
+                {paymentError}
+              </Text>
+            ) : null}
             <View style={styles.paymentSecurity}>
               <Ionicons name="shield-checkmark" size={16} color="#1f7df4" />
               <Text style={styles.paymentSecurityText}>Your payment information is secure</Text>
             </View>
             <Pressable
-              style={[styles.primaryButton, styles.primaryButtonEnabled]}
-              onPress={() =>
-                Alert.alert(
-                  'Rental Process Complete',
-                  `${activeOrder?.title ?? 'Your order'} is confirmed!`,
-                  [
-                    {
-                      text: 'Done',
-                      style: 'default',
-                      onPress: resetFlow,
-                    },
-                  ],
-                )
-              }
+              style={[
+                styles.primaryButton,
+                styles.buttonFlex,
+                styles.primaryButtonEnabled,
+                isCreatingPayment && styles.primaryButtonBusy,
+              ]}
+              onPress={handleCreatePayment}
+              disabled={isCreatingPayment || !activeOrder}
             >
-              <Text style={styles.primaryButtonText}>Complete Rental Process</Text>
+              {isCreatingPayment ? (
+                <ActivityIndicator color="#ffffff" />
+              ) : (
+                <Text style={styles.primaryButtonText}>Proceed to Payment</Text>
+              )}
             </Pressable>
             <Pressable style={styles.secondaryButton} onPress={goToPreviousStep}>
               <Text style={styles.secondaryButtonText}>Back</Text>
@@ -1918,12 +2301,6 @@ export default function OrdersScreen() {
         onRefresh={handleRefresh}
         renderItem={({ item }) => {
           const isHighlighted = highlightedOrderId === item.id;
-          const isDownloadAction = item.action?.type === 'downloadContract';
-          const isDownloadingCardContract = Boolean(
-            isDownloadAction &&
-              item.contract?.contractId &&
-              activeContractDownloadId === item.contract.contractId,
-          );
           return (
             <View
               style={[
@@ -1959,7 +2336,7 @@ export default function OrdersScreen() {
                     <Text style={styles.metaValue}>{item.rentalPeriod}</Text>
                   </View>
                   <View style={styles.metaGroup}>
-                    <Text style={styles.metaLabel}>Total Amount</Text>
+                    <Text style={styles.metaLabel}>Total Due</Text>
                     <Text style={styles.metaValue}>{item.totalAmount}</Text>
                   </View>
                 </View>
@@ -1969,22 +2346,10 @@ export default function OrdersScreen() {
                   </Pressable>
                   {item.action ? (
                     <Pressable
-                      style={[
-                        styles.cardActionButton,
-                        isDownloadingCardContract && styles.cardActionButtonDisabled,
-                      ]}
-                      onPress={() => {
-                        if (!isDownloadingCardContract) {
-                          handleCardAction(item);
-                        }
-                      }}
-                      disabled={isDownloadingCardContract}
+                      style={styles.cardActionButton}
+                      onPress={() => handleCardAction(item)}
                     >
-                      {isDownloadingCardContract ? (
-                        <ActivityIndicator color="#ffffff" size="small" />
-                      ) : (
-                        <Text style={styles.cardActionLabel}>{item.action.label}</Text>
-                      )}
+                      <Text style={styles.cardActionLabel}>{item.action.label}</Text>
                     </Pressable>
                   ) : null}
                 </View>
@@ -2196,6 +2561,14 @@ export default function OrdersScreen() {
                 <View style={styles.detailSection}>
                   <Text style={styles.detailSectionHeading}>Payment</Text>
                   <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Total Due</Text>
+                    <Text style={styles.detailValue}>
+                      {formatCurrency(
+                        orderDetailsData.totalPrice + orderDetailsData.depositAmount,
+                      )}
+                    </Text>
+                  </View>
+                  <View style={styles.detailRow}>
                     <Text style={styles.detailLabel}>Total Price</Text>
                     <Text style={styles.detailValue}>{formatCurrency(orderDetailsData.totalPrice)}</Text>
                   </View>
@@ -2288,6 +2661,9 @@ export default function OrdersScreen() {
                         </>
                       )}
                     </Pressable>
+                    <Text style={styles.detailDownloadHint}>
+                      The contract PDF includes signature placeholders for both parties.
+                    </Text>
                   </View>
                 ) : null}
               </ScrollView>
@@ -2298,6 +2674,51 @@ export default function OrdersScreen() {
             )}
           </View>
         </View>
+      </Modal>
+      <Modal
+        animationType="slide"
+        visible={isPaymentModalVisible}
+        onRequestClose={handleClosePaymentModal}
+      >
+        <SafeAreaView style={styles.paymentModalContainer} edges={['top']}>
+          <View style={styles.paymentModalHeader}>
+            <Pressable style={styles.paymentModalCloseButton} onPress={handleClosePaymentModal}>
+              <Ionicons name="chevron-back" size={20} color="#111111" />
+            </Pressable>
+            <Text style={styles.paymentModalTitle}>
+              {activePaymentSession?.orderCode
+                ? `Checkout ${activePaymentSession.orderCode}`
+                : activeOrder
+                  ? `Order #${activeOrder.orderId} Payment`
+                  : 'Payment Checkout'}
+            </Text>
+            <View style={styles.paymentModalHeaderSpacer} />
+          </View>
+          {paymentModalError ? (
+            <View style={styles.paymentModalErrorBanner}>
+              <Ionicons name="warning-outline" size={16} color="#b91c1c" />
+              <Text style={styles.paymentModalErrorText}>{paymentModalError}</Text>
+            </View>
+          ) : null}
+          <View style={styles.paymentModalBody}>
+            {paymentCheckoutUrl ? (
+              <WebView
+                source={{ uri: paymentCheckoutUrl }}
+                startInLoadingState
+                renderLoading={renderPaymentLoading}
+                onError={handlePaymentWebViewError}
+                style={styles.paymentWebView}
+              />
+            ) : (
+              <View style={styles.paymentModalPlaceholder}>
+                <Ionicons name="warning-outline" size={24} color="#6b7280" />
+                <Text style={styles.paymentModalPlaceholderText}>
+                  The payment link is unavailable. Close this screen and try again.
+                </Text>
+              </View>
+            )}
+          </View>
+        </SafeAreaView>
       </Modal>
     </SafeAreaView>
   );
@@ -2481,9 +2902,6 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 16,
     paddingVertical: 10,
-  },
-  cardActionButtonDisabled: {
-    opacity: 0.6,
   },
   cardActionLabel: {
     fontSize: 13,
@@ -2849,6 +3267,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
   },
+  summaryRowEmphasis: {
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+    paddingTop: 8,
+    marginTop: 4,
+  },
   summaryLabel: {
     fontSize: 14,
     color: '#6b7280',
@@ -2874,6 +3298,12 @@ const styles = StyleSheet.create({
     borderColor: '#e5e7eb',
     borderRadius: 14,
     padding: 14,
+  },
+  paymentErrorText: {
+    marginTop: 8,
+    fontSize: 13,
+    color: '#b91c1c',
+    fontWeight: '500',
   },
   paymentOptionSelected: {
     borderColor: '#1f7df4',
@@ -2910,6 +3340,68 @@ const styles = StyleSheet.create({
   paymentSecurityText: {
     fontSize: 12,
     color: '#6b7280',
+  },
+  paymentModalContainer: {
+    flex: 1,
+    backgroundColor: '#ffffff',
+  },
+  paymentModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+  },
+  paymentModalTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#111111',
+  },
+  paymentModalCloseButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  paymentModalHeaderSpacer: {
+    width: 40,
+  },
+  paymentModalBody: {
+    flex: 1,
+  },
+  paymentWebView: {
+    flex: 1,
+  },
+  paymentModalPlaceholder: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    padding: 24,
+  },
+  paymentModalPlaceholderText: {
+    fontSize: 14,
+    color: '#6b7280',
+    textAlign: 'center',
+  },
+  paymentModalErrorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: '#fef2f2',
+    borderBottomWidth: 1,
+    borderBottomColor: '#fecaca',
+  },
+  paymentModalErrorText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#b91c1c',
+    fontWeight: '500',
   },
   emailModalOverlay: {
     flex: 1,
@@ -3079,6 +3571,11 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: '#1f7df4',
+  },
+  detailDownloadHint: {
+    marginTop: 12,
+    fontSize: 12,
+    color: '#6b7280',
   },
   orderDetailsState: {
     alignItems: 'center',
