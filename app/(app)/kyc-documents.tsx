@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
-import { scanOCRFromImageAsync } from 'expo-mlkit-ocr';
+import type { MediaType } from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import {
@@ -14,6 +14,7 @@ import {
   View,
 } from 'react-native';
 
+import { extractTextFromImage } from '@/services/ocr';
 import { parseKycText, type ParsedKycFields } from '@/utils/kyc-parser';
 
 type DocumentType = 'front' | 'back' | 'selfie';
@@ -45,6 +46,8 @@ const initialOcrState: OcrStateMap = {
   back: { isProcessing: false, error: null, text: '' },
 };
 
+const IMAGE_MEDIA_TYPE: MediaType = 'images';
+
 const documentCopy: Record<DocumentType, { title: string; description: string }> = {
   front: {
     title: 'Front Side',
@@ -58,49 +61,6 @@ const documentCopy: Record<DocumentType, { title: string; description: string }>
     title: 'Selfie with ID',
     description: 'Take a selfie while holding your ID next to your face.',
   },
-};
-
-const extractTextFromResult = (result: unknown): string => {
-  if (!result) {
-    return '';
-  }
-
-  if (typeof result === 'string') {
-    return result;
-  }
-
-  if (Array.isArray(result)) {
-    return result.map((item) => extractTextFromResult(item)).filter(Boolean).join('\n');
-  }
-
-  if (typeof result === 'object') {
-    const { resultText } = result as { resultText?: string };
-    if (typeof resultText === 'string' && resultText.length > 0) {
-      return resultText;
-    }
-
-    const { text } = result as { text?: string };
-    if (typeof text === 'string' && text.length > 0) {
-      return text;
-    }
-
-    const blocks = (result as { blocks?: unknown }).blocks;
-    if (blocks) {
-      return extractTextFromResult(blocks);
-    }
-
-    const lines = (result as { lines?: unknown }).lines;
-    if (lines) {
-      return extractTextFromResult(lines);
-    }
-
-    const elements = (result as { elements?: unknown }).elements;
-    if (elements) {
-      return extractTextFromResult(elements);
-    }
-  }
-
-  return '';
 };
 
 const buildFileName = (type: DocumentType, extension?: string) =>
@@ -184,7 +144,9 @@ export default function KycDocumentsScreen() {
   const router = useRouter();
   const [documents, setDocuments] = useState<DocumentState>(initialDocumentState);
   const [ocrState, setOcrState] = useState<OcrStateMap>(initialOcrState);
-  const [detectedFields, setDetectedFields] = useState<ParsedKycFields>({});
+  const [detectedFields, setDetectedFields] = useState<ParsedKycFields>({
+    typeOfIdentification: 'CCCD',
+  });
   const [isRequestingPermission, setIsRequestingPermission] = useState(false);
 
   const isNextEnabled = useMemo(
@@ -233,12 +195,7 @@ export default function KycDocumentsScreen() {
       }));
 
       try {
-        const detectionResult = await scanOCRFromImageAsync(asset.uri, {
-          shouldGroup: true,
-        });
-        const detectedText = extractTextFromResult(
-          (detectionResult as { blocks?: unknown })?.blocks ?? detectionResult,
-        );
+        const detectedText = await extractTextFromImage({ uri: asset.uri, mimeType: asset.type });
 
         setOcrState((prev) => {
           const nextState: OcrStateMap = {
@@ -251,29 +208,46 @@ export default function KycDocumentsScreen() {
             },
           };
 
-          const aggregatedText = [nextState.front.text, nextState.back.text]
-            .map((value) => value.trim())
-            .filter((value) => value.length > 0)
-            .join('\n');
+          const parsed = parseKycText({
+            frontText: type === 'front' ? detectedText : nextState.front.text,
+            backText: type === 'back' ? detectedText : nextState.back.text,
+          });
 
-          if (aggregatedText.length > 0) {
-            const parsed = parseKycText(aggregatedText);
-            setDetectedFields((prevFields) => ({
-              ...prevFields,
-              ...parsed,
-            }));
-          }
+          setDetectedFields((prevFields) => {
+            const nextFields: ParsedKycFields = { ...prevFields };
+            const parsedEntries = Object.entries(parsed) as [
+              keyof ParsedKycFields,
+              string | undefined,
+            ][];
+
+            parsedEntries.forEach(([field, value]) => {
+              if (typeof value === 'undefined') {
+                return;
+              }
+
+              if (typeof value === 'string' && value.trim().length === 0) {
+                return;
+              }
+
+              nextFields[field] = value;
+            });
+
+            return nextFields;
+          });
 
           return nextState;
         });
       } catch (error) {
         console.warn('OCR failed for document', type, error);
+        const fallbackMessage = 'Could not extract text. You can fill details manually later.';
+        const errorMessage = error instanceof Error && error.message.length > 0 ? error.message : fallbackMessage;
+
         setOcrState((prev) => ({
           ...prev,
           [type]: {
             ...prev[type],
             isProcessing: false,
-            error: 'Could not extract text. You can fill details manually later.',
+            error: errorMessage,
           },
         }));
       }
@@ -291,14 +265,14 @@ export default function KycDocumentsScreen() {
       const pickerResult =
         source === 'camera'
           ? await ImagePicker.launchCameraAsync({
-              mediaTypes: ImagePicker.MediaTypeOptions.Images,
+              mediaTypes: IMAGE_MEDIA_TYPE,
               allowsEditing: false,
               quality: 1,
               preferredAssetRepresentationMode:
                 ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible,
             })
           : await ImagePicker.launchImageLibraryAsync({
-              mediaTypes: ImagePicker.MediaTypeOptions.Images,
+              mediaTypes: IMAGE_MEDIA_TYPE,
               allowsEditing: false,
               quality: 1,
             });
@@ -376,13 +350,14 @@ export default function KycDocumentsScreen() {
   }, [detectedFields, documents, router]);
 
   const autoFilledSummary = useMemo(() => {
-    const entries: Array<{ label: string; value?: string }> = [
+    const entries: { label: string; value?: string }[] = [
       { label: 'Full name', value: detectedFields.fullName },
       { label: 'ID number', value: detectedFields.identificationCode },
       { label: 'Birthday', value: detectedFields.birthday },
       { label: 'Expiration date', value: detectedFields.expirationDate },
       { label: 'Address', value: detectedFields.permanentAddress },
       { label: 'ID type', value: detectedFields.typeOfIdentification },
+      { label: 'Verified at', value: detectedFields.verifiedAt },
     ];
 
     const hasData = entries.some((entry) => entry.value && entry.value.length > 0);

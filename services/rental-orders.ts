@@ -125,6 +125,14 @@ type RentalOrdersListResponse = {
   data: RentalOrderResponse[] | null;
 };
 
+type RentalOrderDetailsResult = {
+  status: string;
+  message?: string;
+  details?: string;
+  code: number;
+  data: RentalOrderResponse | null;
+};
+
 export async function fetchRentalOrders(
   session: SessionCredentials
 ): Promise<RentalOrderResponse[]> {
@@ -154,3 +162,50 @@ export async function fetchRentalOrders(
 
   return json.data;
 }
+
+export const fetchRentalOrderById = async (
+  session: SessionCredentials,
+  orderId: number
+): Promise<RentalOrderResponse> => {
+  if (!session?.accessToken) {
+    throw new Error('An access token is required to load the rental order.');
+  }
+
+  if (!Number.isFinite(orderId) || orderId <= 0) {
+    throw new Error('A valid rental order identifier is required to load the rental order.');
+  }
+
+  const response = await fetch(buildApiUrl(`rental-orders/${orderId}`), {
+    headers: {
+      Accept: 'application/json',
+      Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
+        session.accessToken
+      }`,
+    },
+  });
+
+  if (!response.ok) {
+    const apiMessage = await parseErrorMessage(response);
+    throw new Error(
+      apiMessage ?? `Unable to load rental order ${orderId} (status ${response.status}).`,
+    );
+  }
+
+  const json = (await response.json()) as RentalOrderDetailsResult | null;
+
+  if (!json || json.status !== 'SUCCESS' || !json.data) {
+    throw new Error(
+      json?.message ?? json?.details ?? 'Failed to load the rental order details. Please try again.',
+    );
+  }
+
+  return json.data;
+};
+
+export const rentalOrdersApi = {
+  createRentalOrder,
+  fetchRentalOrders,
+  fetchRentalOrderById,
+};
+
+export default rentalOrdersApi;
