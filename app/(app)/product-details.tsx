@@ -197,6 +197,17 @@ const normalizeSpecsData = (data: ProductDetail['specs']): NormalizedSpecEntry[]
     : [];
 };
 
+const resolveDailyRate = (product: ProductDetail) => {
+  if (typeof product.pricePerDay === 'number' && product.pricePerDay > 0) {
+    return product.pricePerDay;
+  }
+
+  const sanitized = product.price.replace(/[^0-9.,]/g, '').replace(/,/g, '');
+  const parsed = Number.parseFloat(sanitized);
+
+  return Number.isNaN(parsed) ? null : parsed;
+};
+
 const VND_FORMATTER = new Intl.NumberFormat('vi-VN', {
   style: 'currency',
   currency: 'VND',
@@ -347,6 +358,15 @@ export default function ProductDetailsScreen() {
     typeof deviceValue === 'number' && Number.isFinite(deviceValue)
       ? formatCurrencyValue(deviceValue)
       : null;
+  const dailyRate = resolveDailyRate(product);
+  const totalRentalPrice = dailyRate !== null ? dailyRate * quantity : null;
+  const totalDepositAmount = depositAmount !== null ? depositAmount * quantity : null;
+  const totalCost =
+    totalRentalPrice !== null && totalDepositAmount !== null
+      ? totalRentalPrice + totalDepositAmount
+      : null;
+  const shouldShowTotalCost = quantity > 1 && totalCost !== null;
+  const totalCostLabel = totalCost !== null ? formatCurrencyValue(totalCost) : '—';
 
   const handlePrimaryAction = () => {
     if (isPrimaryDisabled || rentMode === null) {
@@ -568,6 +588,13 @@ export default function ProductDetailsScreen() {
                 Select your rental dates and shipping address from the cart before checkout.
               </Text>
             </View>
+
+            {shouldShowTotalCost && (
+              <View style={styles.rentTotalRow}>
+                <Text style={styles.rentTotalLabel}>Total Cost</Text>
+                <Text style={styles.rentTotalValue}>{totalCostLabel}</Text>
+              </View>
+            )}
 
             <View style={styles.rentFooter}>
               <TouchableOpacity
@@ -1118,6 +1145,27 @@ const styles = StyleSheet.create({
     color: '#1a73e8',
     fontSize: 14,
     lineHeight: 20,
+  },
+  rentTotalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 16,
+    backgroundColor: '#f7f7f7',
+    borderWidth: 1,
+    borderColor: '#ededed',
+    marginBottom: 18,
+  },
+  rentTotalLabel: {
+    fontSize: 14,
+    color: '#6f6f6f',
+  },
+  rentTotalValue: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#111111',
   },
   rentQuantityControl: {
     flexDirection: 'row',
