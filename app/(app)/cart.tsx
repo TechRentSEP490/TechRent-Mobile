@@ -351,6 +351,12 @@ export default function CartScreen() {
   const minimumStartDate = today;
   const minimumEndDate = useMemo(() => addDays(startDate, 1), [startDate]);
   const isRangeInvalid = endDate.getTime() <= startDate.getTime();
+  const rentalDurationInDays = useMemo(() => {
+    const millisecondsPerDay = 24 * 60 * 60 * 1000;
+    const rawDuration = Math.round((endDate.getTime() - startDate.getTime()) / millisecondsPerDay);
+
+    return Math.max(1, rawDuration);
+  }, [endDate, startDate]);
 
   const fetchSavedAddresses = useCallback(async () => {
     const activeSession = session?.accessToken ? session : await ensureSession();
@@ -465,6 +471,16 @@ export default function CartScreen() {
 
     return items.reduce((sum, item) => sum + getDailyRate(item.product) * item.quantity, 0);
   }, [items, summaryCurrency]);
+  const totalOrderAmount = useMemo(() => {
+    if (summaryCurrency === null) {
+      return null;
+    }
+
+    return items.reduce(
+      (sum, item) => sum + getDailyRate(item.product) * item.quantity * rentalDurationInDays,
+      0
+    );
+  }, [items, rentalDurationInDays, summaryCurrency]);
   const formattedTotal = useMemo(() => {
     if (!hasItems || totalAmount === null || !summaryCurrency) {
       return '—';
@@ -531,12 +547,14 @@ export default function CartScreen() {
       return '—';
     }
 
-    if (summaryCurrency === null || totalAmount === null || depositTotalValue === null) {
+    if (summaryCurrency === null || totalOrderAmount === null) {
       return '—';
     }
 
-    return formatCurrencyValue(totalAmount + depositTotalValue, summaryCurrency);
-  }, [depositTotalValue, hasItems, summaryCurrency, totalAmount]);
+    const depositValue = depositTotalValue ?? 0;
+
+    return formatCurrencyValue(totalOrderAmount + depositValue, summaryCurrency);
+  }, [depositTotalValue, hasItems, summaryCurrency, totalOrderAmount]);
   const summaryMetrics = useMemo(
     () => {
       const metrics = [
@@ -546,7 +564,7 @@ export default function CartScreen() {
         { label: 'Device Value Total', value: deviceValueTotalLabel },
       ];
 
-      metrics.push({ label: 'Total Cost', value: totalCostLabel });
+      metrics.push({ label: 'Total Cost', value: totalCostLabel, highlight: true });
 
       return metrics;
     },
@@ -718,7 +736,9 @@ export default function CartScreen() {
           {summaryMetrics.map((metric) => (
             <View key={metric.label} style={styles.summaryMetric}>
               <Text style={styles.summaryLabel}>{metric.label}</Text>
-              <Text style={styles.summaryValue}>{metric.value}</Text>
+              <Text style={[styles.summaryValue, metric.highlight && styles.summaryValueHighlight]}>
+                {metric.value}
+              </Text>
             </View>
           ))}
         </View>
@@ -1170,6 +1190,9 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#111111',
     marginTop: 4,
+  },
+  summaryValueHighlight: {
+    color: '#d32f2f',
   },
   orderCard: {
     borderRadius: 20,
