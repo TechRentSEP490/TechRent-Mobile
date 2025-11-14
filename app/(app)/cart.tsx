@@ -527,7 +527,7 @@ export default function CartScreen() {
     return `${totalQuantity} ${totalQuantity === 1 ? 'device' : 'devices'}`;
   }, [hasItems, totalQuantity]);
   const totalCostLabel = useMemo(() => {
-    if (!hasItems || totalQuantity <= 1) {
+    if (!hasItems) {
       return '—';
     }
 
@@ -536,7 +536,7 @@ export default function CartScreen() {
     }
 
     return formatCurrencyValue(totalAmount + depositTotalValue, summaryCurrency);
-  }, [depositTotalValue, hasItems, summaryCurrency, totalAmount, totalQuantity]);
+  }, [depositTotalValue, hasItems, summaryCurrency, totalAmount]);
   const summaryMetrics = useMemo(
     () => {
       const metrics = [
@@ -546,20 +546,11 @@ export default function CartScreen() {
         { label: 'Device Value Total', value: deviceValueTotalLabel },
       ];
 
-      if (totalQuantity > 1) {
-        metrics.push({ label: 'Total Cost', value: totalCostLabel });
-      }
+      metrics.push({ label: 'Total Cost', value: totalCostLabel });
 
       return metrics;
     },
-    [
-      depositTotalLabel,
-      deviceLabel,
-      deviceValueTotalLabel,
-      formattedTotal,
-      totalCostLabel,
-      totalQuantity,
-    ]
+    [depositTotalLabel, deviceLabel, deviceValueTotalLabel, formattedTotal, totalCostLabel]
   );
 
   if (!hasItems && !product) {
