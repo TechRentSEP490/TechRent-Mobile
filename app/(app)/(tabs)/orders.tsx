@@ -14,6 +14,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Linking,
   Modal,
   NativeSyntheticEvent,
   Platform,
@@ -28,7 +29,10 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
-import type { WebViewErrorEvent } from 'react-native-webview/lib/WebViewTypes';
+import type {
+  WebViewErrorEvent,
+  WebViewHttpErrorEvent,
+} from 'react-native-webview/lib/WebViewTypes';
 
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -797,6 +801,8 @@ export default function OrdersScreen() {
   const [paymentCheckoutUrl, setPaymentCheckoutUrl] = useState<string | null>(null);
   const [activePaymentSession, setActivePaymentSession] = useState<PaymentSession | null>(null);
   const [paymentModalError, setPaymentModalError] = useState<string | null>(null);
+  const [paymentWebViewKey, setPaymentWebViewKey] = useState(0);
+  const [isPaymentWebViewLoading, setIsPaymentWebViewLoading] = useState(false);
   const lastContractLoadRef = useRef<{ orderId: number | null; requestId: number }>({
     orderId: null,
     requestId: 0,
@@ -970,6 +976,28 @@ export default function OrdersScreen() {
   const handleRetry = useCallback(() => {
     loadOrders('initial');
   }, [loadOrders]);
+
+  useEffect(() => {
+    if (paymentCheckoutUrl) {
+      setPaymentModalError(null);
+      setPaymentWebViewKey((previous) => previous + 1);
+      setIsPaymentWebViewLoading(true);
+    } else {
+      setIsPaymentWebViewLoading(false);
+    }
+  }, [paymentCheckoutUrl]);
+
+  useEffect(() => {
+    if (!isPaymentModalVisible) {
+      setIsPaymentWebViewLoading(false);
+    }
+  }, [isPaymentModalVisible]);
+
+  useEffect(() => {
+    if (paymentModalError) {
+      setIsPaymentWebViewLoading(false);
+    }
+  }, [paymentModalError]);
 
   const filteredOrders = useMemo(() => {
     if (selectedFilter === 'All') {
@@ -1553,6 +1581,33 @@ export default function OrdersScreen() {
     setPaymentModalError(null);
   }, []);
 
+  const handleOpenPaymentInBrowser = useCallback(async () => {
+    if (!paymentCheckoutUrl) {
+      return;
+    }
+
+    try {
+      await Linking.openURL(paymentCheckoutUrl);
+    } catch (error) {
+      console.error('[Orders] Failed to open payment checkout in browser', {
+        url: paymentCheckoutUrl,
+        error,
+      });
+      Alert.alert(
+        'Unable to open link',
+        'We could not open the checkout page in the browser. Please try again later.',
+      );
+    }
+  }, [paymentCheckoutUrl]);
+
+  const handlePaymentWebViewLoadStart = useCallback(() => {
+    setIsPaymentWebViewLoading(true);
+  }, []);
+
+  const handlePaymentWebViewLoadEnd = useCallback(() => {
+    setIsPaymentWebViewLoading(false);
+  }, []);
+
   const handlePaymentWebViewError = useCallback(
     (event: WebViewErrorEvent) => {
       const { description, url, code } = event.nativeEvent ?? {};
@@ -1571,13 +1626,43 @@ export default function OrdersScreen() {
 
       const combined = details.length > 0 ? `${baseMessage} (${details.join(' · ')})` : baseMessage;
       setPaymentModalError(combined);
+      setIsPaymentWebViewLoading(false);
+    },
+    [],
+  );
+
+  const handlePaymentWebViewHttpError = useCallback(
+    (event: WebViewHttpErrorEvent) => {
+      const { statusCode, description, url } = event.nativeEvent ?? {};
+      const parts: string[] = [];
+
+      if (typeof statusCode === 'number') {
+        parts.push(`Status ${statusCode}`);
+      }
+
+      if (description && description.trim().length > 0) {
+        parts.push(description.trim());
+      }
+
+      if (url) {
+        parts.push(`URL: ${url}`);
+      }
+
+      const messageBase =
+        typeof statusCode === 'number'
+          ? 'The payment provider returned an unexpected response.'
+          : 'A network error occurred while loading the payment page.';
+      const combined = parts.length > 0 ? `${messageBase} (${parts.join(' · ')})` : messageBase;
+
+      setPaymentModalError(combined);
+      setIsPaymentWebViewLoading(false);
     },
     [],
   );
 
   const renderPaymentLoading = useCallback(
     () => (
-      <View style={styles.paymentModalPlaceholder}>
+      <View style={styles.paymentWebViewLoadingOverlay}>
         <ActivityIndicator size="large" color="#111111" />
         <Text style={styles.paymentModalPlaceholderText}>Loading checkout…</Text>
       </View>
@@ -2692,7 +2777,18 @@ export default function OrdersScreen() {
                   ? `Order #${activeOrder.orderId} Payment`
                   : 'Payment Checkout'}
             </Text>
-            <View style={styles.paymentModalHeaderSpacer} />
+            {paymentCheckoutUrl ? (
+              <Pressable
+                style={styles.paymentModalCloseButton}
+                onPress={handleOpenPaymentInBrowser}
+                accessibilityRole="button"
+                accessibilityLabel="Open checkout in browser"
+              >
+                <Ionicons name="open-outline" size={20} color="#111111" />
+              </Pressable>
+            ) : (
+              <View style={styles.paymentModalHeaderSpacer} />
+            )}
           </View>
           {paymentModalError ? (
             <View style={styles.paymentModalErrorBanner}>
@@ -2702,13 +2798,25 @@ export default function OrdersScreen() {
           ) : null}
           <View style={styles.paymentModalBody}>
             {paymentCheckoutUrl ? (
-              <WebView
-                source={{ uri: paymentCheckoutUrl }}
-                startInLoadingState
-                renderLoading={renderPaymentLoading}
-                onError={handlePaymentWebViewError}
-                style={styles.paymentWebView}
-              />
+              <View style={styles.paymentWebViewContainer}>
+                <WebView
+                  key={`payment-webview-${paymentWebViewKey}`}
+                  source={{ uri: paymentCheckoutUrl }}
+                  javaScriptEnabled
+                  domStorageEnabled
+                  cacheEnabled={false}
+                  sharedCookiesEnabled
+                  setSupportMultipleWindows={false}
+                  originWhitelist={['https://*', 'http://*']}
+                  mixedContentMode="always"
+                  onLoadStart={handlePaymentWebViewLoadStart}
+                  onLoadEnd={handlePaymentWebViewLoadEnd}
+                  onError={handlePaymentWebViewError}
+                  onHttpError={handlePaymentWebViewHttpError}
+                  style={styles.paymentWebView}
+                />
+                {isPaymentWebViewLoading ? renderPaymentLoading() : null}
+              </View>
             ) : (
               <View style={styles.paymentModalPlaceholder}>
                 <Ionicons name="warning-outline" size={24} color="#6b7280" />
@@ -3372,8 +3480,21 @@ const styles = StyleSheet.create({
   paymentModalBody: {
     flex: 1,
   },
+  paymentWebViewContainer: {
+    flex: 1,
+    position: 'relative',
+    backgroundColor: '#ffffff',
+  },
   paymentWebView: {
     flex: 1,
+  },
+  paymentWebViewLoadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    padding: 24,
+    backgroundColor: '#ffffff',
   },
   paymentModalPlaceholder: {
     flex: 1,
