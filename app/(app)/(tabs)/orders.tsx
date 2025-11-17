@@ -52,7 +52,7 @@ import {
   type PaymentMethod,
   type PaymentSession,
 } from '@/services/payments';
-import styles from './orders.styles';
+import styles from '@/style/orders.styles';
 
 type OrderStatusFilter = 'All' | 'Pending' | 'Delivered' | 'In Use' | 'Completed';
 type OrderStatus = Exclude<OrderStatusFilter, 'All'>;

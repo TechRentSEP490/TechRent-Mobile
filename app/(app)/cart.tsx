@@ -38,7 +38,7 @@ import {
   getDepositRatio,
   getDeviceValue,
 } from '@/utils/product-pricing';
-import styles from './cart.styles';
+import styles from '@/style/cart.styles';
 const formatAddressTimestamp = (value?: string | null) => {
   if (!value) {
     return null;
