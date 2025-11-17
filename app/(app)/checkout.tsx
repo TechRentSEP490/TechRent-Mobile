@@ -5,7 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useDeviceModel } from '@/hooks/use-device-model';
 import { determineCurrency, formatCurrencyValue, getDailyRate } from '@/utils/product-pricing';
-import styles from './checkout.styles';
+import styles from '@/style/checkout.styles';
 
 export default function CheckoutScreen() {
   const router = useRouter();

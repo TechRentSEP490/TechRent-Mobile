@@ -1,5 +1,5 @@
 import * as SecureStore from 'expo-secure-store';
-import { useEffect, type ReactNode } from 'react';
+import { type ReactNode } from 'react';
 import { create } from 'zustand';
 
 import {
@@ -450,13 +450,26 @@ export const useAuthStore = create<AuthStore>()((set, get) => {
   };
 });
 
+let hasHydratedStore = false;
+
+const ensureAuthStoreHydration = () => {
+  if (hasHydratedStore) {
+    return;
+  }
+
+  hasHydratedStore = true;
+
+  useAuthStore
+    .getState()
+    .hydrate()
+    .catch((error) => {
+      console.warn('Failed to hydrate auth store', error);
+      hasHydratedStore = false;
+    });
+};
+
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const hydrate = useAuthStore((state) => state.hydrate);
-
-  useEffect(() => {
-    hydrate();
-  }, [hydrate]);
-
+  ensureAuthStoreHydration();
   return children;
 }
 

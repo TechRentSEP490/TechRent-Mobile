@@ -17,7 +17,7 @@ import { products, type ProductDetail } from '../../constants/products';
 import { useAuth } from '@/contexts/AuthContext';
 import { useCart } from '@/contexts/CartContext';
 import { useDeviceModel } from '@/hooks/use-device-model';
-import styles from './product-details.styles';
+import styles from '@/style/product-details.styles';
 
 type NormalizedSpecEntry = {
   label: string;
