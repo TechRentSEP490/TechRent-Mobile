@@ -3,33 +3,8 @@ import { useMemo, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import type { ProductDetail } from '@/constants/products';
 import { useDeviceModel } from '@/hooks/use-device-model';
-
-const formatCurrencyValue = (value: number, currency: 'USD' | 'VND') =>
-  new Intl.NumberFormat(currency === 'USD' ? 'en-US' : 'vi-VN', {
-    style: 'currency',
-    currency,
-    maximumFractionDigits: currency === 'USD' ? 2 : 0,
-  }).format(value);
-
-const determineCurrency = (product: ProductDetail): 'USD' | 'VND' => {
-  if (product.currency) {
-    return product.currency;
-  }
-
-  return product.price.includes('$') ? 'USD' : 'VND';
-};
-
-const getDailyRate = (product: ProductDetail) => {
-  if (typeof product.pricePerDay === 'number' && product.pricePerDay > 0) {
-    return product.pricePerDay;
-  }
-
-  const sanitized = product.price.replace(/[^0-9.,]/g, '').replace(/,/g, '');
-  const parsed = Number.parseFloat(sanitized);
-  return Number.isNaN(parsed) ? 0 : parsed;
-};
+import { determineCurrency, formatCurrencyValue, getDailyRate } from '@/utils/product-pricing';
 
 export default function CheckoutScreen() {
   const router = useRouter();
