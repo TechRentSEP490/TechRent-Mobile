@@ -15,40 +15,30 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import Toast from 'react-native-toast-message';
-import type { ProductDetail } from '@/constants/products';
 import { useAuth } from '@/contexts/AuthContext';
 import { useCart } from '@/contexts/CartContext';
 import { useDeviceModel } from '@/hooks/use-device-model';
 import { createRentalOrder } from '@/services/rental-orders';
 import { fetchShippingAddresses, type ShippingAddress } from '@/services/shipping-addresses';
-
-const clampToStartOfDay = (date: Date) => {
-  const normalized = new Date(date);
-  normalized.setHours(0, 0, 0, 0);
-  return normalized;
-};
-
-const addDays = (date: Date, days: number) => {
-  const base = clampToStartOfDay(date);
-  const nextDate = new Date(base);
-  nextDate.setDate(base.getDate() + days);
-  return clampToStartOfDay(nextDate);
-};
-
-const formatDisplayDate = (date: Date) =>
-  clampToStartOfDay(date).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
-
-const formatCurrencyValue = (value: number, currency: 'USD' | 'VND') =>
-  new Intl.NumberFormat(currency === 'USD' ? 'en-US' : 'vi-VN', {
-    style: 'currency',
-    currency,
-    maximumFractionDigits: currency === 'USD' ? 2 : 0,
-  }).format(value);
-
+import {
+  addDays,
+  addMonths,
+  clampToStartOfDay,
+  endOfMonth,
+  formatDisplayDate,
+  generateCalendarDays,
+  isSameDay,
+  parseDateParam,
+  startOfMonth,
+  WEEKDAY_LABELS,
+} from '@/utils/dates';
+import {
+  determineCurrency,
+  formatCurrencyValue,
+  getDailyRate,
+  getDepositRatio,
+  getDeviceValue,
+} from '@/utils/product-pricing';
 const formatAddressTimestamp = (value?: string | null) => {
   if (!value) {
     return null;
@@ -62,81 +52,6 @@ const formatAddressTimestamp = (value?: string | null) => {
 
   return date.toLocaleString();
 };
-
-const getDepositRatio = (product: ProductDetail) => {
-  if (typeof product.depositPercent === 'number') {
-    return product.depositPercent;
-  }
-
-  if (typeof product.depositPercentage === 'number') {
-    return product.depositPercentage / 100;
-  }
-
-  return null;
-};
-
-const getDeviceValue = (product: ProductDetail) => {
-  if (typeof product.deviceValue === 'number' && Number.isFinite(product.deviceValue)) {
-    return product.deviceValue;
-  }
-
-  return null;
-};
-
-const determineCurrency = (product: ProductDetail): 'USD' | 'VND' => {
-  if (product.currency) {
-    return product.currency;
-  }
-
-  return product.price.includes('$') ? 'USD' : 'VND';
-};
-
-const getDailyRate = (product: ProductDetail) => {
-  if (typeof product.pricePerDay === 'number' && product.pricePerDay > 0) {
-    return product.pricePerDay;
-  }
-
-  const sanitized = product.price.replace(/[^0-9.,]/g, '').replace(/,/g, '');
-  const parsed = Number.parseFloat(sanitized);
-  return Number.isNaN(parsed) ? 0 : parsed;
-};
-
-const parseDateParam = (value: unknown, fallback: Date) => {
-  if (typeof value === 'string') {
-    const parsed = new Date(value);
-    if (!Number.isNaN(parsed.getTime())) {
-      return clampToStartOfDay(parsed);
-    }
-  }
-
-  return clampToStartOfDay(fallback);
-};
-
-const startOfMonth = (date: Date) => {
-  const firstDay = clampToStartOfDay(date);
-  firstDay.setDate(1);
-  return clampToStartOfDay(firstDay);
-};
-
-const addMonths = (date: Date, months: number) => {
-  const base = startOfMonth(date);
-  const next = new Date(base);
-  next.setMonth(base.getMonth() + months);
-  return startOfMonth(next);
-};
-
-const endOfMonth = (date: Date) => addDays(addMonths(startOfMonth(date), 1), -1);
-
-const isSameDay = (a: Date, b: Date) => a.getTime() === b.getTime();
-
-const generateCalendarDays = (monthStart: Date) => {
-  const firstDayOfMonth = startOfMonth(monthStart);
-  const firstWeekday = firstDayOfMonth.getDay();
-  const calendarStart = addDays(firstDayOfMonth, -firstWeekday);
-  return Array.from({ length: 42 }, (_, index) => addDays(calendarStart, index));
-};
-
-const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 type DatePickerFieldProps = {
   value: Date;
@@ -351,6 +266,12 @@ export default function CartScreen() {
   const minimumStartDate = today;
   const minimumEndDate = useMemo(() => addDays(startDate, 1), [startDate]);
   const isRangeInvalid = endDate.getTime() <= startDate.getTime();
+  const rentalDurationInDays = useMemo(() => {
+    const millisecondsPerDay = 24 * 60 * 60 * 1000;
+    const rawDuration = Math.round((endDate.getTime() - startDate.getTime()) / millisecondsPerDay);
+
+    return Math.max(1, rawDuration);
+  }, [endDate, startDate]);
 
   const fetchSavedAddresses = useCallback(async () => {
     const activeSession = session?.accessToken ? session : await ensureSession();
@@ -458,20 +379,37 @@ export default function CartScreen() {
     return uniqueCurrencies.values().next().value ?? null;
   }, [hasItems, items]);
 
-  const totalAmount =
-    summaryCurrency !== null
-      ? items.reduce((sum, item) => sum + getDailyRate(item.product) * item.quantity, 0)
-      : null;
-  const formattedTotal =
-    hasItems && totalAmount !== null && summaryCurrency
-      ? formatCurrencyValue(totalAmount, summaryCurrency)
-      : '—';
+  const totalAmount = useMemo(() => {
+    if (summaryCurrency === null) {
+      return null;
+    }
 
-  const { depositTotalLabel, deviceValueTotalLabel } = useMemo(() => {
+    return items.reduce((sum, item) => sum + getDailyRate(item.product) * item.quantity, 0);
+  }, [items, summaryCurrency]);
+  const totalOrderAmount = useMemo(() => {
+    if (summaryCurrency === null) {
+      return null;
+    }
+
+    return items.reduce(
+      (sum, item) => sum + getDailyRate(item.product) * item.quantity * rentalDurationInDays,
+      0
+    );
+  }, [items, rentalDurationInDays, summaryCurrency]);
+  const formattedTotal = useMemo(() => {
+    if (!hasItems || totalAmount === null || !summaryCurrency) {
+      return '—';
+    }
+
+    return formatCurrencyValue(totalAmount, summaryCurrency);
+  }, [hasItems, summaryCurrency, totalAmount]);
+
+  const { depositTotalLabel, deviceValueTotalLabel, depositTotalValue } = useMemo(() => {
     if (!hasItems || summaryCurrency === null) {
       return {
         depositTotalLabel: '—',
         deviceValueTotalLabel: '—',
+        depositTotalValue: null,
       };
     }
 
@@ -504,8 +442,49 @@ export default function CartScreen() {
         hasDeviceValue && summaryCurrency
           ? formatCurrencyValue(deviceValueSum, summaryCurrency)
           : '—',
+      depositTotalValue: hasDepositAmount ? depositSum : null,
     };
   }, [hasItems, items, summaryCurrency]);
+
+  const totalQuantity = useMemo(
+    () => items.reduce((sum, item) => sum + item.quantity, 0),
+    [items]
+  );
+  const deviceLabel = useMemo(() => {
+    if (!hasItems) {
+      return '0 devices';
+    }
+
+    return `${totalQuantity} ${totalQuantity === 1 ? 'device' : 'devices'}`;
+  }, [hasItems, totalQuantity]);
+  const totalCostLabel = useMemo(() => {
+    if (!hasItems) {
+      return '—';
+    }
+
+    if (summaryCurrency === null || totalOrderAmount === null) {
+      return '—';
+    }
+
+    const depositValue = depositTotalValue ?? 0;
+
+    return formatCurrencyValue(totalOrderAmount + depositValue, summaryCurrency);
+  }, [depositTotalValue, hasItems, summaryCurrency, totalOrderAmount]);
+  const summaryMetrics = useMemo(
+    () => {
+      const metrics = [
+        { label: 'Total Items', value: deviceLabel },
+        { label: 'Daily Total', value: formattedTotal },
+        { label: 'Deposit Total', value: depositTotalLabel },
+        { label: 'Device Value Total', value: deviceValueTotalLabel },
+      ];
+
+      metrics.push({ label: 'Total Cost', value: totalCostLabel, highlight: true });
+
+      return metrics;
+    },
+    [depositTotalLabel, deviceLabel, deviceValueTotalLabel, formattedTotal, totalCostLabel]
+  );
 
   if (!hasItems && !product) {
     return (
@@ -521,10 +500,6 @@ export default function CartScreen() {
     );
   }
 
-  const totalQuantity = items.reduce((sum, item) => sum + item.quantity, 0);
-  const deviceLabel = hasItems
-    ? `${totalQuantity} ${totalQuantity === 1 ? 'device' : 'devices'}`
-    : '0 devices';
   const rentalRangeLabel =
     endDate.getTime() === startDate.getTime()
       ? formatDisplayDate(startDate)
@@ -673,15 +648,12 @@ export default function CartScreen() {
         )}
 
         <View style={styles.summaryRow}>
-          {[
-            { label: 'Total Items', value: deviceLabel },
-            { label: 'Daily Total', value: formattedTotal },
-            { label: 'Deposit Total', value: depositTotalLabel },
-            { label: 'Device Value Total', value: deviceValueTotalLabel },
-          ].map((metric) => (
+          {summaryMetrics.map((metric) => (
             <View key={metric.label} style={styles.summaryMetric}>
               <Text style={styles.summaryLabel}>{metric.label}</Text>
-              <Text style={styles.summaryValue}>{metric.value}</Text>
+              <Text style={[styles.summaryValue, metric.highlight && styles.summaryValueHighlight]}>
+                {metric.value}
+              </Text>
             </View>
           ))}
         </View>
@@ -1133,6 +1105,9 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#111111',
     marginTop: 4,
+  },
+  summaryValueHighlight: {
+    color: '#d32f2f',
   },
   orderCard: {
     borderRadius: 20,
