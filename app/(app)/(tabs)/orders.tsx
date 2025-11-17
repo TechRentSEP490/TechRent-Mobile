@@ -50,10 +50,10 @@ type OrderActionType =
   | 'extendRental'
   | 'confirmReceipt'
   | 'cancelOrder'
-  | 'rentAgain'
-  | 'downloadContract';
+  | 'rentAgain';
 
 type OrderCard = {
+  orderId: number;
   id: string;
   title: string;
   deviceSummary: string;
@@ -350,6 +350,50 @@ const buildContractPdfHtml = (
   const sanitizedContent = sanitizeRichHtml(contract.contractContent);
   const sanitizedTerms = sanitizeRichHtml(contract.termsAndConditions);
 
+  const resolveSignatureName = (
+    value: number | string | null | undefined,
+    fallback: string,
+  ): string => {
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed.length > 0) {
+        return trimmed;
+      }
+    }
+
+    if (typeof value === 'number') {
+      return `${fallback} #${value}`;
+    }
+
+    return fallback;
+  };
+
+  const normalizeSignatureDateLabel = (value: string | null | undefined): string | null => {
+    if (!value) {
+      return null;
+    }
+
+    const formatted = formatDateTime(value);
+
+    if (!formatted || formatted === '—') {
+      return null;
+    }
+
+    return formatted;
+  };
+
+  const isCustomerSigned =
+    contract.customerSignedBy !== null && contract.customerSignedBy !== undefined;
+  const isAdminSigned = contract.adminSignedBy !== null && contract.adminSignedBy !== undefined;
+  const customerBaseName = resolveSignatureName(contract.customerSignedBy ?? null, 'Khách hàng');
+  const adminBaseName = resolveSignatureName(contract.adminSignedBy ?? null, 'CÔNG TY TECHRENT');
+  const customerSignedCaption = `${customerBaseName} đã ký`;
+  const adminSignedCaption = `${adminBaseName} đã ký`;
+  const customerUnsignedCaption = '(Ký, ghi rõ họ tên)';
+  const adminUnsignedCaption = adminBaseName;
+  const customerSignedAtLabel = normalizeSignatureDateLabel(contract.customerSignedAt ?? null);
+  const adminSignedAtLabel = normalizeSignatureDateLabel(contract.adminSignedAt ?? null);
+
   const sections: string[] = [];
 
   if (sanitizedContent.length > 0) {
@@ -363,6 +407,48 @@ const buildContractPdfHtml = (
   if (sections.length === 0) {
     sections.push('<section><p>No contract content is available at this time.</p></section>');
   }
+
+  const signatureSection = `
+    <section class="signature-section">
+      <h2>Chữ ký</h2>
+      <div class="signature-grid">
+        <div class="signature-card">
+          <p class="signature-role">Đại diện bên A</p>
+          <div class="signature-box">
+            ${isAdminSigned ? '<span class="signature-check">✔</span>' : ''}
+          </div>
+          ${
+            isAdminSigned
+              ? `<p class="signature-caption">${escapeHtml(adminSignedCaption)}</p>`
+              : `<p class="signature-caption signature-placeholder">${escapeHtml(adminUnsignedCaption)}</p>`
+          }
+          ${
+            adminSignedAtLabel
+              ? `<p class="signature-date">Ký ngày: ${escapeHtml(adminSignedAtLabel)}</p>`
+              : ''
+          }
+        </div>
+        <div class="signature-card">
+          <p class="signature-role">Đại diện bên B</p>
+          <div class="signature-box">
+            ${isCustomerSigned ? '<span class="signature-check">✔</span>' : ''}
+          </div>
+          ${
+            isCustomerSigned
+              ? `<p class="signature-caption">${escapeHtml(customerSignedCaption)}</p>`
+              : `<p class="signature-caption signature-placeholder">${escapeHtml(customerUnsignedCaption)}</p>`
+          }
+          ${
+            customerSignedAtLabel
+              ? `<p class="signature-date">Ký ngày: ${escapeHtml(customerSignedAtLabel)}</p>`
+              : ''
+          }
+        </div>
+      </div>
+    </section>
+  `;
+
+  sections.push(signatureSection);
 
   const metadataHtml = metadata
     .map(
@@ -454,6 +540,61 @@ const buildContractPdfHtml = (
         strong {
           font-weight: 600;
         }
+
+        .signature-section {
+          margin-top: 32px;
+        }
+
+        .signature-grid {
+          display: flex;
+          gap: 24px;
+          justify-content: space-between;
+          flex-wrap: wrap;
+        }
+
+        .signature-card {
+          flex: 1 1 240px;
+          text-align: center;
+        }
+
+        .signature-role {
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+          margin-bottom: 12px;
+        }
+
+        .signature-box {
+          border: 2px solid #d1d5db;
+          border-radius: 12px;
+          height: 120px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          margin-bottom: 12px;
+        }
+
+        .signature-check {
+          color: #22c55e;
+          font-size: 48px;
+          line-height: 1;
+        }
+
+        .signature-caption {
+          font-weight: 600;
+          margin-bottom: 4px;
+        }
+
+        .signature-date {
+          color: #6b7280;
+          font-size: 12px;
+        }
+
+        .signature-placeholder {
+          color: #6b7280;
+          font-weight: 500;
+          font-style: italic;
+        }
       </style>
     </head>
     <body>
@@ -512,19 +653,22 @@ const deriveDeviceSummary = (order: RentalOrderResponse, deviceNames: Map<string
   return `${firstName} + ${rest.length} more`;
 };
 
+const isContractSignedByCustomer = (contract?: ContractResponse | null): boolean => {
+  if (!contract) {
+    return false;
+  }
+
+  return contract.customerSignedBy !== null && contract.customerSignedBy !== undefined;
+};
+
 const mapOrderResponseToCard = (
   order: RentalOrderResponse,
   deviceNames: Map<string, string>,
   contract?: ContractResponse | null,
 ): OrderCard => {
   const statusMeta = mapStatusToMeta(order.orderStatus);
-  const normalizedContractStatus = contract?.status?.trim().toUpperCase();
-  const isContractSigned = normalizedContractStatus === 'SIGNED';
-  const action = isContractSigned
-    ? { label: 'Download Contract', type: 'downloadContract' as const }
-    : statusMeta.action;
-
   return {
+    orderId: order.orderId,
     id: String(order.orderId),
     title: `Order #${order.orderId}`,
     deviceSummary: deriveDeviceSummary(order, deviceNames),
@@ -534,7 +678,7 @@ const mapOrderResponseToCard = (
     statusLabel: statusMeta.label,
     statusColor: statusMeta.color,
     statusBackground: statusMeta.background,
-    action,
+    action: statusMeta.action,
     contract: contract ?? null,
   };
 };
@@ -605,8 +749,8 @@ export default function OrdersScreen() {
 
   const progressWidth = useMemo<DimensionValue>(() => `${(currentStep / 3) * 100}%`, [currentStep]);
   const isContractAlreadySigned = useMemo(
-    () => activeContract?.status?.trim().toUpperCase() === 'SIGNED',
-    [activeContract?.status],
+    () => isContractSignedByCustomer(activeContract),
+    [activeContract],
   );
   const contractForSelectedOrder = useMemo(
     () => (orderDetailsTargetId ? contractsByOrderId[String(orderDetailsTargetId)] ?? null : null),
@@ -772,16 +916,17 @@ export default function OrdersScreen() {
 
   const openFlow = useCallback(
     (order: OrderCard) => {
+      const shouldSkipToPayment = isContractSignedByCustomer(order.contract);
       lastContractLoadRef.current = { orderId: null, requestId: 0 };
       setActiveOrder(order);
       setActiveContract(order.contract ?? null);
       setContractErrorMessage(null);
       setContractLoading(false);
       setModalVisible(true);
-      setCurrentStep(1);
+      setCurrentStep(shouldSkipToPayment ? 3 : 1);
       setOtpDigits(Array(6).fill(''));
       setSelectedPayment(PAYMENT_OPTIONS[0].id);
-      setHasAgreed(false);
+      setHasAgreed(shouldSkipToPayment);
       setVerificationEmail(defaultVerificationEmail);
       setPendingEmailInput(defaultVerificationEmail);
       setVerificationError(null);
@@ -837,9 +982,9 @@ export default function OrdersScreen() {
       return;
     }
 
-    const targetOrderId = Number.parseInt(activeOrder.id, 10);
+    const targetOrderId = activeOrder.orderId;
 
-    if (Number.isNaN(targetOrderId)) {
+    if (!Number.isFinite(targetOrderId)) {
       setContractErrorMessage('Invalid rental order selected.');
       return;
     }
@@ -938,6 +1083,19 @@ export default function OrdersScreen() {
     isModalVisible,
     session,
   ]);
+
+  useEffect(() => {
+    if (!isModalVisible) {
+      return;
+    }
+
+    if (!isContractSignedByCustomer(activeContract)) {
+      return;
+    }
+
+    setHasAgreed(true);
+    setCurrentStep((previous) => (previous < 3 ? 3 : previous));
+  }, [activeContract, isModalVisible]);
 
   useEffect(() => {
     const flowParam = Array.isArray(flow) ? flow[0] : flow;
@@ -1246,7 +1404,6 @@ export default function OrdersScreen() {
   const handleDownloadContract = useCallback(
     async (contract: ContractResponse | null, contextLabel?: string) => {
       const contractId = contract?.contractId;
-      const normalizedStatus = contract?.status?.trim().toUpperCase();
 
       if (!contractId) {
         Alert.alert(
@@ -1254,16 +1411,6 @@ export default function OrdersScreen() {
           contextLabel
             ? `A downloadable contract for ${contextLabel} is not available yet.`
             : 'This rental does not have a downloadable contract yet.',
-        );
-        return;
-      }
-
-      if (normalizedStatus !== 'SIGNED') {
-        Alert.alert(
-          'Contract pending',
-          contextLabel
-            ? `The contract for ${contextLabel} must be signed before it can be downloaded.`
-            : 'The contract must be signed before it can be downloaded.',
         );
         return;
       }
@@ -1396,14 +1543,11 @@ export default function OrdersScreen() {
         case 'rentAgain':
           Alert.alert('Rent Again', 'We\'ll move this device to your cart so you can rent it again.');
           break;
-        case 'downloadContract':
-          handleDownloadContract(order.contract ?? null, order.title);
-          break;
         default:
           break;
       }
     },
-    [handleDownloadContract, openFlow],
+    [openFlow],
   );
 
   const orderDetailsCacheRef = useRef<Record<number, RentalOrderResponse>>({});
@@ -1457,6 +1601,8 @@ export default function OrdersScreen() {
           throw new Error('You must be signed in to view this rental order.');
         }
 
+        console.log('[Orders] Loading rental order details', { orderId });
+
         const details = await fetchRentalOrderById(activeSession, orderId);
 
         if (requestMarker.cancelled || orderDetailsTargetIdRef.current !== orderId) {
@@ -1470,6 +1616,11 @@ export default function OrdersScreen() {
         if (requestMarker.cancelled || orderDetailsTargetIdRef.current !== orderId) {
           return;
         }
+
+        console.error('[Orders] Failed to load rental order details', {
+          orderId,
+          error,
+        });
 
         const fallbackMessage = 'Failed to load the rental order details. Please try again.';
         const normalizedError = error instanceof Error ? error : new Error(fallbackMessage);
@@ -1495,9 +1646,9 @@ export default function OrdersScreen() {
 
   const handleViewDetails = useCallback(
     (order: OrderCard) => {
-      const parsedId = Number.parseInt(order.id, 10);
+      const parsedId = order.orderId;
 
-      if (Number.isNaN(parsedId) || parsedId <= 0) {
+      if (!Number.isFinite(parsedId) || parsedId <= 0) {
         Alert.alert('Order unavailable', 'Unable to load details for this rental order.');
         return;
       }
@@ -1918,12 +2069,6 @@ export default function OrdersScreen() {
         onRefresh={handleRefresh}
         renderItem={({ item }) => {
           const isHighlighted = highlightedOrderId === item.id;
-          const isDownloadAction = item.action?.type === 'downloadContract';
-          const isDownloadingCardContract = Boolean(
-            isDownloadAction &&
-              item.contract?.contractId &&
-              activeContractDownloadId === item.contract.contractId,
-          );
           return (
             <View
               style={[
@@ -1969,22 +2114,10 @@ export default function OrdersScreen() {
                   </Pressable>
                   {item.action ? (
                     <Pressable
-                      style={[
-                        styles.cardActionButton,
-                        isDownloadingCardContract && styles.cardActionButtonDisabled,
-                      ]}
-                      onPress={() => {
-                        if (!isDownloadingCardContract) {
-                          handleCardAction(item);
-                        }
-                      }}
-                      disabled={isDownloadingCardContract}
+                      style={styles.cardActionButton}
+                      onPress={() => handleCardAction(item)}
                     >
-                      {isDownloadingCardContract ? (
-                        <ActivityIndicator color="#ffffff" size="small" />
-                      ) : (
-                        <Text style={styles.cardActionLabel}>{item.action.label}</Text>
-                      )}
+                      <Text style={styles.cardActionLabel}>{item.action.label}</Text>
                     </Pressable>
                   ) : null}
                 </View>
@@ -2288,6 +2421,9 @@ export default function OrdersScreen() {
                         </>
                       )}
                     </Pressable>
+                    <Text style={styles.detailDownloadHint}>
+                      The contract PDF includes signature placeholders for both parties.
+                    </Text>
                   </View>
                 ) : null}
               </ScrollView>
@@ -2481,9 +2617,6 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 16,
     paddingVertical: 10,
-  },
-  cardActionButtonDisabled: {
-    opacity: 0.6,
   },
   cardActionLabel: {
     fontSize: 13,
@@ -3079,6 +3212,11 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: '#1f7df4',
+  },
+  detailDownloadHint: {
+    marginTop: 12,
+    fontSize: 12,
+    color: '#6b7280',
   },
   orderDetailsState: {
     alignItems: 'center',

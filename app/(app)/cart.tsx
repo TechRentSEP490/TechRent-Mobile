@@ -1,10 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  NativeScrollEvent,
-  NativeSyntheticEvent,
+  Modal,
   ScrollView,
   StyleSheet,
   Text,
@@ -16,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import type { ProductDetail } from '@/constants/products';
 import { useAuth } from '@/contexts/AuthContext';
+import { useCart } from '@/contexts/CartContext';
 import { useDeviceModel } from '@/hooks/use-device-model';
 import { createRentalOrder } from '@/services/rental-orders';
 
@@ -46,6 +46,26 @@ const formatCurrencyValue = (value: number, currency: 'USD' | 'VND') =>
     maximumFractionDigits: currency === 'USD' ? 2 : 0,
   }).format(value);
 
+const getDepositRatio = (product: ProductDetail) => {
+  if (typeof product.depositPercent === 'number') {
+    return product.depositPercent;
+  }
+
+  if (typeof product.depositPercentage === 'number') {
+    return product.depositPercentage / 100;
+  }
+
+  return null;
+};
+
+const getDeviceValue = (product: ProductDetail) => {
+  if (typeof product.deviceValue === 'number' && Number.isFinite(product.deviceValue)) {
+    return product.deviceValue;
+  }
+
+  return null;
+};
+
 const determineCurrency = (product: ProductDetail): 'USD' | 'VND' => {
   if (product.currency) {
     return product.currency;
@@ -64,19 +84,6 @@ const getDailyRate = (product: ProductDetail) => {
   return Number.isNaN(parsed) ? 0 : parsed;
 };
 
-const DATE_SCROLL_ITEM_HEIGHT = 48;
-const DATE_SCROLL_VISIBLE_ROWS = 5;
-const DATE_SCROLL_RANGE_DAYS = 365;
-
-const createDateSequence = (start: Date, totalDays: number) => {
-  const normalizedStart = clampToStartOfDay(start);
-  const length = Math.max(totalDays, 1);
-  return Array.from({ length }, (_, index) => addDays(normalizedStart, index));
-};
-
-const findDateIndex = (dates: Date[], target: Date) =>
-  dates.findIndex((item) => item.getTime() === target.getTime());
-
 const parseDateParam = (value: unknown, fallback: Date) => {
   if (typeof value === 'string') {
     const parsed = new Date(value);
@@ -88,98 +95,182 @@ const parseDateParam = (value: unknown, fallback: Date) => {
   return clampToStartOfDay(fallback);
 };
 
-type DateScrollPickerProps = {
+const startOfMonth = (date: Date) => {
+  const firstDay = clampToStartOfDay(date);
+  firstDay.setDate(1);
+  return clampToStartOfDay(firstDay);
+};
+
+const addMonths = (date: Date, months: number) => {
+  const base = startOfMonth(date);
+  const next = new Date(base);
+  next.setMonth(base.getMonth() + months);
+  return startOfMonth(next);
+};
+
+const endOfMonth = (date: Date) => addDays(addMonths(startOfMonth(date), 1), -1);
+
+const isSameDay = (a: Date, b: Date) => a.getTime() === b.getTime();
+
+const generateCalendarDays = (monthStart: Date) => {
+  const firstDayOfMonth = startOfMonth(monthStart);
+  const firstWeekday = firstDayOfMonth.getDay();
+  const calendarStart = addDays(firstDayOfMonth, -firstWeekday);
+  return Array.from({ length: 42 }, (_, index) => addDays(calendarStart, index));
+};
+
+const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+type DatePickerFieldProps = {
   value: Date;
   minimumDate: Date;
   onChange: (date: Date) => void;
-  rangeInDays?: number;
 };
 
-function DateScrollPicker({ value, minimumDate, onChange, rangeInDays = DATE_SCROLL_RANGE_DAYS }: DateScrollPickerProps) {
-  const dates = useMemo(() => createDateSequence(minimumDate, rangeInDays), [minimumDate, rangeInDays]);
-  const scrollRef = useRef<ScrollView | null>(null);
-  const isInteractingRef = useRef(false);
-
-  const selectedIndex = useMemo(() => {
-    const index = findDateIndex(dates, clampToStartOfDay(value));
-    if (index >= 0) {
-      return index;
-    }
-
-    if (dates.length === 0) {
-      return 0;
-    }
-
-    if (value.getTime() < dates[0].getTime()) {
-      return 0;
-    }
-
-    return dates.length - 1;
-  }, [dates, value]);
+function DatePickerField({ value, minimumDate, onChange }: DatePickerFieldProps) {
+  const [isPickerVisible, setIsPickerVisible] = useState(false);
+  const [activeMonth, setActiveMonth] = useState(() => startOfMonth(value));
+  const normalizedMinimum = useMemo(() => clampToStartOfDay(minimumDate), [minimumDate]);
 
   useEffect(() => {
-    if (!scrollRef.current) {
+    if (!isPickerVisible) {
+      setActiveMonth(startOfMonth(value));
+    }
+  }, [isPickerVisible, value]);
+
+  const calendarDays = useMemo(() => generateCalendarDays(activeMonth), [activeMonth]);
+
+  const handleOpen = () => {
+    setIsPickerVisible(true);
+  };
+
+  const handleClose = () => {
+    setIsPickerVisible(false);
+  };
+
+  const handleSelect = (nextDate: Date) => {
+    const normalized = clampToStartOfDay(nextDate);
+    if (normalized.getTime() < normalizedMinimum.getTime()) {
       return;
     }
 
-    const targetOffset = selectedIndex * DATE_SCROLL_ITEM_HEIGHT;
-    scrollRef.current.scrollTo({ y: targetOffset, animated: !isInteractingRef.current });
-  }, [selectedIndex]);
+    setIsPickerVisible(false);
+    onChange(normalized);
+  };
 
-  const handleMomentumEnd = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const offsetY = event.nativeEvent.contentOffset.y;
-      const rawIndex = Math.round(offsetY / DATE_SCROLL_ITEM_HEIGHT);
-      const clampedIndex = Math.min(Math.max(rawIndex, 0), Math.max(dates.length - 1, 0));
-      const nextDate = dates[clampedIndex];
+  const goToPreviousMonth = () => {
+    setActiveMonth((current) => addMonths(current, -1));
+  };
 
-      if (nextDate && nextDate.getTime() !== value.getTime()) {
-        onChange(nextDate);
-      }
+  const goToNextMonth = () => {
+    setActiveMonth((current) => addMonths(current, 1));
+  };
 
-      isInteractingRef.current = false;
-    },
-    [dates, onChange, value]
-  );
-
-  const handleScrollBegin = useCallback(() => {
-    isInteractingRef.current = true;
-  }, []);
-
-  const handleScrollEndDrag = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      handleMomentumEnd(event);
-    },
-    [handleMomentumEnd]
-  );
+  const canNavigatePrev = useMemo(() => {
+    const previousMonthEnd = endOfMonth(addMonths(activeMonth, -1));
+    return previousMonthEnd.getTime() >= normalizedMinimum.getTime();
+  }, [activeMonth, normalizedMinimum]);
 
   return (
-    <View style={styles.dateScrollPickerContainer}>
-      <ScrollView
-        ref={scrollRef}
-        showsVerticalScrollIndicator={false}
-        snapToInterval={DATE_SCROLL_ITEM_HEIGHT}
-        decelerationRate="fast"
-        onMomentumScrollEnd={handleMomentumEnd}
-        onScrollBeginDrag={handleScrollBegin}
-        onScrollEndDrag={handleScrollEndDrag}
-        contentContainerStyle={styles.dateScrollContent}
+    <>
+      <TouchableOpacity
+        style={styles.datePickerButton}
+        onPress={handleOpen}
+        accessibilityRole="button"
+        accessibilityLabel="Select date"
+        activeOpacity={0.85}
       >
-        {dates.map((date) => {
-          const key = date.getTime();
-          const isSelected = date.getTime() === value.getTime();
+        <Ionicons name="calendar-outline" size={18} color="#6f6f6f" style={styles.datePickerIcon} />
+        <Text style={styles.datePickerValue}>{formatDisplayDate(value)}</Text>
+      </TouchableOpacity>
 
-          return (
-            <View key={key} style={[styles.dateScrollItem, isSelected && styles.dateScrollItemSelected]}>
-              <Text style={[styles.dateScrollText, isSelected && styles.dateScrollTextSelected]}>
-                {formatDisplayDate(date)}
-              </Text>
+      {isPickerVisible && (
+        <Modal transparent animationType="fade" visible onRequestClose={handleClose}>
+          <View style={styles.datePickerModalBackdrop}>
+            <View style={styles.datePickerModalContent}>
+              <View style={styles.datePickerModalHeader}>
+                <TouchableOpacity
+                  style={[styles.datePickerModalButton, !canNavigatePrev && styles.datePickerModalButtonDisabled]}
+                  onPress={canNavigatePrev ? goToPreviousMonth : undefined}
+                  disabled={!canNavigatePrev}
+                  accessibilityRole="button"
+                  accessibilityLabel="Previous month"
+                >
+                  <Ionicons
+                    name="chevron-back"
+                    size={20}
+                    color={!canNavigatePrev ? '#c5c5c5' : '#111111'}
+                  />
+                </TouchableOpacity>
+                <Text style={styles.datePickerModalTitle}>
+                  {activeMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                </Text>
+                <TouchableOpacity
+                  style={styles.datePickerModalButton}
+                  onPress={goToNextMonth}
+                  accessibilityRole="button"
+                  accessibilityLabel="Next month"
+                >
+                  <Ionicons name="chevron-forward" size={20} color="#111111" />
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.datePickerWeekdaysRow}>
+                {WEEKDAY_LABELS.map((label) => (
+                  <Text key={label} style={styles.datePickerWeekday}>
+                    {label}
+                  </Text>
+                ))}
+              </View>
+
+              <View style={styles.datePickerDaysGrid}>
+                {calendarDays.map((day) => {
+                  const isFromCurrentMonth = day.getMonth() === activeMonth.getMonth();
+                  const isDisabled = day.getTime() < normalizedMinimum.getTime();
+                  const isSelected = isSameDay(day, value);
+
+                  return (
+                    <TouchableOpacity
+                      key={day.getTime()}
+                      style={[
+                        styles.datePickerDayButton,
+                        !isFromCurrentMonth && styles.datePickerDayOutside,
+                        isSelected && styles.datePickerDaySelected,
+                        isDisabled && styles.datePickerDayDisabled,
+                      ]}
+                      onPress={() => handleSelect(day)}
+                      disabled={isDisabled}
+                      accessibilityRole="button"
+                      accessibilityLabel={formatDisplayDate(day)}
+                    >
+                      <Text
+                        style={[
+                          styles.datePickerDayText,
+                          !isFromCurrentMonth && styles.datePickerDayTextOutside,
+                          isSelected && styles.datePickerDayTextSelected,
+                          isDisabled && styles.datePickerDayTextDisabled,
+                        ]}
+                      >
+                        {day.getDate()}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              <TouchableOpacity
+                style={styles.datePickerCloseButton}
+                onPress={handleClose}
+                accessibilityRole="button"
+                accessibilityLabel="Close date picker"
+              >
+                <Text style={styles.datePickerCloseButtonText}>Cancel</Text>
+              </TouchableOpacity>
             </View>
-          );
-        })}
-      </ScrollView>
-      <View pointerEvents="none" style={styles.dateScrollHighlight} />
-    </View>
+          </View>
+        </Modal>
+      )}
+    </>
   );
 }
 
@@ -194,11 +285,33 @@ export default function CartScreen() {
       endDate?: string;
     }>();
   const { data: product, loading, error } = useDeviceModel(productId);
+  const { items: cartItems, updateQuantity, removeItem, clear } = useCart();
 
   const quantity = useMemo(() => {
     const parsed = Number.parseInt(typeof quantityParam === 'string' ? quantityParam : '1', 10);
     return Number.isNaN(parsed) || parsed <= 0 ? 1 : parsed;
   }, [quantityParam]);
+
+  const fallbackItem = useMemo(() => {
+    if (!product) {
+      return null;
+    }
+
+    return {
+      product,
+      quantity,
+    };
+  }, [product, quantity]);
+
+  const items = useMemo(() => {
+    if (cartItems.length > 0) {
+      return cartItems;
+    }
+
+    return fallbackItem ? [fallbackItem] : [];
+  }, [cartItems, fallbackItem]);
+  const hasItems = items.length > 0;
+  const isContextBacked = cartItems.length > 0;
 
   const today = clampToStartOfDay(new Date());
   const initialStartDate = parseDateParam(startParam, today);
@@ -217,7 +330,72 @@ export default function CartScreen() {
   const minimumEndDate = useMemo(() => addDays(startDate, 1), [startDate]);
   const isRangeInvalid = endDate.getTime() <= startDate.getTime();
 
-  if (!product) {
+  const summaryCurrency = useMemo(() => {
+    if (!hasItems) {
+      return null;
+    }
+
+    const uniqueCurrencies = new Set<ReturnType<typeof determineCurrency>>(
+      items.map((item) => determineCurrency(item.product))
+    );
+
+    if (uniqueCurrencies.size !== 1) {
+      return null;
+    }
+
+    return uniqueCurrencies.values().next().value ?? null;
+  }, [hasItems, items]);
+
+  const totalAmount =
+    summaryCurrency !== null
+      ? items.reduce((sum, item) => sum + getDailyRate(item.product) * item.quantity, 0)
+      : null;
+  const formattedTotal =
+    hasItems && totalAmount !== null && summaryCurrency
+      ? formatCurrencyValue(totalAmount, summaryCurrency)
+      : '—';
+
+  const { depositTotalLabel, deviceValueTotalLabel } = useMemo(() => {
+    if (!hasItems || summaryCurrency === null) {
+      return {
+        depositTotalLabel: '—',
+        deviceValueTotalLabel: '—',
+      };
+    }
+
+    let depositSum = 0;
+    let hasDepositAmount = false;
+    let deviceValueSum = 0;
+    let hasDeviceValue = false;
+
+    items.forEach((item) => {
+      const depositRatio = getDepositRatio(item.product);
+      const deviceValue = getDeviceValue(item.product);
+
+      if (depositRatio !== null && deviceValue !== null) {
+        depositSum += depositRatio * deviceValue * item.quantity;
+        hasDepositAmount = true;
+      }
+
+      if (deviceValue !== null) {
+        deviceValueSum += deviceValue * item.quantity;
+        hasDeviceValue = true;
+      }
+    });
+
+    return {
+      depositTotalLabel:
+        hasDepositAmount && summaryCurrency
+          ? formatCurrencyValue(depositSum, summaryCurrency)
+          : '—',
+      deviceValueTotalLabel:
+        hasDeviceValue && summaryCurrency
+          ? formatCurrencyValue(deviceValueSum, summaryCurrency)
+          : '—',
+    };
+  }, [hasItems, items, summaryCurrency]);
+
+  if (!hasItems && !product) {
     return (
       <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
         <View style={styles.loadingState}>
@@ -231,13 +409,10 @@ export default function CartScreen() {
     );
   }
 
-  const currency = determineCurrency(product);
-  const dailyRate = getDailyRate(product);
-  const totalAmount = dailyRate * quantity;
-  const formattedTotal = formatCurrencyValue(totalAmount, currency);
-
-  const productLabel = product.model || product.name;
-  const deviceLabel = `${quantity} ${quantity === 1 ? 'device' : 'devices'}`;
+  const totalQuantity = items.reduce((sum, item) => sum + item.quantity, 0);
+  const deviceLabel = hasItems
+    ? `${totalQuantity} ${totalQuantity === 1 ? 'device' : 'devices'}`
+    : '0 devices';
   const rentalRangeLabel =
     endDate.getTime() === startDate.getTime()
       ? formatDisplayDate(startDate)
@@ -259,11 +434,12 @@ export default function CartScreen() {
     setEndDate(normalized);
   };
 
+  const hasInvalidItemId = items.some(
+    (item) => !Number.isFinite(Number.parseInt(item.product.id, 10))
+  );
+
   const isCheckoutDisabled =
-    !shippingAddress.trim() ||
-    isRangeInvalid ||
-    isSubmitting ||
-    !Number.isFinite(Number.parseInt(product.id, 10));
+    !hasItems || !shippingAddress.trim() || isRangeInvalid || isSubmitting || hasInvalidItemId;
 
   const handleCheckout = async () => {
     if (isCheckoutDisabled) {
@@ -275,10 +451,16 @@ export default function CartScreen() {
       return;
     }
 
-    const deviceModelId = Number.parseInt(product.id, 10);
+    const orderDetails = items.map((item) => {
+      const deviceModelId = Number.parseInt(item.product.id, 10);
+      return {
+        quantity: item.quantity,
+        deviceModelId,
+      };
+    });
 
-    if (!Number.isFinite(deviceModelId)) {
-      setSubmitError('Unable to determine the selected device. Please try again.');
+    if (orderDetails.some((detail) => !Number.isFinite(detail.deviceModelId))) {
+      setSubmitError('Unable to determine one or more selected devices. Please try again.');
       return;
     }
 
@@ -291,18 +473,15 @@ export default function CartScreen() {
           startDate: startDate.toISOString(),
           endDate: endDate.toISOString(),
           shippingAddress: shippingAddress.trim(),
-          orderDetails: [
-            {
-              quantity,
-              deviceModelId,
-            },
-          ],
+          orderDetails,
         },
         {
           accessToken: session.accessToken,
           tokenType: session.tokenType,
         }
       );
+
+      clear();
 
       Alert.alert(
         'Rental order created',
@@ -350,14 +529,17 @@ export default function CartScreen() {
         )}
 
         <View style={styles.summaryRow}>
-          <View>
-            <Text style={styles.summaryLabel}>Total Items</Text>
-            <Text style={styles.summaryValue}>{deviceLabel}</Text>
-          </View>
-          <View style={styles.summaryRight}>
-            <Text style={styles.summaryLabel}>Daily Total</Text>
-            <Text style={styles.summaryAmount}>{formattedTotal}</Text>
-          </View>
+          {[
+            { label: 'Total Items', value: deviceLabel },
+            { label: 'Daily Total', value: formattedTotal },
+            { label: 'Deposit Total', value: depositTotalLabel },
+            { label: 'Device Value Total', value: deviceValueTotalLabel },
+          ].map((metric) => (
+            <View key={metric.label} style={styles.summaryMetric}>
+              <Text style={styles.summaryLabel}>{metric.label}</Text>
+              <Text style={styles.summaryValue}>{metric.value}</Text>
+            </View>
+          ))}
         </View>
 
         <View style={styles.orderCard}>
@@ -366,18 +548,144 @@ export default function CartScreen() {
               <Text style={styles.orderTitle}>Rental Summary</Text>
               <Text style={styles.orderSubtitle}>{rentalRangeLabel}</Text>
             </View>
-            <Ionicons name="trash-outline" size={20} color="#9c9c9c" />
+            <TouchableOpacity
+              style={[styles.clearButton, (!hasItems || !isContextBacked) && styles.clearButtonDisabled]}
+              onPress={clear}
+              disabled={!hasItems || !isContextBacked}
+              accessibilityRole="button"
+              accessibilityLabel="Clear cart"
+            >
+              <Ionicons
+                name="trash-outline"
+                size={20}
+                color={!hasItems || !isContextBacked ? '#d0d0d0' : '#9c9c9c'}
+              />
+            </TouchableOpacity>
           </View>
 
           <View style={styles.orderBody}>
-            <View style={styles.productBadge}>
-              <Ionicons name="phone-portrait-outline" size={24} color="#6f6f6f" />
-            </View>
-            <View style={styles.productDetails}>
-              <Text style={styles.productName}>{productLabel}</Text>
-              <Text style={styles.productMeta}>{`Quantity: ${quantity}`}</Text>
-            </View>
-            <Text style={styles.productPrice}>{formattedTotal}</Text>
+            {hasItems ? (
+              items.map((item) => {
+                const itemCurrency = determineCurrency(item.product);
+                const itemDailyRate = getDailyRate(item.product);
+                const itemLineTotal = formatCurrencyValue(itemDailyRate * item.quantity, itemCurrency);
+                const itemLabel = item.product.model || item.product.name;
+                const itemDailyRateLabel = `${formatCurrencyValue(itemDailyRate, itemCurrency)} / day`;
+                const depositRatio = getDepositRatio(item.product);
+                const deviceValue = getDeviceValue(item.product);
+                const depositPercentageLabel =
+                  depositRatio !== null ? `${Math.round(depositRatio * 100)}%` : null;
+                const depositAmountPerUnit =
+                  depositRatio !== null && deviceValue !== null ? depositRatio * deviceValue : null;
+                const depositSummary = depositPercentageLabel
+                  ? depositAmountPerUnit !== null
+                    ? `${depositPercentageLabel} (~${formatCurrencyValue(depositAmountPerUnit, itemCurrency)})`
+                    : depositPercentageLabel
+                  : null;
+                const itemDepositTotalLabel =
+                  depositAmountPerUnit !== null && item.quantity > 1
+                    ? formatCurrencyValue(depositAmountPerUnit * item.quantity, itemCurrency)
+                    : null;
+                const deviceValueLabel =
+                  deviceValue !== null ? formatCurrencyValue(deviceValue, itemCurrency) : null;
+                const itemDeviceValueTotalLabel =
+                  deviceValue !== null && item.quantity > 1
+                    ? formatCurrencyValue(deviceValue * item.quantity, itemCurrency)
+                    : null;
+                const availableStock = Number.isFinite(item.product.stock)
+                  ? Math.max(0, Math.floor(item.product.stock))
+                  : Number.POSITIVE_INFINITY;
+                const isAdjustable = isContextBacked;
+                const canDecrease = isAdjustable && item.quantity > 1;
+                const canIncrease =
+                  isAdjustable &&
+                  (availableStock === Number.POSITIVE_INFINITY ? true : item.quantity < availableStock);
+
+                return (
+                  <View key={item.product.id} style={styles.orderItem}>
+                    <View style={styles.orderItemHeader}>
+                      <View style={styles.orderItemTitle}>
+                        <View style={styles.productBadge}>
+                          <Ionicons name="phone-portrait-outline" size={24} color="#6f6f6f" />
+                        </View>
+                        <View style={styles.productDetails}>
+                          <Text style={styles.productName}>{itemLabel}</Text>
+                          <View style={styles.quantityRow}>
+                            <TouchableOpacity
+                              style={[styles.quantityButton, !canDecrease && styles.quantityButtonDisabled]}
+                              onPress={() => updateQuantity(item.product.id, item.quantity - 1)}
+                              disabled={!canDecrease}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Decrease quantity for ${itemLabel}`}
+                            >
+                              <Ionicons name="remove" size={16} color="#111111" />
+                            </TouchableOpacity>
+                            <Text style={styles.quantityValue}>{item.quantity}</Text>
+                            <TouchableOpacity
+                              style={[styles.quantityButton, !canIncrease && styles.quantityButtonDisabled]}
+                              onPress={() => updateQuantity(item.product.id, item.quantity + 1)}
+                              disabled={!canIncrease}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Increase quantity for ${itemLabel}`}
+                            >
+                              <Ionicons name="add" size={16} color="#111111" />
+                            </TouchableOpacity>
+                          </View>
+                          {Number.isFinite(availableStock) ? (
+                            <Text style={styles.productMeta}>{`Stock available: ${availableStock}`}</Text>
+                          ) : null}
+                        </View>
+                      </View>
+                      <View style={styles.orderItemHeaderRight}>
+                        <View style={styles.lineTotalGroup}>
+                          <Text style={styles.lineTotalLabel}>Line total</Text>
+                          <Text style={styles.productPrice}>{itemLineTotal}</Text>
+                        </View>
+                        {isContextBacked ? (
+                          <TouchableOpacity
+                            style={styles.removeItemButton}
+                            onPress={() => removeItem(item.product.id)}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Remove ${itemLabel}`}
+                          >
+                            <Ionicons name="close" size={16} color="#6f6f6f" />
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
+                    </View>
+
+                    <View style={styles.orderItemDetails}>
+                      <View style={styles.orderItemMetric}>
+                        <Text style={styles.orderItemMetricLabel}>Daily rate</Text>
+                        <Text style={styles.orderItemMetricValue}>{itemDailyRateLabel}</Text>
+                      </View>
+                      {depositSummary ? (
+                        <View style={styles.orderItemMetric}>
+                          <Text style={styles.orderItemMetricLabel}>Deposit</Text>
+                          <Text style={styles.orderItemMetricValue}>{depositSummary}</Text>
+                          {itemDepositTotalLabel ? (
+                            <Text style={styles.orderItemMetricSubValue}>{`Total: ${itemDepositTotalLabel}`}</Text>
+                          ) : null}
+                        </View>
+                      ) : null}
+                      {deviceValueLabel ? (
+                        <View style={styles.orderItemMetric}>
+                          <Text style={styles.orderItemMetricLabel}>Device value</Text>
+                          <Text style={styles.orderItemMetricValue}>{deviceValueLabel}</Text>
+                          {itemDeviceValueTotalLabel ? (
+                            <Text style={styles.orderItemMetricSubValue}>{`Total: ${itemDeviceValueTotalLabel}`}</Text>
+                          ) : null}
+                        </View>
+                      ) : null}
+                    </View>
+                  </View>
+                );
+              })
+            ) : (
+              <View style={styles.emptyOrderBody}>
+                <Text style={styles.emptyOrderText}>Add devices to your cart to create a rental.</Text>
+              </View>
+            )}
           </View>
         </View>
 
@@ -398,11 +706,15 @@ export default function CartScreen() {
           <View style={styles.dateRow}>
             <View style={styles.dateColumn}>
               <Text style={styles.dateLabel}>Start Date</Text>
-              <DateScrollPicker value={startDate} minimumDate={minimumStartDate} onChange={handleStartDateChange} />
+              <DatePickerField
+                value={startDate}
+                minimumDate={minimumStartDate}
+                onChange={handleStartDateChange}
+              />
             </View>
             <View style={styles.dateColumn}>
               <Text style={styles.dateLabel}>End Date</Text>
-              <DateScrollPicker value={endDate} minimumDate={minimumEndDate} onChange={handleEndDateChange} />
+              <DatePickerField value={endDate} minimumDate={minimumEndDate} onChange={handleEndDateChange} />
             </View>
           </View>
           {isRangeInvalid && (
@@ -502,27 +814,24 @@ const styles = StyleSheet.create({
   },
   summaryRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    flexWrap: 'wrap',
     backgroundColor: '#f8f8f8',
     padding: 16,
     borderRadius: 16,
     borderWidth: 1,
     borderColor: '#ededed',
+    gap: 16,
+  },
+  summaryMetric: {
+    flexGrow: 1,
+    flexShrink: 0,
+    minWidth: 140,
   },
   summaryLabel: {
     color: '#6f6f6f',
     fontSize: 13,
   },
   summaryValue: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#111111',
-    marginTop: 4,
-  },
-  summaryRight: {
-    alignItems: 'flex-end',
-  },
-  summaryAmount: {
     fontSize: 18,
     fontWeight: '600',
     color: '#111111',
@@ -552,9 +861,40 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   orderBody: {
+    gap: 12,
+  },
+  orderItem: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#f0f0f0',
+    backgroundColor: '#fafafa',
+    padding: 16,
+    gap: 12,
+  },
+  orderItemHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  orderItemTitle: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+    flex: 1,
+  },
+  orderItemHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  lineTotalGroup: {
+    alignItems: 'flex-end',
+    gap: 4,
+  },
+  lineTotalLabel: {
+    color: '#6f6f6f',
+    fontSize: 12,
   },
   productBadge: {
     width: 48,
@@ -572,6 +912,32 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#111111',
   },
+  quantityRow: {
+    marginTop: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  quantityButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ffffff',
+  },
+  quantityButtonDisabled: {
+    opacity: 0.4,
+  },
+  quantityValue: {
+    minWidth: 28,
+    textAlign: 'center',
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#111111',
+  },
   productMeta: {
     color: '#6f6f6f',
     marginTop: 2,
@@ -579,6 +945,46 @@ const styles = StyleSheet.create({
   productPrice: {
     fontWeight: '600',
     color: '#111111',
+  },
+  orderItemDetails: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 16,
+  },
+  orderItemMetric: {
+    flexGrow: 1,
+    flexShrink: 0,
+    minWidth: 140,
+    gap: 4,
+  },
+  orderItemMetricLabel: {
+    fontSize: 13,
+    color: '#6f6f6f',
+  },
+  orderItemMetricValue: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#111111',
+  },
+  orderItemMetricSubValue: {
+    fontSize: 13,
+    color: '#6f6f6f',
+  },
+  removeItemButton: {
+    padding: 4,
+  },
+  emptyOrderBody: {
+    paddingVertical: 12,
+  },
+  emptyOrderText: {
+    color: '#6f6f6f',
+  },
+  clearButton: {
+    padding: 8,
+    borderRadius: 18,
+  },
+  clearButtonDisabled: {
+    opacity: 0.4,
   },
   formCard: {
     borderRadius: 20,
@@ -622,43 +1028,119 @@ const styles = StyleSheet.create({
     color: '#c53030',
     fontSize: 13,
   },
-  dateScrollPickerContainer: {
-    width: '100%',
-    height: DATE_SCROLL_ITEM_HEIGHT * DATE_SCROLL_VISIBLE_ROWS,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#e5e5e5',
-    backgroundColor: '#fafafa',
-  },
-  dateScrollContent: {
-    paddingVertical: (DATE_SCROLL_ITEM_HEIGHT * DATE_SCROLL_VISIBLE_ROWS - DATE_SCROLL_ITEM_HEIGHT) / 2,
-  },
-  dateScrollItem: {
-    height: DATE_SCROLL_ITEM_HEIGHT,
+  datePickerButton: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dateScrollItemSelected: {
+    gap: 8,
+    borderWidth: 1,
+    borderColor: '#d9d9d9',
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     backgroundColor: '#ffffff',
   },
-  dateScrollText: {
-    fontSize: 15,
+  datePickerIcon: {
     color: '#6f6f6f',
   },
-  dateScrollTextSelected: {
+  datePickerValue: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#111111',
+  },
+  datePickerModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.35)',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+  },
+  datePickerModalContent: {
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    paddingBottom: 12,
+    overflow: 'hidden',
+  },
+  datePickerModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderColor: '#ededed',
+  },
+  datePickerModalButton: {
+    paddingHorizontal: 4,
+    paddingVertical: 6,
+    borderRadius: 12,
+  },
+  datePickerModalButtonDisabled: {
+    opacity: 0.35,
+  },
+  datePickerModalTitle: {
     fontSize: 16,
     fontWeight: '600',
     color: '#111111',
   },
-  dateScrollHighlight: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: (DATE_SCROLL_ITEM_HEIGHT * DATE_SCROLL_VISIBLE_ROWS - DATE_SCROLL_ITEM_HEIGHT) / 2,
-    height: DATE_SCROLL_ITEM_HEIGHT,
-    borderTopWidth: 1,
-    borderBottomWidth: 1,
-    borderColor: '#d4d4d4',
+  datePickerWeekdaysRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+  },
+  datePickerWeekday: {
+    flex: 1,
+    textAlign: 'center',
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#6f6f6f',
+  },
+  datePickerDaysGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingHorizontal: 12,
+    paddingBottom: 4,
+  },
+  datePickerDayButton: {
+    width: '14.2857%',
+    aspectRatio: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 4,
+    borderRadius: 999,
+  },
+  datePickerDayOutside: {
+    opacity: 0.5,
+  },
+  datePickerDaySelected: {
+    backgroundColor: '#111111',
+  },
+  datePickerDayDisabled: {
+    opacity: 0.35,
+  },
+  datePickerDayText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#111111',
+  },
+  datePickerDayTextOutside: {
+    color: '#6f6f6f',
+  },
+  datePickerDayTextSelected: {
+    color: '#ffffff',
+    fontWeight: '700',
+  },
+  datePickerDayTextDisabled: {
+    color: '#9c9c9c',
+  },
+  datePickerCloseButton: {
+    alignItems: 'center',
+    paddingVertical: 12,
+    marginTop: 4,
+  },
+  datePickerCloseButtonText: {
+    fontSize: 15,
+    color: '#0057ff',
+    fontWeight: '600',
   },
   submitErrorBanner: {
     borderRadius: 12,
