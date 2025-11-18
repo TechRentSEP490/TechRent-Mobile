@@ -201,6 +201,43 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
+  quickPaySection: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+    gap: 8,
+  },
+  quickPayLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    color: '#6b7280',
+    textTransform: 'uppercase',
+  },
+  quickPayButtons: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  quickPayButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: '#eef2ff',
+    borderWidth: 1,
+    borderColor: '#e0e7ff',
+  },
+  quickPayButtonIcon: {
+    marginRight: 6,
+  },
+  quickPayButtonLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#111111',
+  },
   viewDetails: {
     fontSize: 14,
     color: '#1f7df4',
