@@ -15,7 +15,6 @@ import {
   Alert,
   FlatList,
   Linking,
-  Modal,
   NativeSyntheticEvent,
   Platform,
   Pressable,
@@ -33,6 +32,10 @@ import type {
   WebViewHttpErrorEvent,
 } from 'react-native-webview/lib/WebViewTypes';
 
+import EmailEditorModal from '@/components/modals/EmailEditorModal';
+import OrderDetailsModal from '@/components/modals/OrderDetailsModal';
+import OrderStepsModal from '@/components/modals/OrderStepsModal';
+import PaymentModal from '@/components/modals/PaymentModal';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   fetchContractById,
@@ -53,6 +56,13 @@ import {
   type PaymentSession,
 } from '@/services/payments';
 import styles from '@/style/orders.styles';
+import {
+  formatContractStatus,
+  formatCurrency,
+  formatDateTime,
+  formatRentalPeriod,
+  toTitleCase,
+} from '@/utils/order-formatters';
 
 type OrderStatusFilter = 'All' | 'Pending' | 'Delivered' | 'In Use' | 'Completed';
 type OrderStatus = Exclude<OrderStatusFilter, 'All'>;
@@ -149,14 +159,6 @@ const PAYMENT_FAILURE_URL = resolvePaymentUrl(
   'https://example.com/payments/failure',
 );
 
-const toTitleCase = (value: string) =>
-  value
-    .toLowerCase()
-    .split(/[_\s]+/)
-    .filter(Boolean)
-    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
-    .join(' ');
-
 const mapStatusToMeta = (status: string | null | undefined): StatusMeta => {
   const normalized = (status ?? '').toUpperCase();
   let filter: OrderStatus = 'Pending';
@@ -219,74 +221,6 @@ const mapStatusToMeta = (status: string | null | undefined): StatusMeta => {
   };
 };
 
-const formatCurrency = (value: number): string => {
-  try {
-    return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(value);
-  } catch {
-    return `${Number.isFinite(value) ? Math.round(value).toLocaleString('vi-VN') : '0'} ₫`;
-  }
-};
-
-const formatRentalPeriod = (startDateIso: string, endDateIso: string): string => {
-  const startDate = startDateIso ? new Date(startDateIso) : null;
-  const endDate = endDateIso ? new Date(endDateIso) : null;
-
-  if (!startDate || Number.isNaN(startDate.getTime())) {
-    return '—';
-  }
-
-  const hasValidEnd = Boolean(endDate && !Number.isNaN(endDate.getTime()));
-
-  try {
-    const sameYear = hasValidEnd && endDate ? startDate.getFullYear() === endDate.getFullYear() : false;
-    const startFormatter = new Intl.DateTimeFormat('vi-VN', {
-      day: '2-digit',
-      month: 'short',
-      ...(sameYear ? {} : { year: 'numeric' }),
-    });
-    const startLabel = startFormatter.format(startDate);
-
-    if (hasValidEnd && endDate) {
-      const endFormatter = new Intl.DateTimeFormat('vi-VN', {
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric',
-      });
-      const endLabel = endFormatter.format(endDate);
-      return `${startLabel} - ${endLabel}`;
-    }
-
-    return `Starting ${startLabel}`;
-  } catch {
-    const startLabel = startDate.toISOString().slice(0, 10);
-    if (hasValidEnd && endDate) {
-      const endLabel = endDate.toISOString().slice(0, 10);
-      return `${startLabel} - ${endLabel}`;
-    }
-    return `Starting ${startLabel}`;
-  }
-};
-
-const formatDateTime = (iso: string | null | undefined): string => {
-  if (!iso) {
-    return '—';
-  }
-
-  const date = new Date(iso);
-
-  if (Number.isNaN(date.getTime())) {
-    return iso;
-  }
-
-  try {
-    return new Intl.DateTimeFormat('vi-VN', {
-      dateStyle: 'medium',
-      timeStyle: 'short',
-    }).format(date);
-  } catch {
-    return date.toISOString().replace('T', ' ').slice(0, 16);
-  }
-};
 
 const normalizeHtmlContent = (value: string | null | undefined): string => {
   if (!value || value.trim().length === 0) {
@@ -312,14 +246,6 @@ const normalizeHtmlContent = (value: string | null | undefined): string => {
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
-};
-
-const formatContractStatus = (status: string | null | undefined): string => {
-  if (!status || status.trim().length === 0) {
-    return 'Unknown';
-  }
-
-  return toTitleCase(status);
 };
 
 const escapeHtml = (value: string): string =>
@@ -803,6 +729,11 @@ export default function OrdersScreen() {
   const [paymentModalError, setPaymentModalError] = useState<string | null>(null);
   const [paymentWebViewKey, setPaymentWebViewKey] = useState(0);
   const [isPaymentWebViewLoading, setIsPaymentWebViewLoading] = useState(false);
+  const paymentModalTitle = activePaymentSession?.orderCode
+    ? `Checkout ${activePaymentSession.orderCode}`
+    : activeOrder
+      ? `Order #${activeOrder.orderId} Payment`
+      : 'Payment Checkout';
   const lastContractLoadRef = useRef<{ orderId: number | null; requestId: number }>({
     orderId: null,
     requestId: 0,
@@ -826,6 +757,10 @@ export default function OrdersScreen() {
   const contractForSelectedOrder = useMemo(
     () => (orderDetailsTargetId ? contractsByOrderId[String(orderDetailsTargetId)] ?? null : null),
     [contractsByOrderId, orderDetailsTargetId],
+  );
+  const isSelectedContractDownloading = Boolean(
+    contractForSelectedOrder?.contractId &&
+      activeContractDownloadId === contractForSelectedOrder.contractId,
   );
   const isAgreementComplete = useMemo(
     () =>
@@ -2520,314 +2455,84 @@ export default function OrdersScreen() {
         ItemSeparatorComponent={() => <View style={styles.separator} />}
       />
 
-      <Modal animationType="slide" visible={isModalVisible} transparent onRequestClose={resetFlow}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Complete Rental Agreement</Text>
-              <Pressable style={styles.closeButton} onPress={resetFlow}>
-                <Ionicons name="close" size={20} color="#111" />
-              </Pressable>
-            </View>
-            <View style={styles.progressHeader}>
-              <Text style={styles.progressLabel}>Step {currentStep} of 3</Text>
-              <Text style={styles.progressStage}>Final Review</Text>
-            </View>
-            <View style={styles.progressBar}>
-              <View style={[styles.progressFill, { width: progressWidth }]} />
-            </View>
-            {renderStepContent()}
-          </View>
-        </View>
-      </Modal>
-      <Modal
-        animationType="fade"
-        transparent
+      <OrderStepsModal
+        visible={isModalVisible}
+        onClose={resetFlow}
+        currentStep={currentStep}
+        progressWidth={progressWidth}
+      >
+        {renderStepContent()}
+      </OrderStepsModal>
+      <EmailEditorModal
         visible={isEmailEditorVisible}
-        onRequestClose={handleCloseEmailEditor}
-      >
-        <View style={styles.emailModalOverlay}>
-          <View style={styles.emailModalCard}>
-            <Text style={styles.emailModalTitle}>Update email address</Text>
-            <Text style={styles.emailModalDescription}>
-              Enter the email you want to use to receive the verification code.
-            </Text>
-            <TextInput
-              style={[
-                styles.emailInput,
-                emailEditorError ? styles.emailInputError : null,
-              ]}
-              placeholder="name@example.com"
-              value={pendingEmailInput}
-              onChangeText={(value) => {
-                setPendingEmailInput(value);
-                if (emailEditorError) {
-                  setEmailEditorError(null);
-                }
-              }}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              autoCorrect={false}
-              inputMode="email"
-            />
-            {emailEditorError ? (
-              <Text style={styles.emailErrorText} accessibilityRole="alert">
-                {emailEditorError}
-              </Text>
-            ) : null}
-            <View style={styles.emailModalActions}>
-              <Pressable style={styles.emailModalCancelButton} onPress={handleCloseEmailEditor}>
-                <Text style={styles.emailModalCancelText}>Cancel</Text>
-              </Pressable>
-              <Pressable style={styles.emailModalSaveButton} onPress={handleSaveEmail}>
-                <Text style={styles.emailModalSaveText}>Save</Text>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
-      <Modal
-        animationType="slide"
-        transparent
+        value={pendingEmailInput}
+        error={emailEditorError}
+        onChangeText={(value) => {
+          setPendingEmailInput(value);
+          if (emailEditorError) {
+            setEmailEditorError(null);
+          }
+        }}
+        onCancel={handleCloseEmailEditor}
+        onSave={handleSaveEmail}
+      />
+      <OrderDetailsModal
         visible={isOrderDetailsModalVisible}
-        onRequestClose={handleCloseOrderDetails}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.orderDetailsCard}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Order Details</Text>
-              <Pressable style={styles.closeButton} onPress={handleCloseOrderDetails}>
-                <Ionicons name="close" size={20} color="#111" />
-              </Pressable>
-            </View>
-            {orderDetailsLoading ? (
-              <View style={styles.orderDetailsState}>
-                <ActivityIndicator color="#111111" />
-                <Text style={styles.orderDetailsStateText}>Loading order details…</Text>
-              </View>
-            ) : orderDetailsError ? (
-              <View style={styles.orderDetailsState}>
-                <Text style={[styles.orderDetailsStateText, styles.orderDetailsErrorText]}>
-                  {orderDetailsError}
-                </Text>
-                <Pressable style={styles.contractRetryButton} onPress={handleRetryOrderDetails}>
-                  <Text style={styles.contractRetryButtonText}>Try Again</Text>
-                </Pressable>
-              </View>
-            ) : orderDetailsData ? (
-              <ScrollView style={styles.orderDetailsScroll} showsVerticalScrollIndicator={false}>
-                <View style={styles.detailSection}>
-                  <Text style={styles.detailSectionHeading}>Summary</Text>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Order ID</Text>
-                    <Text style={styles.detailValue}>#{orderDetailsData.orderId}</Text>
-                  </View>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Status</Text>
-                    <Text style={styles.detailValue}>{toTitleCase(orderDetailsData.orderStatus)}</Text>
-                  </View>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Created</Text>
-                    <Text style={styles.detailValue}>{formatDateTime(orderDetailsData.createdAt)}</Text>
-                  </View>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Rental Period</Text>
-                    <Text style={styles.detailValue}>
-                      {formatRentalPeriod(orderDetailsData.startDate, orderDetailsData.endDate)}
-                    </Text>
-                  </View>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Shipping Address</Text>
-                    <Text style={[styles.detailValue, styles.detailValueMultiline]}>
-                      {orderDetailsData.shippingAddress || '—'}
-                    </Text>
-                  </View>
-                </View>
-                <View style={styles.detailSection}>
-                  <Text style={styles.detailSectionHeading}>Payment</Text>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Total Due</Text>
-                    <Text style={styles.detailValue}>
-                      {formatCurrency(
-                        orderDetailsData.totalPrice + orderDetailsData.depositAmount,
-                      )}
-                    </Text>
-                  </View>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Total Price</Text>
-                    <Text style={styles.detailValue}>{formatCurrency(orderDetailsData.totalPrice)}</Text>
-                  </View>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Price / Day</Text>
-                    <Text style={styles.detailValue}>{formatCurrency(orderDetailsData.pricePerDay)}</Text>
-                  </View>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Deposit Due</Text>
-                    <Text style={styles.detailValue}>{formatCurrency(orderDetailsData.depositAmount)}</Text>
-                  </View>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Deposit Held</Text>
-                    <Text style={styles.detailValue}>{formatCurrency(orderDetailsData.depositAmountHeld)}</Text>
-                  </View>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Deposit Used</Text>
-                    <Text style={styles.detailValue}>{formatCurrency(orderDetailsData.depositAmountUsed)}</Text>
-                  </View>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Deposit Refunded</Text>
-                    <Text style={styles.detailValue}>{formatCurrency(orderDetailsData.depositAmountRefunded)}</Text>
-                  </View>
-                </View>
-                <View style={styles.detailSection}>
-                  <Text style={styles.detailSectionHeading}>Items</Text>
-                  {orderDetailsData.orderDetails && orderDetailsData.orderDetails.length > 0 ? (
-                    orderDetailsData.orderDetails.map((item) => {
-                      const deviceName =
-                        deviceNameLookup[String(item.deviceModelId)] ?? `Device Model ${item.deviceModelId}`;
-                      return (
-                        <View key={item.orderDetailId} style={styles.detailItemRow}>
-                          <View style={styles.detailItemHeader}>
-                            <Text style={styles.detailItemName}>{deviceName}</Text>
-                            <Text style={styles.detailItemQty}>×{item.quantity}</Text>
-                          </View>
-                          <Text style={styles.detailItemMeta}>
-                            Price / Day: {formatCurrency(item.pricePerDay)}
-                          </Text>
-                          <Text style={styles.detailItemMeta}>
-                            Deposit / Unit: {formatCurrency(item.depositAmountPerUnit)}
-                          </Text>
-                        </View>
-                      );
-                    })
-                  ) : (
-                    <Text style={styles.detailEmptyText}>No devices were found for this rental.</Text>
-                  )}
-                </View>
-                {contractForSelectedOrder ? (
-                  <View style={styles.detailSection}>
-                    <Text style={styles.detailSectionHeading}>Contract</Text>
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Status</Text>
-                      <Text style={styles.detailValue}>
-                        {formatContractStatus(contractForSelectedOrder.status)}
-                      </Text>
-                    </View>
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Contract Number</Text>
-                      <Text style={styles.detailValue}>
-                        {contractForSelectedOrder.contractNumber &&
-                        contractForSelectedOrder.contractNumber.trim().length > 0
-                          ? contractForSelectedOrder.contractNumber.trim()
-                          : `#${contractForSelectedOrder.contractId}`}
-                      </Text>
-                    </View>
-                    <Pressable
-                      style={[
-                        styles.detailDownloadButton,
-                        activeContractDownloadId === contractForSelectedOrder.contractId &&
-                          styles.detailDownloadButtonDisabled,
-                      ]}
-                      onPress={() => {
-                        if (activeContractDownloadId !== contractForSelectedOrder.contractId) {
-                          handleDownloadContract(
-                            contractForSelectedOrder,
-                            `Order #${orderDetailsData.orderId}`,
-                          );
-                        }
-                      }}
-                      disabled={activeContractDownloadId === contractForSelectedOrder.contractId}
-                    >
-                      {activeContractDownloadId === contractForSelectedOrder.contractId ? (
-                        <ActivityIndicator color="#1f7df4" />
-                      ) : (
-                        <>
-                          <Ionicons name="download-outline" size={18} color="#1f7df4" />
-                          <Text style={styles.detailDownloadLabel}>Download Contract</Text>
-                        </>
-                      )}
-                    </Pressable>
-                    <Text style={styles.detailDownloadHint}>
-                      The contract PDF includes signature placeholders for both parties.
-                    </Text>
-                  </View>
-                ) : null}
-              </ScrollView>
-            ) : (
-              <View style={styles.orderDetailsState}>
-                <Text style={styles.orderDetailsStateText}>No additional details are available.</Text>
-              </View>
-            )}
-          </View>
-        </View>
-      </Modal>
-      <Modal
-        animationType="slide"
+        loading={orderDetailsLoading}
+        error={orderDetailsError}
+        order={orderDetailsData}
+        deviceNameLookup={deviceNameLookup}
+        contract={contractForSelectedOrder}
+        isDownloadingContract={isSelectedContractDownloading}
+        onClose={handleCloseOrderDetails}
+        onRetry={handleRetryOrderDetails}
+        onDownloadContract={
+          contractForSelectedOrder
+            ? () =>
+                handleDownloadContract(
+                  contractForSelectedOrder,
+                  orderDetailsData ? `Order #${orderDetailsData.orderId}` : undefined,
+                )
+            : undefined
+        }
+      />
+      <PaymentModal
         visible={isPaymentModalVisible}
-        onRequestClose={handleClosePaymentModal}
+        title={paymentModalTitle}
+        onClose={handleClosePaymentModal}
+        canOpenInBrowser={Boolean(paymentCheckoutUrl)}
+        onOpenInBrowser={paymentCheckoutUrl ? handleOpenPaymentInBrowser : undefined}
+        errorMessage={paymentModalError}
       >
-        <SafeAreaView style={styles.paymentModalContainer} edges={['top']}>
-          <View style={styles.paymentModalHeader}>
-            <Pressable style={styles.paymentModalCloseButton} onPress={handleClosePaymentModal}>
-              <Ionicons name="chevron-back" size={20} color="#111111" />
-            </Pressable>
-            <Text style={styles.paymentModalTitle}>
-              {activePaymentSession?.orderCode
-                ? `Checkout ${activePaymentSession.orderCode}`
-                : activeOrder
-                  ? `Order #${activeOrder.orderId} Payment`
-                  : 'Payment Checkout'}
+        {paymentCheckoutUrl ? (
+          <View style={styles.paymentWebViewContainer}>
+            <WebView
+              key={`payment-webview-${paymentWebViewKey}`}
+              source={{ uri: paymentCheckoutUrl }}
+              javaScriptEnabled
+              domStorageEnabled
+              cacheEnabled={false}
+              sharedCookiesEnabled
+              setSupportMultipleWindows={false}
+              originWhitelist={['https://*', 'http://*']}
+              mixedContentMode="always"
+              onLoadStart={handlePaymentWebViewLoadStart}
+              onLoadEnd={handlePaymentWebViewLoadEnd}
+              onError={handlePaymentWebViewError}
+              onHttpError={handlePaymentWebViewHttpError}
+              style={styles.paymentWebView}
+            />
+            {isPaymentWebViewLoading ? renderPaymentLoading() : null}
+          </View>
+        ) : (
+          <View style={styles.paymentModalPlaceholder}>
+            <Ionicons name="warning-outline" size={24} color="#6b7280" />
+            <Text style={styles.paymentModalPlaceholderText}>
+              The payment link is unavailable. Close this screen and try again.
             </Text>
-            {paymentCheckoutUrl ? (
-              <Pressable
-                style={styles.paymentModalCloseButton}
-                onPress={handleOpenPaymentInBrowser}
-                accessibilityRole="button"
-                accessibilityLabel="Open checkout in browser"
-              >
-                <Ionicons name="open-outline" size={20} color="#111111" />
-              </Pressable>
-            ) : (
-              <View style={styles.paymentModalHeaderSpacer} />
-            )}
           </View>
-          {paymentModalError ? (
-            <View style={styles.paymentModalErrorBanner}>
-              <Ionicons name="warning-outline" size={16} color="#b91c1c" />
-              <Text style={styles.paymentModalErrorText}>{paymentModalError}</Text>
-            </View>
-          ) : null}
-          <View style={styles.paymentModalBody}>
-            {paymentCheckoutUrl ? (
-              <View style={styles.paymentWebViewContainer}>
-                <WebView
-                  key={`payment-webview-${paymentWebViewKey}`}
-                  source={{ uri: paymentCheckoutUrl }}
-                  javaScriptEnabled
-                  domStorageEnabled
-                  cacheEnabled={false}
-                  sharedCookiesEnabled
-                  setSupportMultipleWindows={false}
-                  originWhitelist={['https://*', 'http://*']}
-                  mixedContentMode="always"
-                  onLoadStart={handlePaymentWebViewLoadStart}
-                  onLoadEnd={handlePaymentWebViewLoadEnd}
-                  onError={handlePaymentWebViewError}
-                  onHttpError={handlePaymentWebViewHttpError}
-                  style={styles.paymentWebView}
-                />
-                {isPaymentWebViewLoading ? renderPaymentLoading() : null}
-              </View>
-            ) : (
-              <View style={styles.paymentModalPlaceholder}>
-                <Ionicons name="warning-outline" size={24} color="#6b7280" />
-                <Text style={styles.paymentModalPlaceholderText}>
-                  The payment link is unavailable. Close this screen and try again.
-                </Text>
-              </View>
-            )}
-          </View>
-        </SafeAreaView>
-      </Modal>
+        )}
+      </PaymentModal>
     </SafeAreaView>
   );
 }
