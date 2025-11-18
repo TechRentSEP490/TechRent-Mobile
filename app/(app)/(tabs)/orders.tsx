@@ -18,7 +18,6 @@ import {
   NativeSyntheticEvent,
   Platform,
   Pressable,
-  ScrollView,
   Text,
   TextInput,
   TextInputKeyPressEventData,
@@ -35,6 +34,7 @@ import type {
 import EmailEditorModal from '@/components/modals/EmailEditorModal';
 import OrderDetailsModal from '@/components/modals/OrderDetailsModal';
 import OrderStepsModal from '@/components/modals/OrderStepsModal';
+import RentalOrderStepsContent from '@/components/modals/RentalOrderStepsContent';
 import PaymentModal from '@/components/modals/PaymentModal';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -74,7 +74,7 @@ type OrderActionType =
   | 'rentAgain'
   | 'completeKyc';
 
-type OrderCard = {
+export type OrderCard = {
   orderId: number;
   id: string;
   title: string;
@@ -221,32 +221,6 @@ const mapStatusToMeta = (status: string | null | undefined): StatusMeta => {
   };
 };
 
-
-const normalizeHtmlContent = (value: string | null | undefined): string => {
-  if (!value || value.trim().length === 0) {
-    return '';
-  }
-
-  const withLineBreaks = value
-    .replace(/<\s*br\s*\/?\s*>/gi, '\n')
-    .replace(/<\s*\/p\s*>/gi, '\n\n')
-    .replace(/<\s*li\s*>/gi, '• ')
-    .replace(/<\s*\/li\s*>/gi, '\n')
-    .replace(/<\s*\/h[1-6]\s*>/gi, '\n\n');
-
-  const withoutTags = withLineBreaks.replace(/<[^>]*>/g, '');
-
-  return withoutTags
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/[ \t]+/g, ' ')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-};
 
 const escapeHtml = (value: string): string =>
   value
@@ -1628,6 +1602,16 @@ export default function OrdersScreen() {
     }
   };
 
+  const handleSelectPayment = useCallback(
+    (method: PaymentMethod) => {
+      setSelectedPayment(method);
+      if (paymentError) {
+        setPaymentError(null);
+      }
+    },
+    [paymentError],
+  );
+
   const handleDownloadContract = useCallback(
     async (contract: ContractResponse | null, contextLabel?: string) => {
       const contractId = contract?.contractId;
@@ -1911,403 +1895,9 @@ export default function OrdersScreen() {
     }
   }, [loadOrderDetails, orderDetailsTargetId]);
 
-  const renderStepContent = () => {
-    switch (currentStep) {
-      case 1: {
-        const isSignedContract = isContractAlreadySigned;
-        const canAgreeToContract =
-          Boolean(activeContract) && !isContractLoading && !contractErrorMessage && !isSignedContract;
-        const contractTitle = activeContract
-          ? activeContract.title && activeContract.title.trim().length > 0
-            ? activeContract.title.trim()
-            : `Contract #${activeContract.contractId}`
-          : 'Rental Contract';
-        const contractNumber = activeContract
-          ? activeContract.contractNumber && activeContract.contractNumber.trim().length > 0
-            ? activeContract.contractNumber.trim()
-            : `#${activeContract.contractId}`
-          : '—';
-        const contractStatusLabel = formatContractStatus(activeContract?.status);
-        const contractPeriod = activeContract
-          ? formatRentalPeriod(activeContract.startDate ?? '', activeContract.endDate ?? '')
-          : '—';
-        const contractTotal =
-          typeof activeContract?.totalAmount === 'number'
-            ? formatCurrency(activeContract.totalAmount)
-            : '—';
-        const contractDeposit =
-          typeof activeContract?.depositAmount === 'number'
-            ? formatCurrency(activeContract.depositAmount)
-            : '—';
-        const isDownloadingActiveContract = Boolean(
-          activeContract?.contractId && activeContractDownloadId === activeContract.contractId,
-        );
-        const contractRentalDays =
-          typeof activeContract?.rentalPeriodDays === 'number'
-            ? `${activeContract.rentalPeriodDays} day${activeContract.rentalPeriodDays === 1 ? '' : 's'}`
-            : '—';
-        const contractStart = formatDateTime(activeContract?.startDate);
-        const contractEnd = formatDateTime(activeContract?.endDate);
-        const contractExpires = formatDateTime(activeContract?.expiresAt);
-        const contractCreated = formatDateTime(activeContract?.createdAt);
-        const contractUpdated = formatDateTime(activeContract?.updatedAt);
-        const contractDescription = normalizeHtmlContent(activeContract?.description);
-        const contractBody = normalizeHtmlContent(activeContract?.contractContent);
-        const contractTerms = normalizeHtmlContent(activeContract?.termsAndConditions);
-
-        return (
-          <View style={styles.stepContent}>
-            <View style={styles.modalOrderHeader}>
-              <Text style={styles.modalOrderName}>{activeOrder?.title ?? 'Rental Order'}</Text>
-              <Text style={styles.modalOrderMeta}>{activeOrder?.deviceSummary}</Text>
-            </View>
-            <Text style={styles.stepTitle}>Rental Agreement Contract</Text>
-            <Text style={styles.stepSubtitle}>
-              Please review the complete terms and conditions below
-            </Text>
-            <View style={styles.contractContainer}>
-              {isContractLoading ? (
-                <View style={styles.contractStateWrapper}>
-                  <ActivityIndicator color="#111111" />
-                  <Text style={styles.contractStateText}>Loading rental contract…</Text>
-                </View>
-              ) : contractErrorMessage ? (
-                <View style={styles.contractStateWrapper}>
-                  <Text style={[styles.contractStateText, styles.contractErrorText]}>
-                    {contractErrorMessage}
-                  </Text>
-                  <Pressable style={styles.contractRetryButton} onPress={handleRetryContract}>
-                    <Text style={styles.contractRetryButtonText}>Try Again</Text>
-                  </Pressable>
-                </View>
-              ) : activeContract ? (
-                <ScrollView showsVerticalScrollIndicator={false}>
-                  <Text style={styles.contractHeading}>{contractTitle}</Text>
-                  <View style={styles.contractMetaList}>
-                    <View style={styles.contractMetaRow}>
-                      <Text style={styles.contractMetaLabel}>Contract Number</Text>
-                      <Text style={styles.contractMetaValue}>{contractNumber}</Text>
-                    </View>
-                    <View style={styles.contractMetaRow}>
-                      <Text style={styles.contractMetaLabel}>Status</Text>
-                      <Text style={styles.contractMetaValue}>{contractStatusLabel}</Text>
-                    </View>
-                    <View style={styles.contractMetaRow}>
-                      <Text style={styles.contractMetaLabel}>Rental Period</Text>
-                      <Text style={styles.contractMetaValue}>{contractPeriod}</Text>
-                    </View>
-                    <View style={styles.contractMetaRow}>
-                      <Text style={styles.contractMetaLabel}>Rental Days</Text>
-                      <Text style={styles.contractMetaValue}>{contractRentalDays}</Text>
-                    </View>
-                    <View style={styles.contractMetaRow}>
-                      <Text style={styles.contractMetaLabel}>Start Date</Text>
-                      <Text style={styles.contractMetaValue}>{contractStart}</Text>
-                    </View>
-                    <View style={styles.contractMetaRow}>
-                      <Text style={styles.contractMetaLabel}>End Date</Text>
-                      <Text style={styles.contractMetaValue}>{contractEnd}</Text>
-                    </View>
-                    <View style={styles.contractMetaRow}>
-                      <Text style={styles.contractMetaLabel}>Total Amount</Text>
-                      <Text style={styles.contractMetaValue}>{contractTotal}</Text>
-                    </View>
-                    <View style={styles.contractMetaRow}>
-                      <Text style={styles.contractMetaLabel}>Deposit</Text>
-                      <Text style={styles.contractMetaValue}>{contractDeposit}</Text>
-                    </View>
-                    <View style={styles.contractMetaRow}>
-                      <Text style={styles.contractMetaLabel}>Expires</Text>
-                      <Text style={styles.contractMetaValue}>{contractExpires}</Text>
-                    </View>
-                    <View style={styles.contractMetaRow}>
-                      <Text style={styles.contractMetaLabel}>Created</Text>
-                      <Text style={styles.contractMetaValue}>{contractCreated}</Text>
-                    </View>
-                  <View style={styles.contractMetaRow}>
-                    <Text style={styles.contractMetaLabel}>Updated</Text>
-                    <Text style={styles.contractMetaValue}>{contractUpdated}</Text>
-                  </View>
-                </View>
-                {isSignedContract ? (
-                  <View style={styles.contractSignedBanner}>
-                    <Ionicons name="checkmark-circle" size={16} color="#15803d" />
-                    <Text style={styles.contractSignedText}>
-                      This contract has already been signed. Use the download button below to keep a copy for your
-                      records.
-                    </Text>
-                  </View>
-                ) : null}
-                {contractDescription.length > 0 && (
-                  <Text style={styles.contractBody}>{contractDescription}</Text>
-                )}
-                  {contractBody.length > 0 && (
-                    <View style={styles.contractSection}>
-                      <Text style={styles.contractSectionHeading}>Contract Content</Text>
-                      <Text style={styles.contractBody}>{contractBody}</Text>
-                    </View>
-                  )}
-                  {contractTerms.length > 0 && (
-                    <View style={styles.contractTermsSection}>
-                      <Text style={styles.contractTermsHeading}>Terms &amp; Conditions</Text>
-                      <Text style={styles.contractTermsText}>{contractTerms}</Text>
-                    </View>
-                  )}
-                </ScrollView>
-              ) : (
-                <View style={styles.contractStateWrapper}>
-                  <Text style={styles.contractStateText}>
-                    No rental contract is available for this order yet.
-                  </Text>
-                </View>
-              )}
-            </View>
-            <Pressable
-              style={[styles.agreementRow, !canAgreeToContract && styles.agreementRowDisabled]}
-              onPress={() => setHasAgreed((previous) => !previous)}
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: hasAgreed, disabled: !canAgreeToContract }}
-              disabled={!canAgreeToContract}
-            >
-              <MaterialCommunityIcons
-                name={hasAgreed ? 'checkbox-marked' : 'checkbox-blank-outline'}
-                size={24}
-                color={
-                  canAgreeToContract ? (hasAgreed ? '#111111' : '#8a8a8a') : '#d1d5db'
-                }
-              />
-              <View style={styles.agreementTextWrapper}>
-                <Text style={styles.agreementLabel}>I agree to the rental contract terms</Text>
-                <Text style={styles.agreementHelper}>
-                  You must accept before proceeding to the verification step.
-                </Text>
-              </View>
-            </Pressable>
-            <View style={styles.primaryActions}>
-              {isSignedContract ? (
-                <Pressable
-                  style={[
-                    styles.primaryButton,
-                    styles.buttonFlex,
-                    styles.primaryButtonEnabled,
-                    isDownloadingActiveContract && styles.primaryButtonBusy,
-                  ]}
-                  onPress={() =>
-                    !isDownloadingActiveContract &&
-                    handleDownloadContract(activeContract, activeOrder?.title)
-                  }
-                  disabled={isDownloadingActiveContract}
-                >
-                  {isDownloadingActiveContract ? (
-                    <ActivityIndicator color="#ffffff" />
-                  ) : (
-                    <Text style={styles.primaryButtonText}>Download Contract</Text>
-                  )}
-                </Pressable>
-              ) : (
-                <Pressable
-                  style={[
-                    styles.primaryButton,
-                    styles.buttonFlex,
-                    isAgreementComplete ? styles.primaryButtonEnabled : styles.primaryButtonDisabled,
-                  ]}
-                  onPress={handleAgreementContinue}
-                  disabled={!isAgreementComplete || isSendingPin}
-                >
-                  {isSendingPin ? (
-                    <ActivityIndicator color="#ffffff" />
-                  ) : (
-                    <Text
-                      style={[
-                        styles.primaryButtonText,
-                        !isAgreementComplete && styles.primaryButtonTextDisabled,
-                      ]}
-                    >
-                      Next
-                    </Text>
-                  )}
-                </Pressable>
-              )}
-              <Pressable style={[styles.secondaryButton, styles.buttonFlex]} onPress={resetFlow}>
-                <Text style={styles.secondaryButtonText}>Cancel</Text>
-              </Pressable>
-            </View>
-          </View>
-        );
-      }
-      case 2:
-        return (
-          <View style={styles.stepContent}>
-            <View style={styles.verificationIconWrapper}>
-              <Ionicons name="shield-checkmark-outline" size={32} color="#111" />
-            </View>
-            <Text style={styles.stepTitle}>Verify Your Signature</Text>
-            <Text style={styles.stepSubtitle}>
-              {verificationEmail
-                ? `We've sent a 6-digit code to ${verificationEmail}`
-                : 'Enter the 6-digit code we sent to your email address'}
-            </Text>
-            <View style={styles.otpInputsRow}>
-              {otpDigits.map((digit, index) => (
-                <TextInput
-                  key={`otp-${index}`}
-                  ref={(ref) => {
-                    otpRefs.current[index] = ref;
-                  }}
-                  style={styles.otpInput}
-                  keyboardType="number-pad"
-                  maxLength={1}
-                  value={digit}
-                  onChangeText={(value) => handleOtpChange(value, index)}
-                  onKeyPress={(event) => handleOtpKeyPress(event, index)}
-                  returnKeyType="next"
-                />
-              ))}
-            </View>
-            {verificationError ? (
-              <Text style={styles.otpErrorText} accessibilityRole="alert">
-                {verificationError}
-              </Text>
-            ) : null}
-            <View style={styles.verificationHelpers}>
-              <Pressable onPress={handleResendCode} disabled={isSendingPin}>
-                <Text
-                  style={[styles.helperLink, isSendingPin && styles.helperLinkDisabled]}
-                >
-                  Didn&apos;t receive the code?
-                </Text>
-              </Pressable>
-              <Text style={styles.helperText}>Resend available in 00:45</Text>
-            </View>
-            <Pressable
-              style={[
-                styles.primaryButton,
-                isOtpComplete ? styles.primaryButtonEnabled : styles.primaryButtonDisabled,
-              ]}
-              onPress={handleVerifyCode}
-              disabled={!isOtpComplete || isSigningContract}
-            >
-              {isSigningContract ? (
-                <ActivityIndicator color="#ffffff" />
-              ) : (
-                <Text
-                  style={[
-                    styles.primaryButtonText,
-                    !isOtpComplete && styles.primaryButtonTextDisabled,
-                  ]}
-                >
-                  Verify Code
-                </Text>
-              )}
-            </Pressable>
-            <Pressable
-              style={[
-                styles.helperButton,
-                (isSigningContract || isSendingPin) && styles.helperButtonDisabled,
-              ]}
-              onPress={handleOpenEmailEditor}
-              disabled={isSigningContract || isSendingPin}
-            >
-              <Text style={styles.helperButtonText}>Use a different email</Text>
-            </Pressable>
-            <Pressable style={styles.secondaryButton} onPress={goToPreviousStep}>
-              <Text style={styles.secondaryButtonText}>Back</Text>
-            </Pressable>
-          </View>
-        );
-      case 3:
-      default:
-        return (
-          <View style={styles.stepContent}>
-            <Text style={styles.stepTitle}>Review &amp; Pay</Text>
-            <View style={styles.summaryCard}>
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Order</Text>
-                <Text style={styles.summaryValue}>{activeOrder?.deviceSummary ?? '—'}</Text>
-              </View>
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Rental Period</Text>
-                <Text style={styles.summaryValue}>{activeOrder?.rentalPeriod ?? '—'}</Text>
-              </View>
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Rental Fees</Text>
-                <Text style={styles.summaryValue}>
-                  {activeOrder?.totalPriceLabel ?? formatCurrency(0)}
-                </Text>
-              </View>
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Deposit</Text>
-                <Text style={styles.summaryValue}>
-                  {activeOrder?.depositLabel ?? formatCurrency(0)}
-                </Text>
-              </View>
-              <View style={[styles.summaryRow, styles.summaryRowEmphasis]}>
-                <Text style={styles.summaryLabel}>Total Due</Text>
-                <Text style={styles.summaryTotal}>
-                  {activeOrder?.totalAmount ?? formatCurrency(0)}
-                </Text>
-              </View>
-            </View>
-            <View style={styles.paymentList}>
-              {PAYMENT_OPTIONS.map((option) => {
-                const isSelected = option.id === selectedPayment;
-                return (
-                  <Pressable
-                    key={option.id}
-                    style={[styles.paymentOption, isSelected && styles.paymentOptionSelected]}
-                    onPress={() => {
-                      setSelectedPayment(option.id);
-                      if (paymentError) {
-                        setPaymentError(null);
-                      }
-                    }}
-                  >
-                    <View style={styles.paymentIcon}>{option.icon}</View>
-                    <View style={styles.paymentDetails}>
-                      <Text style={styles.paymentLabel}>{option.label}</Text>
-                      <Text style={styles.paymentDescription}>{option.description}</Text>
-                    </View>
-                    <Ionicons
-                      name={isSelected ? 'radio-button-on' : 'radio-button-off'}
-                      size={20}
-                      color={isSelected ? '#1f7df4' : '#c1c1c1'}
-                    />
-                  </Pressable>
-                );
-              })}
-            </View>
-            {paymentError ? (
-              <Text style={styles.paymentErrorText} accessibilityRole="alert">
-                {paymentError}
-              </Text>
-            ) : null}
-            <View style={styles.paymentSecurity}>
-              <Ionicons name="shield-checkmark" size={16} color="#1f7df4" />
-              <Text style={styles.paymentSecurityText}>Your payment information is secure</Text>
-            </View>
-            <Pressable
-              style={[
-                styles.primaryButton,
-                styles.buttonFlex,
-                styles.primaryButtonEnabled,
-                isCreatingPayment && styles.primaryButtonBusy,
-              ]}
-              onPress={handleCreatePayment}
-              disabled={isCreatingPayment || !activeOrder}
-            >
-              {isCreatingPayment ? (
-                <ActivityIndicator color="#ffffff" />
-              ) : (
-                <Text style={styles.primaryButtonText}>Proceed to Payment</Text>
-              )}
-            </Pressable>
-            <Pressable style={styles.secondaryButton} onPress={goToPreviousStep}>
-              <Text style={styles.secondaryButtonText}>Back</Text>
-            </Pressable>
-          </View>
-        );
-    }
-  };
+  const handleToggleAgreement = useCallback(() => {
+    setHasAgreed((previous) => !previous);
+  }, []);
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -2461,7 +2051,43 @@ export default function OrdersScreen() {
         currentStep={currentStep}
         progressWidth={progressWidth}
       >
-        {renderStepContent()}
+        <RentalOrderStepsContent
+          currentStep={currentStep}
+          activeOrder={activeOrder}
+          activeContract={activeContract}
+          isContractAlreadySigned={isContractAlreadySigned}
+          isContractLoading={isContractLoading}
+          contractErrorMessage={contractErrorMessage}
+          onRetryContract={handleRetryContract}
+          isDownloadingActiveContract={Boolean(
+            activeContract?.contractId && activeContractDownloadId === activeContract.contractId,
+          )}
+          onDownloadContract={() => handleDownloadContract(activeContract, activeOrder?.title)}
+          hasAgreed={hasAgreed}
+          onToggleAgreement={handleToggleAgreement}
+          isAgreementComplete={isAgreementComplete}
+          isSendingPin={isSendingPin}
+          onAgreementContinue={handleAgreementContinue}
+          onResetFlow={resetFlow}
+          verificationEmail={verificationEmail}
+          otpDigits={otpDigits}
+          otpRefs={otpRefs}
+          onOtpChange={handleOtpChange}
+          onOtpKeyPress={handleOtpKeyPress}
+          verificationError={verificationError}
+          onResendCode={handleResendCode}
+          isOtpComplete={isOtpComplete}
+          onVerifyCode={handleVerifyCode}
+          isSigningContract={isSigningContract}
+          onOpenEmailEditor={handleOpenEmailEditor}
+          onGoBack={goToPreviousStep}
+          paymentOptions={PAYMENT_OPTIONS}
+          selectedPayment={selectedPayment}
+          onSelectPayment={handleSelectPayment}
+          paymentError={paymentError}
+          onCreatePayment={handleCreatePayment}
+          isCreatingPayment={isCreatingPayment}
+        />
       </OrderStepsModal>
       <EmailEditorModal
         visible={isEmailEditorVisible}
