@@ -608,19 +608,6 @@ export function CustomerSupportChat({ customerId, customerName, ensureSession, s
     setReconnectNonce((prev) => prev + 1);
   }, []);
 
-  const realtimeLabel = useMemo(() => {
-    switch (realtimeStatus) {
-      case 'connected':
-        return 'Connected';
-      case 'connecting':
-        return 'Connecting…';
-      case 'disconnected':
-        return 'Offline';
-      default:
-        return 'Idle';
-    }
-  }, [realtimeStatus]);
-
   const renderMessage = useCallback(
     ({ item }: { item: ChatMessage }) => {
       const isCustomerMessage = item.senderId === customerId && item.senderType?.toUpperCase() === 'CUSTOMER';
@@ -695,19 +682,6 @@ export function CustomerSupportChat({ customerId, customerName, ensureSession, s
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={24}
     >
-      <View style={styles.realtimeBanner}>
-        <View
-          style={[
-            styles.realtimeIndicator,
-            realtimeStatus === 'connected'
-              ? styles.realtimeIndicatorOnline
-              : realtimeStatus === 'connecting'
-                ? styles.realtimeIndicatorConnecting
-                : styles.realtimeIndicatorOffline,
-          ]}
-        />
-        <Text style={styles.realtimeText}>{realtimeLabel}</Text>
-      </View>
       {realtimeError && (
         <View style={styles.realtimeErrorRow}>
           <Text style={styles.realtimeError}>{realtimeError}</Text>
@@ -774,30 +748,6 @@ export function CustomerSupportChat({ customerId, customerName, ensureSession, s
 const styles = StyleSheet.create({
   chatWrapper: {
     flex: 1,
-  },
-  realtimeBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 6,
-  },
-  realtimeIndicator: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  realtimeIndicatorOnline: {
-    backgroundColor: '#16a34a',
-  },
-  realtimeIndicatorConnecting: {
-    backgroundColor: '#fbbf24',
-  },
-  realtimeIndicatorOffline: {
-    backgroundColor: '#ef4444',
-  },
-  realtimeText: {
-    fontSize: 12,
-    color: '#555555',
   },
   realtimeErrorRow: {
     flexDirection: 'row',

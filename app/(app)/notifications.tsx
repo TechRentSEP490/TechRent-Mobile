@@ -357,7 +357,7 @@ export default function NotificationsScreen() {
   const [isInitialLoading, setIsInitialLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [isMarkingAll, setIsMarkingAll] = useState(false);
-  const [realtimeStatus, setRealtimeStatus] = useState<RealtimeStatus>('idle');
+  const [, setRealtimeStatus] = useState<RealtimeStatus>('idle');
   const [realtimeError, setRealtimeError] = useState<string | null>(null);
   const [reconnectNonce, setReconnectNonce] = useState(0);
   const wsRef = useRef<WebSocket | null>(null);
@@ -527,19 +527,6 @@ export default function NotificationsScreen() {
       setIsMarkingAll(false);
     }, 300);
   }, [customerId, isSignedIn, markAllDisabled]);
-
-  const realtimeLabel = useMemo(() => {
-    switch (realtimeStatus) {
-      case 'connected':
-        return 'Connected';
-      case 'connecting':
-        return 'Connecting…';
-      case 'disconnected':
-        return 'Offline';
-      default:
-        return 'Idle';
-    }
-  }, [realtimeStatus]);
 
   const handleRealtimeRetry = useCallback(() => {
     setReconnectNonce((prev) => prev + 1);
@@ -778,7 +765,7 @@ export default function NotificationsScreen() {
   }, [customerId, isSignedIn, reconnectNonce, session, refreshContractsMap, upsertNotifications]);
 
   const renderEmptyComponent = useCallback(() => {
-    if (isInitialLoading || realtimeStatus === 'connecting') {
+    if (isInitialLoading) {
       return (
         <View style={styles.emptyState}>
           <ActivityIndicator size="small" color="#111111" />
@@ -803,7 +790,7 @@ export default function NotificationsScreen() {
         <Text style={styles.emptyStateText}>You are all caught up.</Text>
       </View>
     );
-  }, [handleRealtimeRetry, isInitialLoading, realtimeError, realtimeStatus]);
+  }, [handleRealtimeRetry, isInitialLoading, realtimeError]);
 
   const renderListFooter = useMemo(() => <View style={styles.footerSpacer} />, []);
 
@@ -891,28 +878,6 @@ export default function NotificationsScreen() {
             </Text>
           </TouchableOpacity>
         </View>
-
-        {customerId ? (
-          <View style={styles.realtimeBanner}>
-            <View
-              style={[
-                styles.realtimeStatusDot,
-                realtimeStatus === 'connected'
-                  ? styles.realtimeStatusDotConnected
-                  : realtimeStatus === 'connecting'
-                  ? styles.realtimeStatusDotConnecting
-                  : styles.realtimeStatusDotDisconnected,
-              ]}
-            />
-            <Text style={styles.realtimeStatusText}>{realtimeLabel}</Text>
-            {realtimeError ? <Text style={styles.realtimeErrorText}>{realtimeError}</Text> : null}
-            {realtimeStatus === 'disconnected' ? (
-              <TouchableOpacity style={styles.realtimeRetryButton} onPress={handleRealtimeRetry}>
-                <Text style={styles.realtimeRetryText}>Retry</Text>
-              </TouchableOpacity>
-            ) : null}
-          </View>
-        ) : null}
 
         <FlatList
           data={notifications}
