@@ -1,4 +1,4 @@
-import { buildApiUrl } from './api';
+import { buildApiUrl, ensureApiUrl } from './api';
 import type { SessionCredentials } from './chat';
 
 export type NotificationType =
@@ -100,7 +100,10 @@ const buildNotificationListEndpoints = (customerId: number) => {
   const endpoints = [buildApiUrl('customers', 'me', 'notifications')];
 
   if (Number.isFinite(customerId) && customerId > 0) {
-    endpoints.push(buildApiUrl('notifications', 'customer', customerId));
+    endpoints.push(
+      buildApiUrl('notifications', 'customer', customerId),
+      buildApiUrl('customers', customerId, 'notifications'),
+    );
   }
 
   return endpoints;
@@ -110,7 +113,10 @@ const buildMarkAllEndpoints = (customerId: number) => {
   const endpoints = [buildApiUrl('customers', 'me', 'notifications', 'read')];
 
   if (Number.isFinite(customerId) && customerId > 0) {
-    endpoints.push(buildApiUrl('notifications', 'customer', customerId, 'read'));
+    endpoints.push(
+      buildApiUrl('notifications', 'customer', customerId, 'read'),
+      buildApiUrl('customers', customerId, 'notifications', 'read'),
+    );
   }
 
   return endpoints;
