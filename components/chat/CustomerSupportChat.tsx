@@ -15,8 +15,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { AuthSession } from '@/contexts/AuthContext';
 import {
-  buildChatWebSocketHeaders,
-  buildChatWebSocketUrls,
+  buildChatRealtimeHeaders,
+  buildChatStompUrls,
   chatUtils,
   ensureCustomerConversation,
   fetchConversationMessages,
@@ -37,6 +37,69 @@ type RealtimeStatus = 'idle' | 'connecting' | 'connected' | 'disconnected';
 const MESSAGE_PAGE_SIZE = 50;
 const MAX_INITIAL_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_DELAY_MS = 4000;
+const STOMP_FRAME_DELIMITER = '\0';
+const STOMP_CONNECT_HEADERS = {
+  'accept-version': '1.1,1.0',
+  'heart-beat': '10000,10000',
+};
+
+type StompFrame = {
+  command: string;
+  headers: Record<string, string>;
+  body: string;
+};
+
+const buildStompFrame = (command: string, headers: Record<string, string> = {}, body: string | null = null) => {
+  const headerLines = Object.entries(headers)
+    .filter(([, value]) => typeof value === 'string' && value.length > 0)
+    .map(([key, value]) => `${key}:${value}`);
+
+  const headerSection = [command, ...headerLines].join('\n');
+  const bodySection = body ?? '';
+
+  return `${headerSection}\n\n${bodySection}${STOMP_FRAME_DELIMITER}`;
+};
+
+const parseStompFrames = (payload: string): StompFrame[] => {
+  if (!payload) {
+    return [];
+  }
+
+  return payload
+    .split(STOMP_FRAME_DELIMITER)
+    .map((raw) => raw.replace(/^\n+/, ''))
+    .filter((raw) => raw.trim().length > 0)
+    .map((raw) => {
+      const separatorIndex = raw.indexOf('\n\n');
+      const headerChunk = separatorIndex >= 0 ? raw.slice(0, separatorIndex) : raw;
+      const bodyChunk = separatorIndex >= 0 ? raw.slice(separatorIndex + 2) : '';
+      const headerLines = headerChunk
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+      const [command, ...headerPairs] = headerLines;
+      const headers: Record<string, string> = {};
+
+      headerPairs.forEach((line) => {
+        const colonIndex = line.indexOf(':');
+        if (colonIndex === -1) {
+          return;
+        }
+        const key = line.slice(0, colonIndex).trim();
+        const value = line.slice(colonIndex + 1).trim();
+        if (key.length > 0) {
+          headers[key] = value;
+        }
+      });
+
+      return {
+        command: command ?? '',
+        headers,
+        body: bodyChunk,
+      } as StompFrame;
+    })
+    .filter((frame) => frame.command.length > 0);
+};
 
 const formatTimestamp = (value: string | null) => {
   if (!value) {
@@ -95,6 +158,8 @@ export function CustomerSupportChat({ customerId, customerName, ensureSession, s
   const hasConnectedRef = useRef(false);
   const wsCandidateUrlsRef = useRef<string[]>([]);
   const wsCandidateIndexRef = useRef(0);
+  const stompConnectedRef = useRef(false);
+  const stompSubscriptionIdRef = useRef<string | null>(null);
 
   const conversationId = conversation?.conversationId ?? null;
 
@@ -328,13 +393,15 @@ export function CustomerSupportChat({ customerId, customerName, ensureSession, s
         return;
       }
 
+      stompConnectedRef.current = false;
+      stompSubscriptionIdRef.current = null;
+
       let candidates: string[] = [];
 
       try {
-        candidates = buildChatWebSocketUrls({
+        candidates = buildChatStompUrls({
           conversationId,
           senderId: customerId,
-          senderType: 'CUSTOMER',
           session: activeSession,
         });
       } catch (error) {
@@ -384,7 +451,7 @@ export function CustomerSupportChat({ customerId, customerName, ensureSession, s
         let socket: WebSocket | null = null;
 
         try {
-          const headers = buildChatWebSocketHeaders(activeSession);
+          const headers = buildChatRealtimeHeaders(activeSession);
           const socketOptions = headers ? ({ headers } as any) : undefined;
 
           socket = socketOptions ? new WebSocket(wsUrl, undefined, socketOptions) : new WebSocket(wsUrl);
@@ -413,19 +480,24 @@ export function CustomerSupportChat({ customerId, customerName, ensureSession, s
 
         wsRef.current = socket;
 
+        const sendFrame = (command: string, headers: Record<string, string> = {}, body: string | null = null) => {
+          if (!socket || socket.readyState !== WebSocket.OPEN) {
+            return;
+          }
+          const payload = buildStompFrame(command, headers, body);
+          socket.send(payload);
+        };
+
         socket.onopen = () => {
           if (!isMounted) {
             return;
           }
 
-          hasConnectedRef.current = true;
-          reconnectAttemptsRef.current = 0;
           console.log('[Chat] Websocket connected', {
             conversationId,
             candidateIndex,
           });
-          setRealtimeStatus('connected');
-          setRealtimeError(null);
+          sendFrame('CONNECT', STOMP_CONNECT_HEADERS);
         };
 
         socket.onmessage = (event) => {
@@ -433,20 +505,70 @@ export function CustomerSupportChat({ customerId, customerName, ensureSession, s
             return;
           }
 
-          try {
-            const parsed = JSON.parse(event.data as string);
-            const upsertable = chatUtils.normalizeMessage(parsed as ChatMessage);
+          const payload = typeof event.data === 'string' ? event.data : String(event.data);
+          const frames = parseStompFrames(payload);
 
-            if (upsertable) {
-              upsertMessages([upsertable], { scrollToBottom: true });
-              console.log('[Chat] Websocket message received', {
-                messageId: upsertable.messageId,
-                senderType: upsertable.senderType,
-              });
+          frames.forEach((frame) => {
+            switch (frame.command) {
+              case 'CONNECTED': {
+                if (!isMounted) {
+                  return;
+                }
+
+                hasConnectedRef.current = true;
+                stompConnectedRef.current = true;
+                reconnectAttemptsRef.current = 0;
+                setRealtimeStatus('connected');
+                setRealtimeError(null);
+
+                const subscriptionId = `sub-${conversationId}-${Date.now()}`;
+                stompSubscriptionIdRef.current = subscriptionId;
+                sendFrame('SUBSCRIBE', {
+                  id: subscriptionId,
+                  destination: `/topic/conversation/${conversationId}`,
+                });
+                console.log('[Chat] STOMP connected and subscribed', {
+                  conversationId,
+                  subscriptionId,
+                });
+                break;
+              }
+              case 'MESSAGE': {
+                if (!frame.body) {
+                  return;
+                }
+
+                try {
+                  const parsed = JSON.parse(frame.body);
+                  const upsertable = chatUtils.normalizeMessage(parsed as ChatMessage);
+                  if (upsertable) {
+                    upsertMessages([upsertable], { scrollToBottom: true });
+                    console.log('[Chat] STOMP message received', {
+                      messageId: upsertable.messageId,
+                      senderType: upsertable.senderType,
+                    });
+                  }
+                } catch (error) {
+                  console.warn('Failed to parse STOMP message payload', error);
+                }
+                break;
+              }
+              case 'ERROR': {
+                console.error('[Chat] STOMP error frame received', frame.headers, frame.body);
+                setRealtimeError(frame.body?.length ? frame.body : 'Live chat connection reported an error.');
+                setRealtimeStatus('disconnected');
+                if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+                  socket.close();
+                }
+                break;
+              }
+              default: {
+                if (frame.command !== 'RECEIPT') {
+                  console.log('[Chat] STOMP frame received', frame.command);
+                }
+              }
             }
-          } catch (error) {
-            console.warn('Failed to parse chat socket message', error);
-          }
+          });
         };
 
         socket.onerror = (event) => {
@@ -466,13 +588,16 @@ export function CustomerSupportChat({ customerId, customerName, ensureSession, s
             return;
           }
 
-          const wasConnected = hasConnectedRef.current;
+          const wasConnected = hasConnectedRef.current && stompConnectedRef.current;
           wsRef.current = null;
+          stompConnectedRef.current = false;
+          stompSubscriptionIdRef.current = null;
           console.warn('[Chat] Websocket closed', {
             code: event?.code,
             reason: event?.reason,
             wasClean: event?.wasClean,
             candidateIndex,
+            subscriptionId: stompSubscriptionIdRef.current,
           });
 
           if (!wasConnected) {
@@ -522,9 +647,22 @@ export function CustomerSupportChat({ customerId, customerName, ensureSession, s
         clearTimeout(reconnectHandle);
       }
 
+      if (wsRef.current) {
+        try {
+          if (stompConnectedRef.current) {
+            const disconnectFrame = buildStompFrame('DISCONNECT');
+            wsRef.current.send(disconnectFrame);
+          }
+        } catch (error) {
+          console.warn('Failed to dispatch STOMP disconnect frame', error);
+        }
+      }
+
       wsRef.current?.close();
       wsRef.current = null;
       wsCandidateUrlsRef.current = [];
+      stompConnectedRef.current = false;
+      stompSubscriptionIdRef.current = null;
     };
   }, [activeSession, conversationId, customerId, reconnectNonce, upsertMessages]);
 
