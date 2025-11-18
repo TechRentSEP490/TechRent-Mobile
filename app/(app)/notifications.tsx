@@ -501,7 +501,17 @@ export default function NotificationsScreen() {
       markNotificationLocally(notification.key);
 
       if (actionTarget === 'orders') {
-        router.push('/(app)/(tabs)/orders');
+        if (notification.orderId) {
+          router.push({
+            pathname: '/(app)/(tabs)/orders',
+            params: {
+              flow: 'continue',
+              orderId: String(notification.orderId),
+            },
+          });
+        } else {
+          router.push('/(app)/(tabs)/orders');
+        }
         return;
       }
 
