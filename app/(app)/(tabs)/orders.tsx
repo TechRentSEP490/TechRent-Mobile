@@ -549,7 +549,7 @@ export default function OrdersScreen() {
   }, [orders, selectedFilter]);
 
   const openFlow = useCallback(
-    (order: OrderCard) => {
+    (order: OrderCard, initialPaymentMethod?: PaymentMethod) => {
       const shouldSkipToPayment = isContractSignedByCustomer(order.contract);
       lastContractLoadRef.current = { orderId: null, requestId: 0 };
       setActiveOrder(order);
@@ -559,7 +559,7 @@ export default function OrdersScreen() {
       setModalVisible(true);
       setCurrentStep(shouldSkipToPayment ? 3 : 1);
       setOtpDigits(Array(6).fill(''));
-      setSelectedPayment(PAYMENT_OPTIONS[0].id);
+      setSelectedPayment(initialPaymentMethod ?? PAYMENT_OPTIONS[0].id);
       setHasAgreed(shouldSkipToPayment);
       setVerificationEmail(defaultVerificationEmail);
       setPendingEmailInput(defaultVerificationEmail);
@@ -1244,6 +1244,13 @@ export default function OrdersScreen() {
     [paymentError],
   );
 
+  const handleQuickPaymentStart = useCallback(
+    (order: OrderCard, method: PaymentMethod) => {
+      openFlow(order, method);
+    },
+    [openFlow],
+  );
+
   const handleCardAction = useCallback(
     (order: OrderCard) => {
       if (!order.action) {
@@ -1441,6 +1448,7 @@ export default function OrdersScreen() {
             64 +
             Math.max(visibleImages.length - 1, 0) * 16 +
             (thumbnailImages.length > maxVisibleThumbnails ? 16 : 0);
+          const canQuickPay = isContractSignedByCustomer(item.contract);
           return (
             <View
               style={[
@@ -1513,6 +1521,27 @@ export default function OrdersScreen() {
                     </Pressable>
                   ) : null}
                 </View>
+                {canQuickPay ? (
+                  <View style={styles.quickPaySection}>
+                    <Text style={styles.quickPayLabel}>Quick payment</Text>
+                    <View style={styles.quickPayButtons}>
+                      {PAYMENT_OPTIONS.map((option) => (
+                        <Pressable
+                          key={`${item.id}-${option.id}`}
+                          style={styles.quickPayButton}
+                          onPress={() => handleQuickPaymentStart(item, option.id)}
+                        >
+                          <View style={styles.quickPayButtonIcon}>
+                            {React.isValidElement(option.icon)
+                              ? React.cloneElement(option.icon, { size: 18 })
+                              : option.icon}
+                          </View>
+                          <Text style={styles.quickPayButtonLabel}>{option.label}</Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  </View>
+                ) : null}
               </View>
             </View>
           );
