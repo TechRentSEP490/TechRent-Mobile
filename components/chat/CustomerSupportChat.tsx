@@ -15,6 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { AuthSession } from '@/contexts/AuthContext';
 import {
+  buildChatWebSocketHeaders,
   buildChatWebSocketUrl,
   chatUtils,
   ensureCustomerConversation,
@@ -34,6 +35,8 @@ export type CustomerSupportChatProps = {
 type RealtimeStatus = 'idle' | 'connecting' | 'connected' | 'disconnected';
 
 const MESSAGE_PAGE_SIZE = 50;
+const MAX_INITIAL_RECONNECT_ATTEMPTS = 5;
+const RECONNECT_DELAY_MS = 4000;
 
 const formatTimestamp = (value: string | null) => {
   if (!value) {
@@ -84,9 +87,12 @@ export function CustomerSupportChat({ customerId, customerName, ensureSession, s
   const [isSending, setIsSending] = useState(false);
   const [realtimeStatus, setRealtimeStatus] = useState<RealtimeStatus>('idle');
   const [realtimeError, setRealtimeError] = useState<string | null>(null);
+  const [reconnectNonce, setReconnectNonce] = useState(0);
   const listRef = useRef<FlatList<ChatMessage> | null>(null);
   const pendingScrollToBottomRef = useRef(false);
   const wsRef = useRef<WebSocket | null>(null);
+  const reconnectAttemptsRef = useRef(0);
+  const hasConnectedRef = useRef(false);
 
   const conversationId = conversation?.conversationId ?? null;
 
@@ -275,11 +281,20 @@ export function CustomerSupportChat({ customerId, customerName, ensureSession, s
       return;
     }
 
+    reconnectAttemptsRef.current = 0;
+    hasConnectedRef.current = false;
+
     let isMounted = true;
     let reconnectHandle: ReturnType<typeof setTimeout> | null = null;
 
     const connect = () => {
       if (!isMounted) {
+        return;
+      }
+
+      if (!hasConnectedRef.current && reconnectAttemptsRef.current >= MAX_INITIAL_RECONNECT_ATTEMPTS) {
+        setRealtimeStatus('disconnected');
+        setRealtimeError('Unable to connect to live chat. Please check your network and tap retry.');
         return;
       }
 
@@ -296,7 +311,11 @@ export function CustomerSupportChat({ customerId, customerName, ensureSession, s
           session: activeSession,
         });
 
-        socket = new WebSocket(wsUrl);
+        const headers = buildChatWebSocketHeaders(activeSession);
+        const socketOptions = headers ? ({ headers } as any) : undefined;
+
+        socket = socketOptions ? new WebSocket(wsUrl, undefined, socketOptions) : new WebSocket(wsUrl);
+        reconnectAttemptsRef.current += 1;
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unable to connect to live chat.';
         setRealtimeStatus('disconnected');
@@ -311,6 +330,8 @@ export function CustomerSupportChat({ customerId, customerName, ensureSession, s
           return;
         }
 
+        hasConnectedRef.current = true;
+        reconnectAttemptsRef.current = 0;
         setRealtimeStatus('connected');
         setRealtimeError(null);
       };
@@ -339,7 +360,6 @@ export function CustomerSupportChat({ customerId, customerName, ensureSession, s
 
         setRealtimeStatus('disconnected');
         setRealtimeError('Realtime connection interrupted. Reconnecting...');
-        socket?.close();
       };
 
       socket.onclose = () => {
@@ -347,8 +367,18 @@ export function CustomerSupportChat({ customerId, customerName, ensureSession, s
           return;
         }
 
+        wsRef.current = null;
         setRealtimeStatus('disconnected');
-        reconnectHandle = setTimeout(connect, 4000);
+
+        const reachedLimit =
+          !hasConnectedRef.current && reconnectAttemptsRef.current >= MAX_INITIAL_RECONNECT_ATTEMPTS;
+
+        if (reachedLimit) {
+          setRealtimeError('Unable to connect to live chat. Please check your network and tap retry.');
+          return;
+        }
+
+        reconnectHandle = setTimeout(connect, RECONNECT_DELAY_MS);
       };
     };
 
@@ -364,7 +394,11 @@ export function CustomerSupportChat({ customerId, customerName, ensureSession, s
       wsRef.current?.close();
       wsRef.current = null;
     };
-  }, [activeSession, conversationId, customerId, upsertMessages]);
+  }, [activeSession, conversationId, customerId, reconnectNonce, upsertMessages]);
+
+  const handleRealtimeRetry = useCallback(() => {
+    setReconnectNonce((prev) => prev + 1);
+  }, []);
 
   const realtimeLabel = useMemo(() => {
     switch (realtimeStatus) {
@@ -466,7 +500,16 @@ export function CustomerSupportChat({ customerId, customerName, ensureSession, s
         />
         <Text style={styles.realtimeText}>{realtimeLabel}</Text>
       </View>
-      {realtimeError && <Text style={styles.realtimeError}>{realtimeError}</Text>}
+      {realtimeError && (
+        <View style={styles.realtimeErrorRow}>
+          <Text style={styles.realtimeError}>{realtimeError}</Text>
+          {realtimeStatus === 'disconnected' && (
+            <TouchableOpacity style={styles.realtimeRetryButton} onPress={handleRealtimeRetry}>
+              <Text style={styles.realtimeRetryText}>Retry</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
       <View style={styles.messagesCard}>
         <FlatList
           ref={listRef}
@@ -548,10 +591,28 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#555555',
   },
+  realtimeErrorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flexWrap: 'wrap',
+    marginBottom: 8,
+  },
   realtimeError: {
     fontSize: 12,
     color: '#b45309',
-    marginBottom: 8,
+  },
+  realtimeRetryButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#b45309',
+  },
+  realtimeRetryText: {
+    fontSize: 12,
+    color: '#b45309',
+    fontWeight: '600',
   },
   messagesCard: {
     flex: 1,

@@ -329,6 +329,18 @@ export const buildChatWebSocketUrl = ({
   return url.toString();
 };
 
+export const buildChatWebSocketHeaders = (session: SessionCredentials) => {
+  if (!session?.accessToken) {
+    return null;
+  }
+
+  const tokenType = session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer';
+
+  return {
+    Authorization: `${tokenType} ${session.accessToken}`,
+  } as const;
+};
+
 export const chatUtils = {
   normalizeConversation,
   normalizeMessage,
