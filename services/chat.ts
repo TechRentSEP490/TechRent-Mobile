@@ -281,36 +281,56 @@ export async function sendChatMessage(
   return normalized;
 }
 
-const normalizeWsBase = (value: string) => value.replace(/\/$/, '');
+const normalizeRealtimeBase = (value: string) => value.replace(/\/$/, '');
 
-const resolveWsBaseCandidates = (): string[] => {
+const convertToWebSocketScheme = (value: string) => {
+  if (value.startsWith('http://')) {
+    return `ws://${value.slice('http://'.length)}`;
+  }
+
+  if (value.startsWith('https://')) {
+    return `wss://${value.slice('https://'.length)}`;
+  }
+
+  return value;
+};
+
+const ensureSockJsPath = (value: string) => {
+  const normalized = value.replace(/\/$/, '');
+
+  if (normalized.endsWith('/ws/websocket')) {
+    return normalized;
+  }
+
+  if (normalized.endsWith('/ws')) {
+    return `${normalized}/websocket`;
+  }
+
+  return `${normalized}/ws/websocket`;
+};
+
+const resolveRealtimeSocketCandidates = (): string[] => {
   const candidates: string[] = [];
-  const explicit = process.env.EXPO_PUBLIC_CHAT_WS_URL;
+  const explicit = process.env.EXPO_PUBLIC_CHAT_WS_URL?.trim();
 
-  if (explicit && explicit.length > 0) {
-    candidates.push(normalizeWsBase(explicit));
+  if (explicit) {
+    candidates.push(ensureSockJsPath(convertToWebSocketScheme(normalizeRealtimeBase(explicit))));
   }
 
   try {
     const apiBase = ensureApiUrl();
-    const converted = normalizeWsBase(
-      apiBase.replace(/^http:\/\//, 'ws://').replace(/^https:\/\//, 'wss://'),
-    );
-
-    candidates.push(`${converted}/chat/ws`);
-
-    if (converted.endsWith('/api')) {
-      candidates.push(`${converted.slice(0, -'/api'.length)}/chat/ws`);
-    }
+    const baseWithoutApi = apiBase.endsWith('/api') ? apiBase.slice(0, -'/api'.length) : apiBase;
+    const converted = convertToWebSocketScheme(normalizeRealtimeBase(baseWithoutApi));
+    candidates.push(ensureSockJsPath(`${converted}/ws`));
   } catch (error) {
-    console.warn('Unable to determine API base URL for chat websocket fallback', error);
+    console.warn('Unable to derive chat websocket endpoint from API base URL', error);
   }
 
   return Array.from(new Set(candidates));
 };
 
-const ensureWsBaseCandidates = () => {
-  const candidates = resolveWsBaseCandidates();
+const ensureRealtimeSocketCandidates = () => {
+  const candidates = resolveRealtimeSocketCandidates();
 
   if (candidates.length === 0) {
     throw new Error('No websocket endpoint configured. Please set EXPO_PUBLIC_CHAT_WS_URL.');
@@ -319,32 +339,13 @@ const ensureWsBaseCandidates = () => {
   return candidates;
 };
 
-const appendConnectionParams = (
-  urlString: string,
-  { conversationId, senderId, senderType, session }: { conversationId: number; senderId: number; senderType: SenderType; session: SessionCredentials },
-) => {
-  const url = new URL(urlString);
-
-  url.searchParams.set('conversationId', String(conversationId));
-  url.searchParams.set('senderId', String(senderId));
-  url.searchParams.set('senderType', senderType);
-  url.searchParams.set('token', session.accessToken);
-  if (session.tokenType) {
-    url.searchParams.set('tokenType', session.tokenType);
-  }
-
-  return url.toString();
-};
-
-export const buildChatWebSocketUrls = ({
+export const buildChatStompUrls = ({
   conversationId,
   senderId,
-  senderType = 'CUSTOMER',
   session,
 }: {
   conversationId: number;
   senderId: number;
-  senderType?: SenderType;
   session: SessionCredentials;
 }): string[] => {
   if (!session?.accessToken) {
@@ -359,19 +360,10 @@ export const buildChatWebSocketUrls = ({
     throw new Error('A valid sender identifier is required to connect to chat.');
   }
 
-  const bases = ensureWsBaseCandidates();
-
-  return bases.map((base) => appendConnectionParams(base, { conversationId, senderId, senderType, session }));
+  return ensureRealtimeSocketCandidates();
 };
 
-export const buildChatWebSocketUrl = (params: {
-  conversationId: number;
-  senderId: number;
-  senderType?: SenderType;
-  session: SessionCredentials;
-}) => buildChatWebSocketUrls(params)[0];
-
-export const buildChatWebSocketHeaders = (session: SessionCredentials) => {
+export const buildChatRealtimeHeaders = (session: SessionCredentials) => {
   if (!session?.accessToken) {
     return null;
   }
