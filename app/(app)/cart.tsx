@@ -6,7 +6,6 @@ import {
   Alert,
   Modal,
   ScrollView,
-  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
@@ -15,40 +14,31 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import Toast from 'react-native-toast-message';
-import type { ProductDetail } from '@/constants/products';
 import { useAuth } from '@/contexts/AuthContext';
 import { useCart } from '@/contexts/CartContext';
 import { useDeviceModel } from '@/hooks/use-device-model';
 import { createRentalOrder } from '@/services/rental-orders';
 import { fetchShippingAddresses, type ShippingAddress } from '@/services/shipping-addresses';
-
-const clampToStartOfDay = (date: Date) => {
-  const normalized = new Date(date);
-  normalized.setHours(0, 0, 0, 0);
-  return normalized;
-};
-
-const addDays = (date: Date, days: number) => {
-  const base = clampToStartOfDay(date);
-  const nextDate = new Date(base);
-  nextDate.setDate(base.getDate() + days);
-  return clampToStartOfDay(nextDate);
-};
-
-const formatDisplayDate = (date: Date) =>
-  clampToStartOfDay(date).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
-
-const formatCurrencyValue = (value: number, currency: 'USD' | 'VND') =>
-  new Intl.NumberFormat(currency === 'USD' ? 'en-US' : 'vi-VN', {
-    style: 'currency',
-    currency,
-    maximumFractionDigits: currency === 'USD' ? 2 : 0,
-  }).format(value);
-
+import {
+  addDays,
+  addMonths,
+  clampToStartOfDay,
+  endOfMonth,
+  formatDisplayDate,
+  generateCalendarDays,
+  isSameDay,
+  parseDateParam,
+  startOfMonth,
+  WEEKDAY_LABELS,
+} from '@/utils/dates';
+import {
+  determineCurrency,
+  formatCurrencyValue,
+  getDailyRate,
+  getDepositRatio,
+  getDeviceValue,
+} from '@/utils/product-pricing';
+import styles from '@/style/cart.styles';
 const formatAddressTimestamp = (value?: string | null) => {
   if (!value) {
     return null;
@@ -62,81 +52,6 @@ const formatAddressTimestamp = (value?: string | null) => {
 
   return date.toLocaleString();
 };
-
-const getDepositRatio = (product: ProductDetail) => {
-  if (typeof product.depositPercent === 'number') {
-    return product.depositPercent;
-  }
-
-  if (typeof product.depositPercentage === 'number') {
-    return product.depositPercentage / 100;
-  }
-
-  return null;
-};
-
-const getDeviceValue = (product: ProductDetail) => {
-  if (typeof product.deviceValue === 'number' && Number.isFinite(product.deviceValue)) {
-    return product.deviceValue;
-  }
-
-  return null;
-};
-
-const determineCurrency = (product: ProductDetail): 'USD' | 'VND' => {
-  if (product.currency) {
-    return product.currency;
-  }
-
-  return product.price.includes('$') ? 'USD' : 'VND';
-};
-
-const getDailyRate = (product: ProductDetail) => {
-  if (typeof product.pricePerDay === 'number' && product.pricePerDay > 0) {
-    return product.pricePerDay;
-  }
-
-  const sanitized = product.price.replace(/[^0-9.,]/g, '').replace(/,/g, '');
-  const parsed = Number.parseFloat(sanitized);
-  return Number.isNaN(parsed) ? 0 : parsed;
-};
-
-const parseDateParam = (value: unknown, fallback: Date) => {
-  if (typeof value === 'string') {
-    const parsed = new Date(value);
-    if (!Number.isNaN(parsed.getTime())) {
-      return clampToStartOfDay(parsed);
-    }
-  }
-
-  return clampToStartOfDay(fallback);
-};
-
-const startOfMonth = (date: Date) => {
-  const firstDay = clampToStartOfDay(date);
-  firstDay.setDate(1);
-  return clampToStartOfDay(firstDay);
-};
-
-const addMonths = (date: Date, months: number) => {
-  const base = startOfMonth(date);
-  const next = new Date(base);
-  next.setMonth(base.getMonth() + months);
-  return startOfMonth(next);
-};
-
-const endOfMonth = (date: Date) => addDays(addMonths(startOfMonth(date), 1), -1);
-
-const isSameDay = (a: Date, b: Date) => a.getTime() === b.getTime();
-
-const generateCalendarDays = (monthStart: Date) => {
-  const firstDayOfMonth = startOfMonth(monthStart);
-  const firstWeekday = firstDayOfMonth.getDay();
-  const calendarStart = addDays(firstDayOfMonth, -firstWeekday);
-  return Array.from({ length: 42 }, (_, index) => addDays(calendarStart, index));
-};
-
-const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 type DatePickerFieldProps = {
   value: Date;
@@ -351,6 +266,12 @@ export default function CartScreen() {
   const minimumStartDate = today;
   const minimumEndDate = useMemo(() => addDays(startDate, 1), [startDate]);
   const isRangeInvalid = endDate.getTime() <= startDate.getTime();
+  const rentalDurationInDays = useMemo(() => {
+    const millisecondsPerDay = 24 * 60 * 60 * 1000;
+    const rawDuration = Math.round((endDate.getTime() - startDate.getTime()) / millisecondsPerDay);
+
+    return Math.max(1, rawDuration);
+  }, [endDate, startDate]);
 
   const fetchSavedAddresses = useCallback(async () => {
     const activeSession = session?.accessToken ? session : await ensureSession();
@@ -458,20 +379,37 @@ export default function CartScreen() {
     return uniqueCurrencies.values().next().value ?? null;
   }, [hasItems, items]);
 
-  const totalAmount =
-    summaryCurrency !== null
-      ? items.reduce((sum, item) => sum + getDailyRate(item.product) * item.quantity, 0)
-      : null;
-  const formattedTotal =
-    hasItems && totalAmount !== null && summaryCurrency
-      ? formatCurrencyValue(totalAmount, summaryCurrency)
-      : '—';
+  const totalAmount = useMemo(() => {
+    if (summaryCurrency === null) {
+      return null;
+    }
 
-  const { depositTotalLabel, deviceValueTotalLabel } = useMemo(() => {
+    return items.reduce((sum, item) => sum + getDailyRate(item.product) * item.quantity, 0);
+  }, [items, summaryCurrency]);
+  const totalOrderAmount = useMemo(() => {
+    if (summaryCurrency === null) {
+      return null;
+    }
+
+    return items.reduce(
+      (sum, item) => sum + getDailyRate(item.product) * item.quantity * rentalDurationInDays,
+      0
+    );
+  }, [items, rentalDurationInDays, summaryCurrency]);
+  const formattedTotal = useMemo(() => {
+    if (!hasItems || totalAmount === null || !summaryCurrency) {
+      return '—';
+    }
+
+    return formatCurrencyValue(totalAmount, summaryCurrency);
+  }, [hasItems, summaryCurrency, totalAmount]);
+
+  const { depositTotalLabel, deviceValueTotalLabel, depositTotalValue } = useMemo(() => {
     if (!hasItems || summaryCurrency === null) {
       return {
         depositTotalLabel: '—',
         deviceValueTotalLabel: '—',
+        depositTotalValue: null,
       };
     }
 
@@ -504,8 +442,49 @@ export default function CartScreen() {
         hasDeviceValue && summaryCurrency
           ? formatCurrencyValue(deviceValueSum, summaryCurrency)
           : '—',
+      depositTotalValue: hasDepositAmount ? depositSum : null,
     };
   }, [hasItems, items, summaryCurrency]);
+
+  const totalQuantity = useMemo(
+    () => items.reduce((sum, item) => sum + item.quantity, 0),
+    [items]
+  );
+  const deviceLabel = useMemo(() => {
+    if (!hasItems) {
+      return '0 devices';
+    }
+
+    return `${totalQuantity} ${totalQuantity === 1 ? 'device' : 'devices'}`;
+  }, [hasItems, totalQuantity]);
+  const totalCostLabel = useMemo(() => {
+    if (!hasItems) {
+      return '—';
+    }
+
+    if (summaryCurrency === null || totalOrderAmount === null) {
+      return '—';
+    }
+
+    const depositValue = depositTotalValue ?? 0;
+
+    return formatCurrencyValue(totalOrderAmount + depositValue, summaryCurrency);
+  }, [depositTotalValue, hasItems, summaryCurrency, totalOrderAmount]);
+  const summaryMetrics = useMemo(
+    () => {
+      const metrics = [
+        { label: 'Total Items', value: deviceLabel },
+        { label: 'Daily Total', value: formattedTotal },
+        { label: 'Deposit Total', value: depositTotalLabel },
+        { label: 'Device Value Total', value: deviceValueTotalLabel },
+      ];
+
+      metrics.push({ label: 'Total Cost', value: totalCostLabel, highlight: true });
+
+      return metrics;
+    },
+    [depositTotalLabel, deviceLabel, deviceValueTotalLabel, formattedTotal, totalCostLabel]
+  );
 
   if (!hasItems && !product) {
     return (
@@ -521,10 +500,6 @@ export default function CartScreen() {
     );
   }
 
-  const totalQuantity = items.reduce((sum, item) => sum + item.quantity, 0);
-  const deviceLabel = hasItems
-    ? `${totalQuantity} ${totalQuantity === 1 ? 'device' : 'devices'}`
-    : '0 devices';
   const rentalRangeLabel =
     endDate.getTime() === startDate.getTime()
       ? formatDisplayDate(startDate)
@@ -673,15 +648,12 @@ export default function CartScreen() {
         )}
 
         <View style={styles.summaryRow}>
-          {[
-            { label: 'Total Items', value: deviceLabel },
-            { label: 'Daily Total', value: formattedTotal },
-            { label: 'Deposit Total', value: depositTotalLabel },
-            { label: 'Device Value Total', value: deviceValueTotalLabel },
-          ].map((metric) => (
+          {summaryMetrics.map((metric) => (
             <View key={metric.label} style={styles.summaryMetric}>
               <Text style={styles.summaryLabel}>{metric.label}</Text>
-              <Text style={styles.summaryValue}>{metric.value}</Text>
+              <Text style={[styles.summaryValue, metric.highlight && styles.summaryValueHighlight]}>
+                {metric.value}
+              </Text>
             </View>
           ))}
         </View>
@@ -1045,602 +1017,3 @@ export default function CartScreen() {
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: '#ffffff',
-  },
-  loadingState: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 24,
-    backgroundColor: '#ffffff',
-  },
-  loadingStateText: {
-    color: '#6f6f6f',
-    fontSize: 16,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 4,
-  },
-  headerButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#f4f4f4',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#111111',
-  },
-  headerPlaceholder: {
-    width: 40,
-    height: 40,
-  },
-  content: {
-    paddingHorizontal: 20,
-    paddingBottom: 32,
-    paddingTop: 8,
-    gap: 20,
-  },
-  errorBanner: {
-    borderRadius: 12,
-    backgroundColor: '#fff5f5',
-    borderWidth: 1,
-    borderColor: '#f5c2c2',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  errorBannerText: {
-    color: '#c53030',
-    fontSize: 14,
-  },
-  loaderRow: {
-    paddingVertical: 4,
-    alignItems: 'flex-start',
-  },
-  summaryRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    backgroundColor: '#f8f8f8',
-    padding: 16,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#ededed',
-    gap: 16,
-  },
-  summaryMetric: {
-    flexGrow: 1,
-    flexShrink: 0,
-    minWidth: 140,
-  },
-  summaryLabel: {
-    color: '#6f6f6f',
-    fontSize: 13,
-  },
-  summaryValue: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#111111',
-    marginTop: 4,
-  },
-  orderCard: {
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#ededed',
-    padding: 18,
-    backgroundColor: '#ffffff',
-    gap: 20,
-  },
-  orderHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  orderTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#111111',
-  },
-  orderSubtitle: {
-    marginTop: 4,
-    color: '#6f6f6f',
-    fontSize: 13,
-  },
-  orderBody: {
-    gap: 12,
-  },
-  orderItem: {
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: '#f0f0f0',
-    backgroundColor: '#fafafa',
-    padding: 16,
-    gap: 12,
-  },
-  orderItemHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: 12,
-  },
-  orderItemTitle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    flex: 1,
-  },
-  orderItemHeaderRight: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-  },
-  lineTotalGroup: {
-    alignItems: 'flex-end',
-    gap: 4,
-  },
-  lineTotalLabel: {
-    color: '#6f6f6f',
-    fontSize: 12,
-  },
-  productBadge: {
-    width: 48,
-    height: 48,
-    borderRadius: 16,
-    backgroundColor: '#f4f4f4',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  productDetails: {
-    flex: 1,
-  },
-  productName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111111',
-  },
-  quantityRow: {
-    marginTop: 6,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  quantityButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#ffffff',
-  },
-  quantityButtonDisabled: {
-    opacity: 0.4,
-  },
-  quantityValue: {
-    minWidth: 28,
-    textAlign: 'center',
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#111111',
-  },
-  productMeta: {
-    color: '#6f6f6f',
-    marginTop: 2,
-  },
-  productPrice: {
-    fontWeight: '600',
-    color: '#111111',
-  },
-  orderItemDetails: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 16,
-  },
-  orderItemMetric: {
-    flexGrow: 1,
-    flexShrink: 0,
-    minWidth: 140,
-    gap: 4,
-  },
-  orderItemMetricLabel: {
-    fontSize: 13,
-    color: '#6f6f6f',
-  },
-  orderItemMetricValue: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#111111',
-  },
-  orderItemMetricSubValue: {
-    fontSize: 13,
-    color: '#6f6f6f',
-  },
-  removeItemButton: {
-    padding: 4,
-  },
-  emptyOrderBody: {
-    paddingVertical: 12,
-  },
-  emptyOrderText: {
-    color: '#6f6f6f',
-  },
-  clearButton: {
-    padding: 8,
-    borderRadius: 18,
-  },
-  clearButtonDisabled: {
-    opacity: 0.4,
-  },
-  formCard: {
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#ededed',
-    padding: 18,
-    backgroundColor: '#ffffff',
-    gap: 16,
-  },
-  formLabel: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#111111',
-  },
-  formInput: {
-    borderWidth: 1,
-    borderColor: '#d9d9d9',
-    borderRadius: 14,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 15,
-    color: '#111111',
-    backgroundColor: '#ffffff',
-    minHeight: 72,
-    textAlignVertical: 'top',
-  },
-  addressActions: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-    marginTop: 12,
-  },
-  addressActionButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 999,
-    backgroundColor: '#f3f4f6',
-  },
-  addressActionIcon: {
-    marginRight: 8,
-  },
-  addressActionText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#111111',
-  },
-  addressHelperText: {
-    marginTop: 8,
-    color: '#6f6f6f',
-    fontSize: 13,
-  },
-  addressHelperError: {
-    marginTop: 8,
-    color: '#b91c1c',
-    fontSize: 13,
-  },
-  dateRow: {
-    flexDirection: 'row',
-    gap: 16,
-  },
-  dateColumn: {
-    flex: 1,
-    gap: 8,
-  },
-  dateLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#111111',
-  },
-  dateErrorText: {
-    color: '#c53030',
-    fontSize: 13,
-  },
-  datePickerButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    borderWidth: 1,
-    borderColor: '#d9d9d9',
-    borderRadius: 14,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: '#ffffff',
-  },
-  datePickerIcon: {
-    color: '#6f6f6f',
-  },
-  datePickerValue: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#111111',
-  },
-  datePickerModalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.35)',
-    justifyContent: 'center',
-    paddingHorizontal: 20,
-  },
-  datePickerModalContent: {
-    backgroundColor: '#ffffff',
-    borderRadius: 20,
-    paddingBottom: 12,
-    overflow: 'hidden',
-  },
-  datePickerModalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderColor: '#ededed',
-  },
-  datePickerModalButton: {
-    paddingHorizontal: 4,
-    paddingVertical: 6,
-    borderRadius: 12,
-  },
-  datePickerModalButtonDisabled: {
-    opacity: 0.35,
-  },
-  datePickerModalTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111111',
-  },
-  datePickerWeekdaysRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 8,
-  },
-  datePickerWeekday: {
-    flex: 1,
-    textAlign: 'center',
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#6f6f6f',
-  },
-  datePickerDaysGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    paddingHorizontal: 12,
-    paddingBottom: 4,
-  },
-  datePickerDayButton: {
-    width: '14.2857%',
-    aspectRatio: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 4,
-    borderRadius: 999,
-  },
-  datePickerDayOutside: {
-    opacity: 0.5,
-  },
-  datePickerDaySelected: {
-    backgroundColor: '#111111',
-  },
-  datePickerDayDisabled: {
-    opacity: 0.35,
-  },
-  datePickerDayText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#111111',
-  },
-  datePickerDayTextOutside: {
-    color: '#6f6f6f',
-  },
-  datePickerDayTextSelected: {
-    color: '#ffffff',
-    fontWeight: '700',
-  },
-  datePickerDayTextDisabled: {
-    color: '#9c9c9c',
-  },
-  datePickerCloseButton: {
-    alignItems: 'center',
-    paddingVertical: 12,
-    marginTop: 4,
-  },
-  datePickerCloseButtonText: {
-    fontSize: 15,
-    color: '#0057ff',
-    fontWeight: '600',
-  },
-  addressPickerBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.35)',
-    justifyContent: 'center',
-    paddingHorizontal: 20,
-  },
-  addressPickerContainer: {
-    backgroundColor: '#ffffff',
-    borderRadius: 20,
-    padding: 20,
-    gap: 16,
-  },
-  addressPickerHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  addressPickerTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#111111',
-  },
-  addressPickerCloseButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#f3f4f6',
-  },
-  addressPickerLoading: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 24,
-    gap: 12,
-  },
-  addressPickerLoadingText: {
-    color: '#6f6f6f',
-    fontSize: 14,
-  },
-  addressPickerList: {
-    maxHeight: 320,
-  },
-  addressPickerListContent: {
-    paddingVertical: 4,
-    gap: 12,
-  },
-  addressPickerItem: {
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    backgroundColor: '#f9fafb',
-    padding: 16,
-    gap: 6,
-  },
-  addressPickerItemText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#111111',
-  },
-  addressPickerItemMeta: {
-    fontSize: 12,
-    color: '#6b7280',
-  },
-  addressPickerEmpty: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 24,
-    gap: 8,
-  },
-  addressPickerEmptyTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111111',
-  },
-  addressPickerEmptySubtitle: {
-    fontSize: 14,
-    lineHeight: 20,
-    color: '#6f6f6f',
-    textAlign: 'center',
-  },
-  addressPickerFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: 12,
-  },
-  addressPickerRefreshButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 999,
-    backgroundColor: '#f3f4f6',
-  },
-  addressPickerRefreshButtonDisabled: {
-    opacity: 0.65,
-  },
-  addressPickerRefreshIcon: {
-    marginRight: 8,
-  },
-  addressPickerRefreshText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#111111',
-  },
-  addressPickerManageButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 999,
-    backgroundColor: '#111111',
-  },
-  addressPickerManageIcon: {
-    marginRight: 8,
-  },
-  addressPickerManageText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#ffffff',
-  },
-  submitErrorBanner: {
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#f5c2c2',
-    backgroundColor: '#fff5f5',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  submitErrorText: {
-    color: '#c53030',
-    fontSize: 14,
-  },
-  footerActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    gap: 12,
-  },
-  cancelButton: {
-    flex: 1,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#d9d9d9',
-    paddingVertical: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  cancelText: {
-    color: '#111111',
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  checkoutButton: {
-    flex: 2,
-    borderRadius: 14,
-    backgroundColor: '#111111',
-    paddingVertical: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  checkoutButtonDisabled: {
-    opacity: 0.5,
-  },
-  checkoutText: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-});

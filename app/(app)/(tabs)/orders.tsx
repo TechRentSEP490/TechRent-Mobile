@@ -14,12 +14,12 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Linking,
   Modal,
   NativeSyntheticEvent,
   Platform,
   Pressable,
   ScrollView,
-  StyleSheet,
   Text,
   TextInput,
   TextInputKeyPressEventData,
@@ -28,7 +28,10 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
-import type { WebViewErrorEvent } from 'react-native-webview/lib/WebViewTypes';
+import type {
+  WebViewErrorEvent,
+  WebViewHttpErrorEvent,
+} from 'react-native-webview/lib/WebViewTypes';
 
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -49,6 +52,7 @@ import {
   type PaymentMethod,
   type PaymentSession,
 } from '@/services/payments';
+import styles from '@/style/orders.styles';
 
 type OrderStatusFilter = 'All' | 'Pending' | 'Delivered' | 'In Use' | 'Completed';
 type OrderStatus = Exclude<OrderStatusFilter, 'All'>;
@@ -797,6 +801,8 @@ export default function OrdersScreen() {
   const [paymentCheckoutUrl, setPaymentCheckoutUrl] = useState<string | null>(null);
   const [activePaymentSession, setActivePaymentSession] = useState<PaymentSession | null>(null);
   const [paymentModalError, setPaymentModalError] = useState<string | null>(null);
+  const [paymentWebViewKey, setPaymentWebViewKey] = useState(0);
+  const [isPaymentWebViewLoading, setIsPaymentWebViewLoading] = useState(false);
   const lastContractLoadRef = useRef<{ orderId: number | null; requestId: number }>({
     orderId: null,
     requestId: 0,
@@ -970,6 +976,28 @@ export default function OrdersScreen() {
   const handleRetry = useCallback(() => {
     loadOrders('initial');
   }, [loadOrders]);
+
+  useEffect(() => {
+    if (paymentCheckoutUrl) {
+      setPaymentModalError(null);
+      setPaymentWebViewKey((previous) => previous + 1);
+      setIsPaymentWebViewLoading(true);
+    } else {
+      setIsPaymentWebViewLoading(false);
+    }
+  }, [paymentCheckoutUrl]);
+
+  useEffect(() => {
+    if (!isPaymentModalVisible) {
+      setIsPaymentWebViewLoading(false);
+    }
+  }, [isPaymentModalVisible]);
+
+  useEffect(() => {
+    if (paymentModalError) {
+      setIsPaymentWebViewLoading(false);
+    }
+  }, [paymentModalError]);
 
   const filteredOrders = useMemo(() => {
     if (selectedFilter === 'All') {
@@ -1553,6 +1581,33 @@ export default function OrdersScreen() {
     setPaymentModalError(null);
   }, []);
 
+  const handleOpenPaymentInBrowser = useCallback(async () => {
+    if (!paymentCheckoutUrl) {
+      return;
+    }
+
+    try {
+      await Linking.openURL(paymentCheckoutUrl);
+    } catch (error) {
+      console.error('[Orders] Failed to open payment checkout in browser', {
+        url: paymentCheckoutUrl,
+        error,
+      });
+      Alert.alert(
+        'Unable to open link',
+        'We could not open the checkout page in the browser. Please try again later.',
+      );
+    }
+  }, [paymentCheckoutUrl]);
+
+  const handlePaymentWebViewLoadStart = useCallback(() => {
+    setIsPaymentWebViewLoading(true);
+  }, []);
+
+  const handlePaymentWebViewLoadEnd = useCallback(() => {
+    setIsPaymentWebViewLoading(false);
+  }, []);
+
   const handlePaymentWebViewError = useCallback(
     (event: WebViewErrorEvent) => {
       const { description, url, code } = event.nativeEvent ?? {};
@@ -1571,13 +1626,43 @@ export default function OrdersScreen() {
 
       const combined = details.length > 0 ? `${baseMessage} (${details.join(' · ')})` : baseMessage;
       setPaymentModalError(combined);
+      setIsPaymentWebViewLoading(false);
+    },
+    [],
+  );
+
+  const handlePaymentWebViewHttpError = useCallback(
+    (event: WebViewHttpErrorEvent) => {
+      const { statusCode, description, url } = event.nativeEvent ?? {};
+      const parts: string[] = [];
+
+      if (typeof statusCode === 'number') {
+        parts.push(`Status ${statusCode}`);
+      }
+
+      if (description && description.trim().length > 0) {
+        parts.push(description.trim());
+      }
+
+      if (url) {
+        parts.push(`URL: ${url}`);
+      }
+
+      const messageBase =
+        typeof statusCode === 'number'
+          ? 'The payment provider returned an unexpected response.'
+          : 'A network error occurred while loading the payment page.';
+      const combined = parts.length > 0 ? `${messageBase} (${parts.join(' · ')})` : messageBase;
+
+      setPaymentModalError(combined);
+      setIsPaymentWebViewLoading(false);
     },
     [],
   );
 
   const renderPaymentLoading = useCallback(
     () => (
-      <View style={styles.paymentModalPlaceholder}>
+      <View style={styles.paymentWebViewLoadingOverlay}>
         <ActivityIndicator size="large" color="#111111" />
         <Text style={styles.paymentModalPlaceholderText}>Loading checkout…</Text>
       </View>
@@ -2692,7 +2777,18 @@ export default function OrdersScreen() {
                   ? `Order #${activeOrder.orderId} Payment`
                   : 'Payment Checkout'}
             </Text>
-            <View style={styles.paymentModalHeaderSpacer} />
+            {paymentCheckoutUrl ? (
+              <Pressable
+                style={styles.paymentModalCloseButton}
+                onPress={handleOpenPaymentInBrowser}
+                accessibilityRole="button"
+                accessibilityLabel="Open checkout in browser"
+              >
+                <Ionicons name="open-outline" size={20} color="#111111" />
+              </Pressable>
+            ) : (
+              <View style={styles.paymentModalHeaderSpacer} />
+            )}
           </View>
           {paymentModalError ? (
             <View style={styles.paymentModalErrorBanner}>
@@ -2702,13 +2798,25 @@ export default function OrdersScreen() {
           ) : null}
           <View style={styles.paymentModalBody}>
             {paymentCheckoutUrl ? (
-              <WebView
-                source={{ uri: paymentCheckoutUrl }}
-                startInLoadingState
-                renderLoading={renderPaymentLoading}
-                onError={handlePaymentWebViewError}
-                style={styles.paymentWebView}
-              />
+              <View style={styles.paymentWebViewContainer}>
+                <WebView
+                  key={`payment-webview-${paymentWebViewKey}`}
+                  source={{ uri: paymentCheckoutUrl }}
+                  javaScriptEnabled
+                  domStorageEnabled
+                  cacheEnabled={false}
+                  sharedCookiesEnabled
+                  setSupportMultipleWindows={false}
+                  originWhitelist={['https://*', 'http://*']}
+                  mixedContentMode="always"
+                  onLoadStart={handlePaymentWebViewLoadStart}
+                  onLoadEnd={handlePaymentWebViewLoadEnd}
+                  onError={handlePaymentWebViewError}
+                  onHttpError={handlePaymentWebViewHttpError}
+                  style={styles.paymentWebView}
+                />
+                {isPaymentWebViewLoading ? renderPaymentLoading() : null}
+              </View>
             ) : (
               <View style={styles.paymentModalPlaceholder}>
                 <Ionicons name="warning-outline" size={24} color="#6b7280" />
@@ -2723,873 +2831,3 @@ export default function OrdersScreen() {
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: '#ffffff',
-  },
-  listContent: {
-    paddingHorizontal: 20,
-    paddingBottom: 24,
-    paddingTop: 12,
-  },
-  headerSection: {
-    marginBottom: 16,
-    gap: 16,
-  },
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#111111',
-  },
-  subtitle: {
-    fontSize: 15,
-    color: '#6b7280',
-    lineHeight: 20,
-  },
-  headerActions: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  iconButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: '#f4f4f5',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  filterRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-  },
-  inlineErrorBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    padding: 12,
-    borderRadius: 12,
-    backgroundColor: '#fef3c7',
-  },
-  inlineErrorText: {
-    flex: 1,
-    color: '#92400e',
-    fontSize: 13,
-    fontWeight: '500',
-  },
-  inlineErrorAction: {
-    color: '#b45309',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  filterChip: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    backgroundColor: '#ffffff',
-  },
-  filterChipSelected: {
-    backgroundColor: '#111111',
-    borderColor: '#111111',
-  },
-  filterLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#6b7280',
-  },
-  filterLabelSelected: {
-    color: '#ffffff',
-  },
-  orderCard: {
-    flexDirection: 'row',
-    backgroundColor: '#f9fafb',
-    borderRadius: 20,
-    padding: 16,
-  },
-  orderCardHighlighted: {
-    borderWidth: 2,
-    borderColor: '#1f7df4',
-    backgroundColor: '#eef4ff',
-  },
-  cardLeading: {
-    marginRight: 16,
-  },
-  thumbnail: {
-    width: 64,
-    height: 64,
-    borderRadius: 14,
-    backgroundColor: '#e5e7eb',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  thumbnailText: {
-    fontWeight: '700',
-    color: '#4b5563',
-    fontSize: 12,
-  },
-  cardBody: {
-    flex: 1,
-    gap: 12,
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  productName: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: '#111111',
-    flex: 1,
-    marginRight: 12,
-  },
-  statusBadge: {
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
-  statusText: {
-    fontSize: 12,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-  },
-  orderNumber: {
-    fontSize: 13,
-    color: '#6b7280',
-  },
-  metaRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 16,
-  },
-  metaGroup: {
-    flex: 1,
-  },
-  metaLabel: {
-    fontSize: 12,
-    color: '#9ca3af',
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-    marginBottom: 4,
-  },
-  metaValue: {
-    fontSize: 14,
-    color: '#111111',
-    fontWeight: '600',
-  },
-  cardFooter: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  viewDetails: {
-    fontSize: 14,
-    color: '#1f7df4',
-    fontWeight: '600',
-  },
-  cardActionButton: {
-    backgroundColor: '#111111',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  cardActionLabel: {
-    fontSize: 13,
-    color: '#ffffff',
-    fontWeight: '700',
-  },
-  separator: {
-    height: 16,
-  },
-  retryButton: {
-    marginTop: 16,
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 999,
-    backgroundColor: '#111111',
-  },
-  retryButtonText: {
-    color: '#ffffff',
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  emptyState: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 80,
-    gap: 12,
-  },
-  emptyTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#111111',
-  },
-  emptySubtitle: {
-    fontSize: 14,
-    color: '#6b7280',
-    textAlign: 'center',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.25)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
-  },
-  modalCard: {
-    width: '100%',
-    maxWidth: 420,
-    backgroundColor: '#ffffff',
-    borderRadius: 28,
-    padding: 24,
-    gap: 16,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#111111',
-  },
-  closeButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#f3f4f6',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  progressHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  progressLabel: {
-    fontSize: 13,
-    color: '#6b7280',
-    fontWeight: '600',
-  },
-  progressStage: {
-    fontSize: 13,
-    color: '#111111',
-    fontWeight: '600',
-  },
-  progressBar: {
-    height: 6,
-    backgroundColor: '#e5e7eb',
-    borderRadius: 999,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%',
-    backgroundColor: '#111111',
-  },
-  stepContent: {
-    gap: 16,
-  },
-  modalOrderHeader: {
-    gap: 4,
-  },
-  modalOrderName: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#111111',
-  },
-  modalOrderMeta: {
-    fontSize: 13,
-    color: '#6b7280',
-  },
-  stepTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#111111',
-  },
-  stepSubtitle: {
-    fontSize: 14,
-    color: '#6b7280',
-  },
-  contractContainer: {
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: 16,
-    maxHeight: 200,
-    padding: 16,
-    backgroundColor: '#f9fafb',
-  },
-  contractHeading: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#111111',
-    marginBottom: 12,
-  },
-  contractBody: {
-    fontSize: 13,
-    lineHeight: 20,
-    color: '#4b5563',
-  },
-  contractSection: {
-    marginTop: 16,
-    gap: 8,
-  },
-  contractSectionHeading: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#111111',
-  },
-  contractStateWrapper: {
-    minHeight: 140,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingHorizontal: 12,
-  },
-  contractStateText: {
-    fontSize: 14,
-    color: '#4b5563',
-    textAlign: 'center',
-  },
-  contractErrorText: {
-    color: '#b91c1c',
-  },
-  contractRetryButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#111111',
-  },
-  contractRetryButtonText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#111111',
-  },
-  contractMetaList: {
-    gap: 8,
-    marginBottom: 12,
-  },
-  contractMetaRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  contractMetaLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#111111',
-  },
-  contractMetaValue: {
-    fontSize: 13,
-    color: '#4b5563',
-    textAlign: 'right',
-    flexShrink: 1,
-  },
-  contractSignedBanner: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-    padding: 12,
-    borderRadius: 12,
-    backgroundColor: '#dcfce7',
-    marginBottom: 12,
-  },
-  contractSignedText: {
-    flex: 1,
-    color: '#166534',
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  contractTermsSection: {
-    marginTop: 16,
-    gap: 8,
-  },
-  contractTermsHeading: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#111111',
-  },
-  contractTermsText: {
-    fontSize: 13,
-    lineHeight: 20,
-    color: '#4b5563',
-  },
-  agreementRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-  },
-  agreementRowDisabled: {
-    opacity: 0.6,
-  },
-  agreementTextWrapper: {
-    flex: 1,
-    gap: 4,
-  },
-  agreementLabel: {
-    fontSize: 14,
-    color: '#111111',
-    fontWeight: '600',
-  },
-  agreementHelper: {
-    fontSize: 12,
-    color: '#6b7280',
-  },
-  primaryActions: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  primaryButton: {
-    backgroundColor: '#111111',
-    borderRadius: 14,
-    minHeight: 52,
-    paddingHorizontal: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    alignSelf: 'stretch',
-  },
-  primaryButtonEnabled: {
-    opacity: 1,
-  },
-  primaryButtonBusy: {
-    opacity: 0.7,
-  },
-  primaryButtonDisabled: {
-    backgroundColor: '#d1d5db',
-  },
-  primaryButtonText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#ffffff',
-  },
-  primaryButtonTextDisabled: {
-    color: '#9ca3af',
-  },
-  secondaryButton: {
-    borderRadius: 14,
-    minHeight: 52,
-    paddingHorizontal: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    alignSelf: 'stretch',
-  },
-  buttonFlex: {
-    flex: 1,
-  },
-  secondaryButtonText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#111111',
-  },
-  verificationIconWrapper: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: '#eef2ff',
-    alignItems: 'center',
-    justifyContent: 'center',
-    alignSelf: 'center',
-  },
-  otpInputsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  otpInput: {
-    flex: 1,
-    height: 56,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    textAlign: 'center',
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#111111',
-  },
-  otpErrorText: {
-    marginTop: 12,
-    fontSize: 13,
-    color: '#b91c1c',
-    fontWeight: '500',
-  },
-  verificationHelpers: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  helperLink: {
-    fontSize: 13,
-    color: '#1f7df4',
-    fontWeight: '600',
-  },
-  helperLinkDisabled: {
-    opacity: 0.5,
-  },
-  helperText: {
-    fontSize: 12,
-    color: '#9ca3af',
-  },
-  helperButton: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 10,
-  },
-  helperButtonDisabled: {
-    opacity: 0.6,
-  },
-  helperButtonText: {
-    fontSize: 14,
-    color: '#1f7df4',
-    fontWeight: '600',
-  },
-  summaryCard: {
-    backgroundColor: '#f9fafb',
-    borderRadius: 16,
-    padding: 16,
-    gap: 12,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-  },
-  summaryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  summaryRowEmphasis: {
-    borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
-    paddingTop: 8,
-    marginTop: 4,
-  },
-  summaryLabel: {
-    fontSize: 14,
-    color: '#6b7280',
-  },
-  summaryValue: {
-    fontSize: 14,
-    color: '#111111',
-    fontWeight: '600',
-  },
-  summaryTotal: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#111111',
-  },
-  paymentList: {
-    gap: 12,
-  },
-  paymentOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: 14,
-    padding: 14,
-  },
-  paymentErrorText: {
-    marginTop: 8,
-    fontSize: 13,
-    color: '#b91c1c',
-    fontWeight: '500',
-  },
-  paymentOptionSelected: {
-    borderColor: '#1f7df4',
-    backgroundColor: '#eef4ff',
-  },
-  paymentIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: '#ffffff',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-  },
-  paymentDetails: {
-    flex: 1,
-    gap: 4,
-  },
-  paymentLabel: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#111111',
-  },
-  paymentDescription: {
-    fontSize: 13,
-    color: '#6b7280',
-  },
-  paymentSecurity: {
-    flexDirection: 'row',
-    gap: 8,
-    alignItems: 'center',
-  },
-  paymentSecurityText: {
-    fontSize: 12,
-    color: '#6b7280',
-  },
-  paymentModalContainer: {
-    flex: 1,
-    backgroundColor: '#ffffff',
-  },
-  paymentModalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
-  },
-  paymentModalTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#111111',
-  },
-  paymentModalCloseButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  paymentModalHeaderSpacer: {
-    width: 40,
-  },
-  paymentModalBody: {
-    flex: 1,
-  },
-  paymentWebView: {
-    flex: 1,
-  },
-  paymentModalPlaceholder: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 12,
-    padding: 24,
-  },
-  paymentModalPlaceholderText: {
-    fontSize: 14,
-    color: '#6b7280',
-    textAlign: 'center',
-  },
-  paymentModalErrorBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    backgroundColor: '#fef2f2',
-    borderBottomWidth: 1,
-    borderBottomColor: '#fecaca',
-  },
-  paymentModalErrorText: {
-    flex: 1,
-    fontSize: 13,
-    color: '#b91c1c',
-    fontWeight: '500',
-  },
-  emailModalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.45)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
-  },
-  emailModalCard: {
-    width: '100%',
-    maxWidth: 380,
-    backgroundColor: '#ffffff',
-    borderRadius: 20,
-    padding: 20,
-    gap: 16,
-  },
-  emailModalTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#111111',
-  },
-  emailModalDescription: {
-    fontSize: 14,
-    color: '#4b5563',
-  },
-  emailInput: {
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 15,
-    color: '#111111',
-  },
-  emailInputError: {
-    borderColor: '#b91c1c',
-  },
-  emailErrorText: {
-    fontSize: 12,
-    color: '#b91c1c',
-  },
-  emailModalActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 12,
-  },
-  emailModalCancelButton: {
-    paddingHorizontal: 18,
-    paddingVertical: 10,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    backgroundColor: '#ffffff',
-  },
-  emailModalCancelText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#111111',
-  },
-  emailModalSaveButton: {
-    paddingHorizontal: 18,
-    paddingVertical: 10,
-    borderRadius: 10,
-    backgroundColor: '#111111',
-  },
-  emailModalSaveText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#ffffff',
-  },
-  orderDetailsCard: {
-    width: '90%',
-    maxWidth: 420,
-    maxHeight: '85%',
-    borderRadius: 24,
-    backgroundColor: '#ffffff',
-    padding: 20,
-    gap: 16,
-  },
-  orderDetailsScroll: {
-    marginHorizontal: -4,
-    paddingHorizontal: 4,
-  },
-  detailSection: {
-    marginBottom: 20,
-    gap: 8,
-  },
-  detailSectionHeading: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#111111',
-  },
-  detailRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 16,
-    alignItems: 'flex-start',
-  },
-  detailLabel: {
-    fontSize: 13,
-    color: '#6b7280',
-    flex: 0.5,
-  },
-  detailValue: {
-    fontSize: 13,
-    color: '#111111',
-    fontWeight: '600',
-    flex: 0.5,
-    textAlign: 'right',
-  },
-  detailValueMultiline: {
-    textAlign: 'right',
-    flex: 1,
-  },
-  detailItemRow: {
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: 12,
-    padding: 12,
-    backgroundColor: '#f9fafb',
-    marginBottom: 12,
-    gap: 4,
-  },
-  detailItemHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  detailItemName: {
-    flex: 1,
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#111111',
-    marginRight: 8,
-  },
-  detailItemQty: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#1f2937',
-  },
-  detailItemMeta: {
-    fontSize: 12,
-    color: '#6b7280',
-  },
-  detailEmptyText: {
-    fontSize: 13,
-    color: '#6b7280',
-  },
-  detailDownloadButton: {
-    marginTop: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#1f7df4',
-    backgroundColor: '#eef4ff',
-    alignSelf: 'flex-start',
-  },
-  detailDownloadButtonDisabled: {
-    opacity: 0.6,
-  },
-  detailDownloadLabel: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#1f7df4',
-  },
-  detailDownloadHint: {
-    marginTop: 12,
-    fontSize: 12,
-    color: '#6b7280',
-  },
-  orderDetailsState: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 32,
-    gap: 12,
-  },
-  orderDetailsStateText: {
-    fontSize: 13,
-    color: '#4b5563',
-    textAlign: 'center',
-  },
-  orderDetailsErrorText: {
-    color: '#b91c1c',
-    fontWeight: '600',
-  },
-});

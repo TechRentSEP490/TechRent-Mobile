@@ -1,4 +1,5 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { Text, View } from 'react-native';
+import styles from '@/style/search.styles';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function SearchScreen() {
@@ -12,23 +13,4 @@ export default function SearchScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: '#ffffff',
-  },
-  container: {
-    flex: 1,
-    padding: 24,
-    gap: 8,
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#111111',
-  },
-  subtitle: {
-    fontSize: 16,
-    color: '#666666',
-  },
-});
+
