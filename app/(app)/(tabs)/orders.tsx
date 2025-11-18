@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Image,
   Linking,
   NativeSyntheticEvent,
   Pressable,
@@ -49,6 +50,7 @@ import {
 import styles from '@/style/orders.styles';
 import { formatCurrency, formatRentalPeriod, toTitleCase } from '@/utils/order-formatters';
 import type {
+  DeviceLookupEntry,
   OrderActionType,
   OrderCard,
   OrderStatus,
@@ -194,7 +196,10 @@ const isValidEmail = (value: string): boolean => {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed.toLowerCase());
 };
 
-const deriveDeviceSummary = (order: RentalOrderResponse, deviceNames: Map<string, string>): string => {
+const deriveDeviceSummary = (
+  order: RentalOrderResponse,
+  deviceDetails: Map<string, DeviceLookupEntry>,
+): string => {
   if (!order.orderDetails || order.orderDetails.length === 0) {
     return 'No devices listed';
   }
@@ -206,7 +211,7 @@ const deriveDeviceSummary = (order: RentalOrderResponse, deviceNames: Map<string
         return null;
       }
 
-      const name = deviceNames.get(String(id));
+      const name = deviceDetails.get(String(id))?.name;
       if (name && name.trim().length > 0) {
         return name;
       }
@@ -237,18 +242,23 @@ const isContractSignedByCustomer = (contract?: ContractResponse | null): boolean
 
 const mapOrderResponseToCard = (
   order: RentalOrderResponse,
-  deviceNames: Map<string, string>,
+  deviceDetails: Map<string, DeviceLookupEntry>,
   contract?: ContractResponse | null,
 ): OrderCard => {
   const statusMeta = mapStatusToMeta(order.orderStatus);
   const depositAmount = Number.isFinite(order.depositAmount) ? Number(order.depositAmount) : 0;
   const totalPrice = Number.isFinite(order.totalPrice) ? Number(order.totalPrice) : 0;
   const totalDue = depositAmount + totalPrice;
+  const deviceImageUrls =
+    order.orderDetails
+      ?.map((detail) => deviceDetails.get(String(detail.deviceModelId))?.imageURL?.trim())
+      .filter((url): url is string => Boolean(url && url.length > 0)) ?? [];
   return {
     orderId: order.orderId,
     id: String(order.orderId),
     title: `Order #${order.orderId}`,
-    deviceSummary: deriveDeviceSummary(order, deviceNames),
+    deviceSummary: deriveDeviceSummary(order, deviceDetails),
+    deviceImageUrls,
     rentalPeriod: formatRentalPeriod(order.startDate, order.endDate),
     totalAmount: formatCurrency(totalDue),
     totalPrice,
@@ -296,7 +306,7 @@ export default function OrdersScreen() {
   const defaultVerificationEmail = useMemo(() => user?.email?.trim() ?? '', [user?.email]);
   const [orders, setOrders] = useState<OrderCard[]>([]);
   const [contractsByOrderId, setContractsByOrderId] = useState<Record<string, ContractResponse>>({});
-  const [deviceNameLookup, setDeviceNameLookup] = useState<Record<string, string>>({});
+  const [deviceDetailsLookup, setDeviceDetailsLookup] = useState<Record<string, DeviceLookupEntry>>({});
   const [selectedFilter, setSelectedFilter] = useState<OrderStatusFilter>('All');
   const [highlightedOrderId, setHighlightedOrderId] = useState<string | null>(null);
   const [pendingScrollOrderId, setPendingScrollOrderId] = useState<string | null>(null);
@@ -393,7 +403,7 @@ export default function OrdersScreen() {
         }
 
         const response = await fetchRentalOrders(activeSession);
-        const deviceNameMap = new Map<string, string>();
+        const deviceDetailsMap = new Map<string, DeviceLookupEntry>();
         const uniqueDeviceModelIds = new Set<string>();
 
         response.forEach((order) => {
@@ -411,9 +421,12 @@ export default function OrdersScreen() {
                 const device = await fetchDeviceModelById(id);
                 if (device) {
                   const label = device.name?.trim().length ? device.name : device.model;
-                  if (label && label.trim().length > 0) {
-                    deviceNameMap.set(id, label.trim());
-                  }
+                  const normalizedName =
+                    label && label.trim().length > 0 ? label.trim() : `Device Model ${id}`;
+                  deviceDetailsMap.set(id, {
+                    name: normalizedName,
+                    imageURL: device.imageURL?.trim() ?? null,
+                  });
                 }
               } catch (deviceError) {
                 console.warn(`Failed to load device model ${id} for rental orders`, deviceError);
@@ -454,18 +467,18 @@ export default function OrdersScreen() {
           return bTime - aTime;
         });
 
-        const deviceNameRecord: Record<string, string> = {};
-        deviceNameMap.forEach((label, key) => {
-          deviceNameRecord[key] = label;
+        const deviceDetailsRecord: Record<string, DeviceLookupEntry> = {};
+        deviceDetailsMap.forEach((details, key) => {
+          deviceDetailsRecord[key] = details;
         });
 
         setOrders(
           sorted.map((order) =>
-            mapOrderResponseToCard(order, deviceNameMap, contractLookup[String(order.orderId)]),
+            mapOrderResponseToCard(order, deviceDetailsMap, contractLookup[String(order.orderId)]),
           ),
         );
         setContractsByOrderId(contractLookup);
-        setDeviceNameLookup(deviceNameRecord);
+        setDeviceDetailsLookup(deviceDetailsRecord);
         setErrorMessage(null);
       } catch (error) {
         const fallbackMessage = 'Failed to load rental orders. Please try again.';
@@ -1421,6 +1434,13 @@ export default function OrdersScreen() {
         onRefresh={handleRefresh}
         renderItem={({ item }) => {
           const isHighlighted = highlightedOrderId === item.id;
+          const thumbnailImages = item.deviceImageUrls?.filter((uri) => uri && uri.length > 0) ?? [];
+          const maxVisibleThumbnails = 3;
+          const visibleImages = thumbnailImages.slice(0, maxVisibleThumbnails);
+          const stackWidth =
+            64 +
+            Math.max(visibleImages.length - 1, 0) * 16 +
+            (thumbnailImages.length > maxVisibleThumbnails ? 16 : 0);
           return (
             <View
               style={[
@@ -1429,9 +1449,29 @@ export default function OrdersScreen() {
               ]}
             >
               <View style={styles.cardLeading}>
-                <View style={styles.thumbnail}>
-                  <Text style={styles.thumbnailText}>IMG</Text>
-                </View>
+                {visibleImages.length > 0 ? (
+                  <View style={[styles.thumbnailStack, { width: stackWidth }]}>
+                    {visibleImages.map((uri, index) => (
+                      <Image
+                        key={`${item.id}-thumb-${index}`}
+                        source={{ uri }}
+                        resizeMode="cover"
+                        style={[styles.thumbnailImage, { left: index * 16, zIndex: visibleImages.length - index }]}
+                      />
+                    ))}
+                    {thumbnailImages.length > maxVisibleThumbnails ? (
+                      <View style={[styles.thumbnailMore, { left: visibleImages.length * 16 }]}>
+                        <Text style={styles.thumbnailMoreLabel}>
+                          +{thumbnailImages.length - maxVisibleThumbnails}
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
+                ) : (
+                  <View style={styles.thumbnail}>
+                    <Text style={styles.thumbnailText}>IMG</Text>
+                  </View>
+                )}
               </View>
               <View style={styles.cardBody}>
                 <View style={styles.cardHeader}>
@@ -1615,7 +1655,7 @@ export default function OrdersScreen() {
         loading={orderDetailsLoading}
         error={orderDetailsError}
         order={orderDetailsData}
-        deviceNameLookup={deviceNameLookup}
+        deviceDetailsLookup={deviceDetailsLookup}
         contract={contractForSelectedOrder}
         isDownloadingContract={isSelectedContractDownloading}
         onClose={handleCloseOrderDetails}
