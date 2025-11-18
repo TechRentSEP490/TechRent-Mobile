@@ -1,4 +1,4 @@
-import { buildApiUrl, ensureApiUrl } from './api';
+import { buildApiUrl } from './api';
 import type { SessionCredentials } from './chat';
 
 export type NotificationType =
@@ -96,6 +96,26 @@ export const normalizeNotification = (
   };
 };
 
+const buildNotificationListEndpoints = (customerId: number) => {
+  const endpoints = [buildApiUrl('customers', 'me', 'notifications')];
+
+  if (Number.isFinite(customerId) && customerId > 0) {
+    endpoints.push(buildApiUrl('notifications', 'customer', customerId));
+  }
+
+  return endpoints;
+};
+
+const buildMarkAllEndpoints = (customerId: number) => {
+  const endpoints = [buildApiUrl('customers', 'me', 'notifications', 'read')];
+
+  if (Number.isFinite(customerId) && customerId > 0) {
+    endpoints.push(buildApiUrl('notifications', 'customer', customerId, 'read'));
+  }
+
+  return endpoints;
+};
+
 export async function fetchCustomerNotifications({
   customerId,
   session,
@@ -118,39 +138,54 @@ export async function fetchCustomerNotifications({
   const resolvedPage = Number.isFinite(page) && page >= 0 ? page : 0;
   const resolvedSize = Number.isFinite(size) && size > 0 ? size : 20;
 
-  const url = new URL(buildApiUrl('notifications', 'customer', customerId));
-  url.searchParams.set('page', String(resolvedPage));
-  url.searchParams.set('size', String(resolvedSize));
-
-  const response = await fetch(url.toString(), {
-    method: 'GET',
-    headers: {
-      Accept: 'application/json',
-      Authorization: buildAuthHeader(session),
-    },
+  const candidateUrls = buildNotificationListEndpoints(customerId).map((endpoint) => {
+    const url = new URL(endpoint);
+    url.searchParams.set('page', String(resolvedPage));
+    url.searchParams.set('size', String(resolvedSize));
+    return url;
   });
 
-  if (!response.ok) {
-    const apiMessage = await parseErrorMessage(response);
-    throw new Error(apiMessage ?? `Unable to load notifications (status ${response.status}).`);
+  let lastError: Error | null = null;
+
+  for (const url of candidateUrls) {
+    try {
+      const response = await fetch(url.toString(), {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+          Authorization: buildAuthHeader(session),
+        },
+      });
+
+      if (!response.ok) {
+        const apiMessage = await parseErrorMessage(response);
+        throw new Error(apiMessage ?? `Unable to load notifications (status ${response.status}).`);
+      }
+
+      const json = (await response.json()) as ApiEnvelope<PaginatedResponse<CustomerNotification>> | null;
+
+      if (!json || json.status !== 'SUCCESS' || !json.data) {
+        throw new Error(json?.message ?? 'Failed to load notifications. Please try again.');
+      }
+
+      const normalizedContent = Array.isArray(json.data.content)
+        ? json.data.content
+            .map((item) => normalizeNotification(item) ?? null)
+            .filter((item): item is CustomerNotification => item !== null)
+        : [];
+
+      return {
+        ...json.data,
+        content: normalizedContent,
+      };
+    } catch (error) {
+      const capturedError = error instanceof Error ? error : new Error('Unable to load notifications.');
+      console.warn('Notification list request failed', { url: url.toString(), message: capturedError.message });
+      lastError = capturedError;
+    }
   }
 
-  const json = (await response.json()) as ApiEnvelope<PaginatedResponse<CustomerNotification>> | null;
-
-  if (!json || json.status !== 'SUCCESS' || !json.data) {
-    throw new Error(json?.message ?? 'Failed to load notifications. Please try again.');
-  }
-
-  const normalizedContent = Array.isArray(json.data.content)
-    ? json.data.content
-        .map((item) => normalizeNotification(item) ?? null)
-        .filter((item): item is CustomerNotification => item !== null)
-    : [];
-
-  return {
-    ...json.data,
-    content: normalizedContent,
-  };
+  throw lastError ?? new Error('Unable to load notifications.');
 }
 
 export async function markNotificationRead(notificationId: number, session: SessionCredentials) {
@@ -185,18 +220,33 @@ export async function markAllNotificationsRead(customerId: number, session: Sess
     throw new Error('A valid customer identifier is required.');
   }
 
-  const response = await fetch(buildApiUrl('notifications', 'customer', customerId, 'read'), {
-    method: 'POST',
-    headers: {
-      ...jsonHeaders,
-      Authorization: buildAuthHeader(session),
-    },
-  });
+  const endpoints = buildMarkAllEndpoints(customerId);
+  let lastError: Error | null = null;
 
-  if (!response.ok) {
-    const apiMessage = await parseErrorMessage(response);
-    throw new Error(apiMessage ?? `Failed to update notifications (status ${response.status}).`);
+  for (const endpoint of endpoints) {
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          ...jsonHeaders,
+          Authorization: buildAuthHeader(session),
+        },
+      });
+
+      if (!response.ok) {
+        const apiMessage = await parseErrorMessage(response);
+        throw new Error(apiMessage ?? `Failed to update notifications (status ${response.status}).`);
+      }
+
+      return;
+    } catch (error) {
+      const capturedError = error instanceof Error ? error : new Error('Failed to update notifications.');
+      console.warn('Notification mark-all request failed', { url: endpoint, message: capturedError.message });
+      lastError = capturedError;
+    }
   }
+
+  throw lastError ?? new Error('Failed to update notifications.');
 }
 
 const normalizeRealtimeBase = (value: string) => value.replace(/\/$/, '');
