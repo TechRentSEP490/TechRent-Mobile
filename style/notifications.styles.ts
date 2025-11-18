@@ -155,53 +155,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
-  realtimeBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    padding: 12,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#e4e4e7',
-    backgroundColor: '#fafafa',
-    marginBottom: 16,
-  },
-  realtimeStatusDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-  },
-  realtimeStatusDotConnected: {
-    backgroundColor: '#22c55e',
-  },
-  realtimeStatusDotConnecting: {
-    backgroundColor: '#f59e0b',
-  },
-  realtimeStatusDotDisconnected: {
-    backgroundColor: '#ef4444',
-  },
-  realtimeStatusText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#111111',
-  },
-  realtimeErrorText: {
-    flex: 1,
-    fontSize: 12,
-    color: '#dc2626',
-  },
-  realtimeRetryButton: {
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#d4d4d8',
-  },
-  realtimeRetryText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#111111',
-  },
   emptyState: {
     alignItems: 'center',
     justifyContent: 'center',
