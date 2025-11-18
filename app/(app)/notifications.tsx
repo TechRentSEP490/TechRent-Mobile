@@ -13,10 +13,15 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/contexts/AuthContext';
+import { fetchContracts, type ContractResponse } from '@/services/contracts';
+import {
+  fetchRentalOrderById,
+  fetchRentalOrders,
+  type RentalOrderResponse,
+} from '@/services/rental-orders';
 import {
   buildNotificationRealtimeHeaders,
   buildNotificationStompUrls,
-  normalizeNotification,
   type CustomerNotification,
   type NotificationType,
 } from '@/services/notifications';
@@ -30,6 +35,13 @@ type NotificationMeta = {
   color: string;
   background: string;
   label: string;
+  actionLabel?: string;
+  action?: 'orders' | 'chat';
+};
+
+type OrderStatusNotification = CustomerNotification & {
+  key: string;
+  orderId: number;
   actionLabel?: string;
   action?: 'orders' | 'chat';
 };
@@ -94,6 +106,211 @@ const defaultNotificationMeta: NotificationMeta = {
 
 const resolveNotificationMeta = (type: NotificationType) => notificationTypeMeta[type] ?? defaultNotificationMeta;
 
+const statusAliasMap: Record<string, NotificationType> = {
+  PROCESSING: 'ORDER_PROCESSING',
+  CONFIRMED: 'ORDER_CONFIRMED',
+  READY_FOR_DELIVERY: 'ORDER_IN_DELIVERY',
+  DELIVERY_CONFIRMED: 'ORDER_ACTIVE',
+  ACTIVE: 'ORDER_ACTIVE',
+  NEAR_DUE: 'ORDER_NEAR_DUE',
+  REJECTED: 'ORDER_REJECTED',
+};
+
+const normalizeOrderId = (value: unknown): number | null => {
+  if (value == null) {
+    return null;
+  }
+
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+
+  return parsed;
+};
+
+const normalizeOrderStatus = (value: unknown): NotificationType | '' => {
+  if (typeof value !== 'string' || value.length === 0) {
+    return '';
+  }
+
+  const upper = value.toUpperCase();
+
+  if (upper in statusAliasMap) {
+    return statusAliasMap[upper];
+  }
+
+  if (upper.startsWith('ORDER_')) {
+    return upper as NotificationType;
+  }
+
+  return '';
+};
+
+const deriveOrderInfo = (payload: Record<string, unknown>) => {
+  if (!payload) {
+    return { orderId: null, status: '' as NotificationType | '' };
+  }
+
+  const merged = {
+    ...payload,
+    ...(typeof payload.order === 'object' && payload.order ? payload.order : {}),
+    ...(typeof payload.data === 'object' && payload.data ? payload.data : {}),
+    ...(typeof payload.detail === 'object' && payload.detail ? payload.detail : {}),
+  } as Record<string, unknown>;
+
+  const orderId =
+    normalizeOrderId(merged.orderId) ??
+    normalizeOrderId(merged.rentalOrderId) ??
+    normalizeOrderId(merged.id) ??
+    normalizeOrderId(merged.referenceId);
+
+  const status =
+    normalizeOrderStatus(merged.orderStatus) ||
+    normalizeOrderStatus(merged.status) ||
+    normalizeOrderStatus(merged.state) ||
+    normalizeOrderStatus(merged.newStatus);
+
+  return { orderId, status };
+};
+
+const buildContractsMap = (contracts: ContractResponse[]): Map<number, ContractResponse> => {
+  const map = new Map<number, ContractResponse>();
+
+  contracts.forEach((contract) => {
+    const record = contract as Record<string, unknown> & {
+      order?: { orderId?: unknown };
+    };
+
+    const nestedOrderId = record.order?.orderId;
+    const orderId = normalizeOrderId(contract.orderId) ?? normalizeOrderId(nestedOrderId);
+
+    if (orderId) {
+      map.set(orderId, contract);
+    }
+  });
+
+  return map;
+};
+
+const generateNotificationId = (orderId: number, status: string) => {
+  let hash = 0;
+
+  for (let index = 0; index < status.length; index += 1) {
+    hash = (hash * 31 + status.charCodeAt(index)) >>> 0;
+  }
+
+  return orderId * 1000 + (hash % 1000);
+};
+
+type StatusContentMeta = {
+  title: (context: { displayCode: string | number }) => string;
+  description: (context: { hasContract: boolean }) => string;
+  actionLabel?: string;
+  action?: 'orders' | 'chat';
+};
+
+const statusContentMeta: Record<string, StatusContentMeta> = {
+  ORDER_REJECTED: {
+    title: ({ displayCode }) => `Order #${displayCode} was rejected`,
+    description: () => 'Your order could not be approved. Contact support if you have questions.',
+    actionLabel: 'Contact support',
+    action: 'chat',
+  },
+  ORDER_PROCESSING: {
+    title: ({ displayCode }) => `Order #${displayCode} is processing`,
+    description: ({ hasContract }) =>
+      hasContract
+        ? 'Please review and sign your contract so we can prepare your devices.'
+        : 'We are verifying your documents. We will notify you as soon as the contract is ready.',
+    actionLabel: 'View order',
+    action: 'orders',
+  },
+  ORDER_CONFIRMED: {
+    title: ({ displayCode }) => `Order #${displayCode} was confirmed`,
+    description: () => 'Great news! Your order is confirmed. We will prepare your delivery shortly.',
+    actionLabel: 'Review details',
+    action: 'orders',
+  },
+  ORDER_IN_DELIVERY: {
+    title: ({ displayCode }) => `Order #${displayCode} is on the way`,
+    description: () => 'Track your courier and make sure someone is available to receive the devices.',
+    actionLabel: 'Track delivery',
+    action: 'orders',
+  },
+  ORDER_ACTIVE: {
+    title: ({ displayCode }) => `Order #${displayCode} is active`,
+    description: () => 'Enjoy your rental period. Reach out if you need adjustments or assistance.',
+    actionLabel: 'Manage plan',
+    action: 'orders',
+  },
+  ORDER_NEAR_DUE: {
+    title: ({ displayCode }) => `Order #${displayCode} is almost due`,
+    description: () => 'Renew, extend, or prepare your devices for return before the due date.',
+    actionLabel: 'Renew now',
+    action: 'orders',
+  },
+};
+
+const buildNotificationFromOrder = (
+  order: RentalOrderResponse,
+  contractsMap: Map<number, ContractResponse>,
+  fallbackCustomerId: number | null,
+): OrderStatusNotification | null => {
+  const orderId = normalizeOrderId(order.orderId) ?? normalizeOrderId((order as Record<string, unknown>).id);
+
+  if (!orderId) {
+    return null;
+  }
+
+  const status = normalizeOrderStatus(order.orderStatus);
+
+  if (!status) {
+    return null;
+  }
+
+  const contentMeta = statusContentMeta[status];
+
+  if (!contentMeta) {
+    return null;
+  }
+
+  const displayCode = order.orderId ?? orderId;
+  const hasContract = contractsMap.has(orderId);
+  const timeline = order as RentalOrderResponse & { updatedAt?: string | null };
+  const title = contentMeta.title({ displayCode });
+  const description = contentMeta.description({ hasContract });
+  const createdAt = timeline.updatedAt ?? order.createdAt ?? null;
+  const key = `${orderId}-${status}`;
+  const notificationId = generateNotificationId(orderId, status);
+
+  return {
+    key,
+    orderId,
+    notificationId,
+    customerId: Number(order.customerId ?? fallbackCustomerId ?? 0),
+    title,
+    message: description,
+    type: status,
+    read: false,
+    createdAt,
+    actionLabel: contentMeta.actionLabel,
+    action: contentMeta.action,
+  };
+};
+
+const shouldRefreshContracts = (status: NotificationType | '') => status === 'ORDER_PROCESSING';
+
+const sortByCreatedAtDesc = (
+  left: { createdAt: string | null },
+  right: { createdAt: string | null },
+) => {
+  const leftTime = left.createdAt ? Date.parse(left.createdAt) : 0;
+  const rightTime = right.createdAt ? Date.parse(right.createdAt) : 0;
+  return rightTime - leftTime;
+};
+
 const formatTimestamp = (value: string | null) => {
   if (!value) {
     return 'Just now';
@@ -136,7 +353,7 @@ export default function NotificationsScreen() {
   const { isSignedIn, isHydrating, user, session } = useAuth();
   const customerId = user?.customerId ?? null;
 
-  const [notifications, setNotifications] = useState<CustomerNotification[]>([]);
+  const [notifications, setNotifications] = useState<OrderStatusNotification[]>([]);
   const [isInitialLoading, setIsInitialLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [isMarkingAll, setIsMarkingAll] = useState(false);
@@ -147,54 +364,148 @@ export default function NotificationsScreen() {
   const subscriptionIdRef = useRef<string | null>(null);
   const stompConnectedRef = useRef(false);
   const reconnectHandleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollingHandleRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const contractsMapRef = useRef<Map<number, ContractResponse>>(new Map<number, ContractResponse>());
 
   const hasNotifications = notifications.length > 0;
   const markAllDisabled = !hasNotifications || isMarkingAll;
 
+  const replaceNotifications = useCallback((items: OrderStatusNotification[]) => {
+    setNotifications((prev) => {
+      const prevReadMap = new Map(prev.map((item) => [item.key, item.read]));
+      return items
+        .map((item) => ({
+          ...item,
+          read: prevReadMap.get(item.key) ?? item.read ?? false,
+        }))
+        .sort(sortByCreatedAtDesc)
+        .slice(0, 30);
+    });
+  }, []);
+
+  const upsertNotifications = useCallback((items: OrderStatusNotification[]) => {
+    if (!items || items.length === 0) {
+      return;
+    }
+
+    setNotifications((prev) => {
+      const map = new Map(prev.map((item) => [item.key, item]));
+      items.forEach((item) => {
+        if (!item) {
+          return;
+        }
+        const existing = map.get(item.key);
+        map.set(item.key, {
+          ...item,
+          read: existing?.read ?? item.read ?? false,
+        });
+      });
+
+      return Array.from(map.values()).sort(sortByCreatedAtDesc).slice(0, 30);
+    });
+  }, []);
+
+  const refreshContractsMap = useCallback(async () => {
+    if (!session?.accessToken) {
+      return contractsMapRef.current;
+    }
+
+    try {
+      const contracts = await fetchContracts(session);
+      const map = buildContractsMap(Array.isArray(contracts) ? contracts : []);
+      contractsMapRef.current = map;
+      return map;
+    } catch (error) {
+      console.warn('[Notifications] Failed to load contracts', error);
+      return contractsMapRef.current;
+    }
+  }, [session]);
+
+  const loadOrdersAsNotifications = useCallback(
+    async ({ silent = false }: { silent?: boolean } = {}) => {
+      if (!customerId || !session?.accessToken) {
+        setIsInitialLoading(false);
+        return;
+      }
+
+      if (!silent) {
+        setIsInitialLoading(true);
+      }
+
+      try {
+        const [orders, contractsMap] = await Promise.all([
+          fetchRentalOrders(session),
+          refreshContractsMap(),
+        ]);
+        const map = contractsMap ?? contractsMapRef.current;
+        const mapped = (orders || [])
+          .map((order) => buildNotificationFromOrder(order, map, customerId))
+          .filter((item): item is OrderStatusNotification => Boolean(item));
+
+        replaceNotifications(mapped);
+      } catch (error) {
+        if (!silent) {
+          const message = error instanceof Error ? error.message : 'Unable to load notifications.';
+          Alert.alert('Notifications', message);
+        } else {
+          console.warn('[Notifications] Failed to refresh notifications', error);
+        }
+      } finally {
+        if (!silent) {
+          setIsInitialLoading(false);
+        }
+      }
+    },
+    [customerId, session, refreshContractsMap, replaceNotifications],
+  );
+
   const handleRefresh = useCallback(() => {
-    if (!customerId || !isSignedIn) {
+    if (!customerId || !isSignedIn || !session?.accessToken) {
       return;
     }
 
     setRefreshing(true);
-    setNotifications([]);
-    setIsInitialLoading(true);
     setReconnectNonce((prev) => prev + 1);
 
-    setTimeout(() => {
-      setRefreshing(false);
-    }, 600);
-  }, [customerId, isSignedIn]);
+    void (async () => {
+      try {
+        await loadOrdersAsNotifications({ silent: true });
+      } finally {
+        setRefreshing(false);
+      }
+    })();
+  }, [customerId, isSignedIn, session, loadOrdersAsNotifications]);
 
-  const markNotificationLocally = useCallback((notificationId: number) => {
+  const markNotificationLocally = useCallback((notificationKey: string) => {
     setNotifications((prev) =>
-      prev.map((item) => (item.notificationId === notificationId ? { ...item, read: true } : item)),
+      prev.map((item) => (item.key === notificationKey ? { ...item, read: true } : item)),
     );
   }, []);
 
   const handleCardPress = useCallback(
-    (notification: CustomerNotification) => {
+    (notification: OrderStatusNotification) => {
       if (notification.read) {
         return;
       }
 
-      markNotificationLocally(notification.notificationId);
+      markNotificationLocally(notification.key);
     },
     [markNotificationLocally],
   );
 
   const handleActionPress = useCallback(
-    (notification: CustomerNotification) => {
+    (notification: OrderStatusNotification) => {
       const meta = resolveNotificationMeta(notification.type);
+      const actionTarget = notification.action ?? meta.action;
 
-      markNotificationLocally(notification.notificationId);
+      markNotificationLocally(notification.key);
 
-      if (meta.action === 'orders') {
+      if (actionTarget === 'orders') {
         router.push('/(app)/(tabs)/orders');
         return;
       }
 
-      if (meta.action === 'chat') {
+      if (actionTarget === 'chat') {
         router.push('/(app)/chat');
         return;
       }
@@ -235,7 +546,37 @@ export default function NotificationsScreen() {
   }, []);
 
   useEffect(() => {
-    if (!customerId || !isSignedIn) {
+    if (!customerId || !isSignedIn || !session?.accessToken) {
+      setNotifications([]);
+      setIsInitialLoading(false);
+      contractsMapRef.current = new Map<number, ContractResponse>();
+      if (pollingHandleRef.current) {
+        clearInterval(pollingHandleRef.current);
+        pollingHandleRef.current = null;
+      }
+      return;
+    }
+
+    loadOrdersAsNotifications();
+
+    if (pollingHandleRef.current) {
+      clearInterval(pollingHandleRef.current);
+    }
+
+    pollingHandleRef.current = setInterval(() => {
+      loadOrdersAsNotifications({ silent: true });
+    }, 5000);
+
+    return () => {
+      if (pollingHandleRef.current) {
+        clearInterval(pollingHandleRef.current);
+        pollingHandleRef.current = null;
+      }
+    };
+  }, [customerId, isSignedIn, session, loadOrdersAsNotifications]);
+
+  useEffect(() => {
+    if (!customerId || !isSignedIn || !session?.accessToken) {
       setNotifications([]);
       setRealtimeStatus('idle');
       setRealtimeError(null);
@@ -244,7 +585,6 @@ export default function NotificationsScreen() {
     }
 
     let isMounted = true;
-    setIsInitialLoading(true);
 
     const connect = () => {
       if (!isMounted) {
@@ -308,11 +648,11 @@ export default function NotificationsScreen() {
           sendFrame('CONNECT', STOMP_CONNECT_HEADERS);
         };
 
-        socket.onmessage = (event) => {
+        socket.onmessage = async (event) => {
           const payload = typeof event.data === 'string' ? event.data : String(event.data ?? '');
           const frames = parseStompFrames(payload);
 
-          frames.forEach((frame) => {
+          for (const frame of frames) {
             switch (frame.command) {
               case 'CONNECTED': {
                 if (!isMounted) {
@@ -337,31 +677,31 @@ export default function NotificationsScreen() {
                 }
 
                 try {
-                  const parsed = JSON.parse(frame.body);
-                  const normalized = normalizeNotification(parsed);
+                  const parsed = JSON.parse(frame.body) as Record<string, unknown>;
+                  const { orderId, status } = deriveOrderInfo(parsed);
 
-                  if (normalized) {
-                    setNotifications((prev) => {
-                      const existingIndex = prev.findIndex(
-                        (item) => item.notificationId === normalized.notificationId,
-                      );
+                  if (!orderId || !status || !session?.accessToken) {
+                    break;
+                  }
 
-                      if (existingIndex >= 0) {
-                        const next = [...prev];
-                        next[existingIndex] = { ...prev[existingIndex], ...normalized };
-                        return next.sort((a, b) => {
-                          const left = a.createdAt ? Date.parse(a.createdAt) : 0;
-                          const right = b.createdAt ? Date.parse(b.createdAt) : 0;
-                          return right - left;
-                        });
-                      }
+                  const order = await fetchRentalOrderById(session, orderId);
 
-                      return [normalized, ...prev].sort((a, b) => {
-                        const left = a.createdAt ? Date.parse(a.createdAt) : 0;
-                        const right = b.createdAt ? Date.parse(b.createdAt) : 0;
-                        return right - left;
-                      });
-                    });
+                  if (!order) {
+                    break;
+                  }
+
+                  if (shouldRefreshContracts(status)) {
+                    await refreshContractsMap();
+                  }
+
+                  const nextNotification = buildNotificationFromOrder(
+                    { ...order, orderStatus: status } as RentalOrderResponse,
+                    contractsMapRef.current,
+                    customerId,
+                  );
+
+                  if (nextNotification) {
+                    upsertNotifications([nextNotification]);
                   }
                 } catch (error) {
                   console.warn('[Notifications] Failed to parse realtime payload', error);
@@ -376,7 +716,7 @@ export default function NotificationsScreen() {
               default:
                 break;
             }
-          });
+          }
         };
 
         socket.onerror = (event) => {
@@ -435,7 +775,7 @@ export default function NotificationsScreen() {
       stompConnectedRef.current = false;
       subscriptionIdRef.current = null;
     };
-  }, [customerId, isSignedIn, reconnectNonce, session]);
+  }, [customerId, isSignedIn, reconnectNonce, session, refreshContractsMap, upsertNotifications]);
 
   const renderEmptyComponent = useCallback(() => {
     if (isInitialLoading || realtimeStatus === 'connecting') {
@@ -468,8 +808,9 @@ export default function NotificationsScreen() {
   const renderListFooter = useMemo(() => <View style={styles.footerSpacer} />, []);
 
   const renderNotification = useCallback(
-    ({ item }: { item: CustomerNotification }) => {
+    ({ item }: { item: OrderStatusNotification }) => {
       const meta = resolveNotificationMeta(item.type);
+      const actionLabel = item.actionLabel ?? meta.actionLabel;
 
       return (
         <TouchableOpacity
@@ -496,9 +837,9 @@ export default function NotificationsScreen() {
                 <Text style={styles.timestamp}>{formatTimestamp(item.createdAt)}</Text>
                 {!item.read ? <View style={styles.unreadDot} /> : null}
               </View>
-              {meta.actionLabel ? (
+              {actionLabel ? (
                 <TouchableOpacity style={styles.actionButton} onPress={() => handleActionPress(item)}>
-                  <Text style={styles.actionLabel}>{meta.actionLabel}</Text>
+                  <Text style={styles.actionLabel}>{actionLabel}</Text>
                 </TouchableOpacity>
               ) : null}
             </View>
@@ -575,7 +916,7 @@ export default function NotificationsScreen() {
 
         <FlatList
           data={notifications}
-          keyExtractor={(item) => String(item.notificationId)}
+          keyExtractor={(item) => item.key}
           contentContainerStyle={styles.listContent}
           renderItem={renderNotification}
           refreshControl={
