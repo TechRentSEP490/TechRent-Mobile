@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { ActivityIndicator, Modal, Pressable, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, Image, Modal, Pressable, ScrollView, Text, View } from 'react-native';
 
 import type { ContractResponse } from '@/services/contracts';
 import type { RentalOrderResponse } from '@/services/rental-orders';
@@ -11,13 +11,14 @@ import {
   formatRentalPeriod,
   toTitleCase,
 } from '@/utils/order-formatters';
+import type { DeviceLookupEntry } from '@/types/orders';
 
 export type OrderDetailsModalProps = {
   visible: boolean;
   loading: boolean;
   error: string | null;
   order: RentalOrderResponse | null;
-  deviceNameLookup: Record<string, string>;
+  deviceDetailsLookup: Record<string, DeviceLookupEntry>;
   contract: ContractResponse | null;
   isDownloadingContract: boolean;
   onClose: () => void;
@@ -30,7 +31,7 @@ export default function OrderDetailsModal({
   loading,
   error,
   order,
-  deviceNameLookup,
+  deviceDetailsLookup,
   contract,
   isDownloadingContract,
   onClose,
@@ -127,18 +128,35 @@ export default function OrderDetailsModal({
                 <Text style={styles.detailSectionHeading}>Items</Text>
                 {order.orderDetails && order.orderDetails.length > 0 ? (
                   order.orderDetails.map((item) => {
-                    const deviceName =
-                      deviceNameLookup[String(item.deviceModelId)] ?? `Device Model ${item.deviceModelId}`;
+                    const details = deviceDetailsLookup[String(item.deviceModelId)];
+                    const deviceName = details?.name ?? `Device Model ${item.deviceModelId}`;
+                    const imageSource =
+                      details?.imageURL && details.imageURL.trim().length > 0
+                        ? { uri: details.imageURL }
+                        : null;
                     return (
                       <View key={item.orderDetailId} style={styles.detailItemRow}>
-                        <View style={styles.detailItemHeader}>
-                          <Text style={styles.detailItemName}>{deviceName}</Text>
-                          <Text style={styles.detailItemQty}>×{item.quantity}</Text>
+                        <View style={styles.detailItemContent}>
+                          {imageSource ? (
+                            <Image source={imageSource} style={styles.detailItemImage} />
+                          ) : (
+                            <View style={styles.detailItemImageFallback}>
+                              <Text style={styles.detailItemImageFallbackLabel}>IMG</Text>
+                            </View>
+                          )}
+                          <View style={styles.detailItemInfo}>
+                            <View style={styles.detailItemHeader}>
+                              <Text style={styles.detailItemName}>{deviceName}</Text>
+                              <Text style={styles.detailItemQty}>×{item.quantity}</Text>
+                            </View>
+                            <Text style={styles.detailItemMeta}>
+                              Price / Day: {formatCurrency(item.pricePerDay)}
+                            </Text>
+                            <Text style={styles.detailItemMeta}>
+                              Deposit / Unit: {formatCurrency(item.depositAmountPerUnit)}
+                            </Text>
+                          </View>
                         </View>
-                        <Text style={styles.detailItemMeta}>Price / Day: {formatCurrency(item.pricePerDay)}</Text>
-                        <Text style={styles.detailItemMeta}>
-                          Deposit / Unit: {formatCurrency(item.depositAmountPerUnit)}
-                        </Text>
                       </View>
                     );
                   })

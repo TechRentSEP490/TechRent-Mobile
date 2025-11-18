@@ -98,6 +98,12 @@ const styles = StyleSheet.create({
   },
   cardLeading: {
     marginRight: 16,
+    width: 112,
+  },
+  thumbnailStack: {
+    height: 64,
+    justifyContent: 'center',
+    width: 112,
   },
   thumbnail: {
     width: 64,
@@ -106,6 +112,33 @@ const styles = StyleSheet.create({
     backgroundColor: '#e5e7eb',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  thumbnailImage: {
+    width: 56,
+    height: 56,
+    borderRadius: 14,
+    position: 'absolute',
+    top: 4,
+    borderWidth: 2,
+    borderColor: '#ffffff',
+    backgroundColor: '#e5e7eb',
+  },
+  thumbnailMore: {
+    width: 56,
+    height: 56,
+    borderRadius: 14,
+    backgroundColor: '#111827',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'absolute',
+    top: 4,
+    borderWidth: 2,
+    borderColor: '#ffffff',
+  },
+  thumbnailMoreLabel: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '600',
   },
   thumbnailText: {
     fontWeight: '700',
@@ -812,6 +845,34 @@ const styles = StyleSheet.create({
     padding: 12,
     backgroundColor: '#f9fafb',
     marginBottom: 12,
+    gap: 8,
+  },
+  detailItemContent: {
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'center',
+  },
+  detailItemImage: {
+    width: 60,
+    height: 60,
+    borderRadius: 14,
+    backgroundColor: '#e5e7eb',
+  },
+  detailItemImageFallback: {
+    width: 60,
+    height: 60,
+    borderRadius: 14,
+    backgroundColor: '#e5e7eb',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  detailItemImageFallbackLabel: {
+    fontWeight: '700',
+    color: '#6b7280',
+    fontSize: 12,
+  },
+  detailItemInfo: {
+    flex: 1,
     gap: 4,
   },
   detailItemHeader: {

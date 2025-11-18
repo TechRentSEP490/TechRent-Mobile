@@ -11,11 +11,17 @@ export type OrderActionType =
   | 'rentAgain'
   | 'completeKyc';
 
+export type DeviceLookupEntry = {
+  name: string;
+  imageURL?: string | null;
+};
+
 export type OrderCard = {
   orderId: number;
   id: string;
   title: string;
   deviceSummary: string;
+  deviceImageUrls: string[];
   rentalPeriod: string;
   totalAmount: string;
   totalPrice: number;
