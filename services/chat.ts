@@ -281,42 +281,49 @@ export async function sendChatMessage(
   return normalized;
 }
 
-const resolveWsBaseUrl = () => {
+const normalizeWsBase = (value: string) => value.replace(/\/$/, '');
+
+const resolveWsBaseCandidates = (): string[] => {
+  const candidates: string[] = [];
   const explicit = process.env.EXPO_PUBLIC_CHAT_WS_URL;
 
   if (explicit && explicit.length > 0) {
-    return explicit.replace(/\/$/, '');
+    candidates.push(normalizeWsBase(explicit));
   }
 
-  const apiBase = ensureApiUrl();
-  return apiBase
-    .replace(/^http:\/\//, 'ws://')
-    .replace(/^https:\/\//, 'wss://')
-    .replace(/\/$/, '')
-    .concat('/chat/ws');
+  try {
+    const apiBase = ensureApiUrl();
+    const converted = normalizeWsBase(
+      apiBase.replace(/^http:\/\//, 'ws://').replace(/^https:\/\//, 'wss://'),
+    );
+
+    candidates.push(`${converted}/chat/ws`);
+
+    if (converted.endsWith('/api')) {
+      candidates.push(`${converted.slice(0, -'/api'.length)}/chat/ws`);
+    }
+  } catch (error) {
+    console.warn('Unable to determine API base URL for chat websocket fallback', error);
+  }
+
+  return Array.from(new Set(candidates));
 };
 
-export const buildChatWebSocketUrl = ({
-  conversationId,
-  senderId,
-  senderType = 'CUSTOMER',
-  session,
-}: {
-  conversationId: number;
-  senderId: number;
-  senderType?: SenderType;
-  session: SessionCredentials;
-}) => {
-  if (!session?.accessToken) {
-    throw new Error('An authenticated session is required to connect to chat.');
+const ensureWsBaseCandidates = () => {
+  const candidates = resolveWsBaseCandidates();
+
+  if (candidates.length === 0) {
+    throw new Error('No websocket endpoint configured. Please set EXPO_PUBLIC_CHAT_WS_URL.');
   }
 
-  if (!Number.isFinite(conversationId) || conversationId <= 0) {
-    throw new Error('A valid conversation identifier is required to connect to chat.');
-  }
+  return candidates;
+};
 
-  const baseUrl = resolveWsBaseUrl();
-  const url = new URL(baseUrl);
+const appendConnectionParams = (
+  urlString: string,
+  { conversationId, senderId, senderType, session }: { conversationId: number; senderId: number; senderType: SenderType; session: SessionCredentials },
+) => {
+  const url = new URL(urlString);
 
   url.searchParams.set('conversationId', String(conversationId));
   url.searchParams.set('senderId', String(senderId));
@@ -328,6 +335,41 @@ export const buildChatWebSocketUrl = ({
 
   return url.toString();
 };
+
+export const buildChatWebSocketUrls = ({
+  conversationId,
+  senderId,
+  senderType = 'CUSTOMER',
+  session,
+}: {
+  conversationId: number;
+  senderId: number;
+  senderType?: SenderType;
+  session: SessionCredentials;
+}): string[] => {
+  if (!session?.accessToken) {
+    throw new Error('An authenticated session is required to connect to chat.');
+  }
+
+  if (!Number.isFinite(conversationId) || conversationId <= 0) {
+    throw new Error('A valid conversation identifier is required to connect to chat.');
+  }
+
+  if (!Number.isFinite(senderId) || senderId <= 0) {
+    throw new Error('A valid sender identifier is required to connect to chat.');
+  }
+
+  const bases = ensureWsBaseCandidates();
+
+  return bases.map((base) => appendConnectionParams(base, { conversationId, senderId, senderType, session }));
+};
+
+export const buildChatWebSocketUrl = (params: {
+  conversationId: number;
+  senderId: number;
+  senderType?: SenderType;
+  session: SessionCredentials;
+}) => buildChatWebSocketUrls(params)[0];
 
 export const buildChatWebSocketHeaders = (session: SessionCredentials) => {
   if (!session?.accessToken) {
