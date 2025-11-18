@@ -16,7 +16,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AuthSession } from '@/contexts/AuthContext';
 import {
   buildChatWebSocketHeaders,
-  buildChatWebSocketUrl,
+  buildChatWebSocketUrls,
   chatUtils,
   ensureCustomerConversation,
   fetchConversationMessages,
@@ -93,6 +93,8 @@ export function CustomerSupportChat({ customerId, customerName, ensureSession, s
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const hasConnectedRef = useRef(false);
+  const wsCandidateUrlsRef = useRef<string[]>([]);
+  const wsCandidateIndexRef = useRef(0);
 
   const conversationId = conversation?.conversationId ?? null;
 
@@ -309,6 +311,8 @@ export function CustomerSupportChat({ customerId, customerName, ensureSession, s
 
     reconnectAttemptsRef.current = 0;
     hasConnectedRef.current = false;
+    wsCandidateUrlsRef.current = [];
+    wsCandidateIndexRef.current = 0;
 
     let isMounted = true;
     let reconnectHandle: ReturnType<typeof setTimeout> | null = null;
@@ -324,7 +328,34 @@ export function CustomerSupportChat({ customerId, customerName, ensureSession, s
         return;
       }
 
+      let candidates: string[] = [];
+
+      try {
+        candidates = buildChatWebSocketUrls({
+          conversationId,
+          senderId: customerId,
+          senderType: 'CUSTOMER',
+          session: activeSession,
+        });
+      } catch (error) {
+        console.error('[Chat] Failed to build websocket URLs', error);
+        const message = error instanceof Error ? error.message : 'Unable to connect to live chat.';
+        setRealtimeStatus('disconnected');
+        setRealtimeError(message);
+        return;
+      }
+
+      if (candidates.length === 0) {
+        setRealtimeStatus('disconnected');
+        setRealtimeError('No websocket endpoints configured.');
+        return;
+      }
+
+      wsCandidateUrlsRef.current = candidates;
+      wsCandidateIndexRef.current = 0;
+
       const attemptNumber = reconnectAttemptsRef.current + 1;
+      reconnectAttemptsRef.current = attemptNumber;
       console.log('[Chat] Attempting websocket connection', {
         conversationId,
         attempt: attemptNumber,
@@ -332,107 +363,154 @@ export function CustomerSupportChat({ customerId, customerName, ensureSession, s
       setRealtimeStatus('connecting');
       setRealtimeError(null);
 
-      let socket: WebSocket | null = null;
-
-      try {
-        const wsUrl = buildChatWebSocketUrl({
-          conversationId,
-          senderId: customerId,
-          senderType: 'CUSTOMER',
-          session: activeSession,
-        });
-
-        const headers = buildChatWebSocketHeaders(activeSession);
-        const socketOptions = headers ? ({ headers } as any) : undefined;
-
-        socket = socketOptions ? new WebSocket(wsUrl, undefined, socketOptions) : new WebSocket(wsUrl);
-        reconnectAttemptsRef.current += 1;
-        console.log('[Chat] Websocket initiated', {
-          conversationId,
-          hasHeaders: Boolean(headers),
-        });
-      } catch (error) {
-        console.error('[Chat] Failed to create websocket instance', error);
-        const message = error instanceof Error ? error.message : 'Unable to connect to live chat.';
-        setRealtimeStatus('disconnected');
-        setRealtimeError(message);
-        return;
-      }
-
-      wsRef.current = socket;
-
-      socket.onopen = () => {
+      const startCandidate = (candidateIndex: number) => {
         if (!isMounted) {
           return;
         }
 
-        hasConnectedRef.current = true;
-        reconnectAttemptsRef.current = 0;
-        console.log('[Chat] Websocket connected', {
-          conversationId,
-        });
-        setRealtimeStatus('connected');
-        setRealtimeError(null);
-      };
+        const urls = wsCandidateUrlsRef.current;
 
-      socket.onmessage = (event) => {
-        if (!event?.data) {
+        if (candidateIndex >= urls.length) {
+          console.error('[Chat] Exhausted websocket candidates', {
+            conversationId,
+          });
+          setRealtimeStatus('disconnected');
+          setRealtimeError('Unable to connect to live chat. Please try again later.');
           return;
         }
+
+        wsCandidateIndexRef.current = candidateIndex;
+        const wsUrl = urls[candidateIndex];
+        let socket: WebSocket | null = null;
 
         try {
-          const parsed = JSON.parse(event.data as string);
-          const upsertable = chatUtils.normalizeMessage(parsed as ChatMessage);
+          const headers = buildChatWebSocketHeaders(activeSession);
+          const socketOptions = headers ? ({ headers } as any) : undefined;
 
-          if (upsertable) {
-            upsertMessages([upsertable], { scrollToBottom: true });
-            console.log('[Chat] Websocket message received', {
-              messageId: upsertable.messageId,
-              senderType: upsertable.senderType,
-            });
-          }
+          socket = socketOptions ? new WebSocket(wsUrl, undefined, socketOptions) : new WebSocket(wsUrl);
+          console.log('[Chat] Websocket initiated', {
+            conversationId,
+            candidateIndex,
+            hasHeaders: Boolean(headers),
+            wsUrl,
+          });
         } catch (error) {
-          console.warn('Failed to parse chat socket message', error);
-        }
-      };
-
-      socket.onerror = (event) => {
-        if (!isMounted) {
+          console.error('[Chat] Failed to create websocket instance', error);
+          const nextIndex = candidateIndex + 1;
+          if (nextIndex < urls.length) {
+            console.warn('[Chat] Trying fallback websocket endpoint after constructor failure', {
+              conversationId,
+              nextCandidateIndex: nextIndex,
+            });
+            startCandidate(nextIndex);
+            return;
+          }
+          const message = error instanceof Error ? error.message : 'Unable to connect to live chat.';
+          setRealtimeStatus('disconnected');
+          setRealtimeError(message);
           return;
         }
 
-        console.error('[Chat] Websocket error event', event);
-        setRealtimeStatus('disconnected');
-        setRealtimeError('Realtime connection interrupted. Reconnecting...');
+        wsRef.current = socket;
+
+        socket.onopen = () => {
+          if (!isMounted) {
+            return;
+          }
+
+          hasConnectedRef.current = true;
+          reconnectAttemptsRef.current = 0;
+          console.log('[Chat] Websocket connected', {
+            conversationId,
+            candidateIndex,
+          });
+          setRealtimeStatus('connected');
+          setRealtimeError(null);
+        };
+
+        socket.onmessage = (event) => {
+          if (!event?.data) {
+            return;
+          }
+
+          try {
+            const parsed = JSON.parse(event.data as string);
+            const upsertable = chatUtils.normalizeMessage(parsed as ChatMessage);
+
+            if (upsertable) {
+              upsertMessages([upsertable], { scrollToBottom: true });
+              console.log('[Chat] Websocket message received', {
+                messageId: upsertable.messageId,
+                senderType: upsertable.senderType,
+              });
+            }
+          } catch (error) {
+            console.warn('Failed to parse chat socket message', error);
+          }
+        };
+
+        socket.onerror = (event) => {
+          if (!isMounted) {
+            return;
+          }
+
+          console.error('[Chat] Websocket error event', event);
+          if (hasConnectedRef.current) {
+            setRealtimeStatus('disconnected');
+            setRealtimeError('Realtime connection interrupted. Reconnecting...');
+          }
+        };
+
+        socket.onclose = (event) => {
+          if (!isMounted) {
+            return;
+          }
+
+          const wasConnected = hasConnectedRef.current;
+          wsRef.current = null;
+          console.warn('[Chat] Websocket closed', {
+            code: event?.code,
+            reason: event?.reason,
+            wasClean: event?.wasClean,
+            candidateIndex,
+          });
+
+          if (!wasConnected) {
+            const nextIndex = candidateIndex + 1;
+            if (nextIndex < wsCandidateUrlsRef.current.length) {
+              console.warn('[Chat] Trying fallback websocket endpoint after early close', {
+                conversationId,
+                nextCandidateIndex: nextIndex,
+              });
+              startCandidate(nextIndex);
+              return;
+            }
+          }
+
+          setRealtimeStatus('disconnected');
+
+          if (!wasConnected) {
+            const reachedLimit = reconnectAttemptsRef.current >= MAX_INITIAL_RECONNECT_ATTEMPTS;
+
+            if (reachedLimit) {
+              setRealtimeError('Unable to connect to live chat. Please check your network and tap retry.');
+              return;
+            }
+
+            const nextDelay = Math.min(RECONNECT_DELAY_MS * reconnectAttemptsRef.current, 10000);
+            console.log('[Chat] Scheduling websocket reconnect', {
+              conversationId,
+              delayMs: nextDelay,
+            });
+            reconnectHandle = setTimeout(connect, nextDelay);
+            return;
+          }
+
+          reconnectHandle = setTimeout(connect, RECONNECT_DELAY_MS);
+        };
       };
 
-      socket.onclose = (event) => {
-        if (!isMounted) {
-          return;
-        }
-
-        wsRef.current = null;
-        console.warn('[Chat] Websocket closed', {
-          code: event?.code,
-          reason: event?.reason,
-          wasClean: event?.wasClean,
-        });
-        setRealtimeStatus('disconnected');
-
-        const reachedLimit =
-          !hasConnectedRef.current && reconnectAttemptsRef.current >= MAX_INITIAL_RECONNECT_ATTEMPTS;
-
-        if (reachedLimit) {
-          setRealtimeError('Unable to connect to live chat. Please check your network and tap retry.');
-          return;
-        }
-
-        console.log('[Chat] Scheduling websocket reconnect', {
-          conversationId,
-          delayMs: RECONNECT_DELAY_MS,
-        });
-        reconnectHandle = setTimeout(connect, RECONNECT_DELAY_MS);
-      };
+      startCandidate(0);
     };
 
     connect();
@@ -446,6 +524,7 @@ export function CustomerSupportChat({ customerId, customerName, ensureSession, s
 
       wsRef.current?.close();
       wsRef.current = null;
+      wsCandidateUrlsRef.current = [];
     };
   }, [activeSession, conversationId, customerId, reconnectNonce, upsertMessages]);
 
