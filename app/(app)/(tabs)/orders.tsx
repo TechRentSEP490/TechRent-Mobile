@@ -1,8 +1,5 @@
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { cacheDirectory, copyAsync, documentDirectory } from 'expo-file-system';
-import { printToFileAsync } from 'expo-print';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import * as Sharing from 'expo-sharing';
 import React, {
   useCallback,
   useEffect,
@@ -14,12 +11,10 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Image,
   Linking,
-  Modal,
   NativeSyntheticEvent,
-  Platform,
   Pressable,
-  ScrollView,
   Text,
   TextInput,
   TextInputKeyPressEventData,
@@ -33,14 +28,14 @@ import type {
   WebViewHttpErrorEvent,
 } from 'react-native-webview/lib/WebViewTypes';
 
+import ContractPdfDownloader from '@/components/ContractPdfDownloader';
+import EmailEditorModal from '@/components/modals/EmailEditorModal';
+import OrderDetailsModal from '@/components/modals/OrderDetailsModal';
+import OrderStepsModal from '@/components/modals/OrderStepsModal';
+import RentalOrderStepsContent from '@/components/modals/RentalOrderStepsContent';
+import PaymentModal from '@/components/modals/PaymentModal';
 import { useAuth } from '@/contexts/AuthContext';
-import {
-  fetchContractById,
-  fetchContracts,
-  sendContractPin,
-  signContract,
-  type ContractResponse,
-} from '@/services/contracts';
+import { fetchContracts, sendContractPin, signContract, type ContractResponse } from '@/services/contracts';
 import { fetchDeviceModelById } from '@/services/device-models';
 import {
   fetchRentalOrderById,
@@ -53,39 +48,14 @@ import {
   type PaymentSession,
 } from '@/services/payments';
 import styles from '@/style/orders.styles';
-
-type OrderStatusFilter = 'All' | 'Pending' | 'Delivered' | 'In Use' | 'Completed';
-type OrderStatus = Exclude<OrderStatusFilter, 'All'>;
-type OrderActionType =
-  | 'continueProcess'
-  | 'extendRental'
-  | 'confirmReceipt'
-  | 'cancelOrder'
-  | 'rentAgain'
-  | 'completeKyc';
-
-type OrderCard = {
-  orderId: number;
-  id: string;
-  title: string;
-  deviceSummary: string;
-  rentalPeriod: string;
-  totalAmount: string;
-  totalPrice: number;
-  totalPriceLabel: string;
-  depositAmount: number;
-  depositLabel: string;
-  totalDue: number;
-  statusFilter: OrderStatus;
-  statusLabel: string;
-  statusColor: string;
-  statusBackground: string;
-  action?: {
-    label: string;
-    type: OrderActionType;
-  };
-  contract?: ContractResponse | null;
-};
+import { formatCurrency, formatRentalPeriod, toTitleCase } from '@/utils/order-formatters';
+import type {
+  DeviceLookupEntry,
+  OrderActionType,
+  OrderCard,
+  OrderStatus,
+  OrderStatusFilter,
+} from '@/types/orders';
 
 type ApiErrorWithStatus = Error & { status?: number };
 
@@ -149,14 +119,6 @@ const PAYMENT_FAILURE_URL = resolvePaymentUrl(
   'https://example.com/payments/failure',
 );
 
-const toTitleCase = (value: string) =>
-  value
-    .toLowerCase()
-    .split(/[_\s]+/)
-    .filter(Boolean)
-    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
-    .join(' ');
-
 const mapStatusToMeta = (status: string | null | undefined): StatusMeta => {
   const normalized = (status ?? '').toUpperCase();
   let filter: OrderStatus = 'Pending';
@@ -219,442 +181,6 @@ const mapStatusToMeta = (status: string | null | undefined): StatusMeta => {
   };
 };
 
-const formatCurrency = (value: number): string => {
-  try {
-    return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(value);
-  } catch {
-    return `${Number.isFinite(value) ? Math.round(value).toLocaleString('vi-VN') : '0'} ₫`;
-  }
-};
-
-const formatRentalPeriod = (startDateIso: string, endDateIso: string): string => {
-  const startDate = startDateIso ? new Date(startDateIso) : null;
-  const endDate = endDateIso ? new Date(endDateIso) : null;
-
-  if (!startDate || Number.isNaN(startDate.getTime())) {
-    return '—';
-  }
-
-  const hasValidEnd = Boolean(endDate && !Number.isNaN(endDate.getTime()));
-
-  try {
-    const sameYear = hasValidEnd && endDate ? startDate.getFullYear() === endDate.getFullYear() : false;
-    const startFormatter = new Intl.DateTimeFormat('vi-VN', {
-      day: '2-digit',
-      month: 'short',
-      ...(sameYear ? {} : { year: 'numeric' }),
-    });
-    const startLabel = startFormatter.format(startDate);
-
-    if (hasValidEnd && endDate) {
-      const endFormatter = new Intl.DateTimeFormat('vi-VN', {
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric',
-      });
-      const endLabel = endFormatter.format(endDate);
-      return `${startLabel} - ${endLabel}`;
-    }
-
-    return `Starting ${startLabel}`;
-  } catch {
-    const startLabel = startDate.toISOString().slice(0, 10);
-    if (hasValidEnd && endDate) {
-      const endLabel = endDate.toISOString().slice(0, 10);
-      return `${startLabel} - ${endLabel}`;
-    }
-    return `Starting ${startLabel}`;
-  }
-};
-
-const formatDateTime = (iso: string | null | undefined): string => {
-  if (!iso) {
-    return '—';
-  }
-
-  const date = new Date(iso);
-
-  if (Number.isNaN(date.getTime())) {
-    return iso;
-  }
-
-  try {
-    return new Intl.DateTimeFormat('vi-VN', {
-      dateStyle: 'medium',
-      timeStyle: 'short',
-    }).format(date);
-  } catch {
-    return date.toISOString().replace('T', ' ').slice(0, 16);
-  }
-};
-
-const normalizeHtmlContent = (value: string | null | undefined): string => {
-  if (!value || value.trim().length === 0) {
-    return '';
-  }
-
-  const withLineBreaks = value
-    .replace(/<\s*br\s*\/?\s*>/gi, '\n')
-    .replace(/<\s*\/p\s*>/gi, '\n\n')
-    .replace(/<\s*li\s*>/gi, '• ')
-    .replace(/<\s*\/li\s*>/gi, '\n')
-    .replace(/<\s*\/h[1-6]\s*>/gi, '\n\n');
-
-  const withoutTags = withLineBreaks.replace(/<[^>]*>/g, '');
-
-  return withoutTags
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/[ \t]+/g, ' ')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-};
-
-const formatContractStatus = (status: string | null | undefined): string => {
-  if (!status || status.trim().length === 0) {
-    return 'Unknown';
-  }
-
-  return toTitleCase(status);
-};
-
-const escapeHtml = (value: string): string =>
-  value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-
-const sanitizeRichHtml = (value: string | null | undefined): string => {
-  if (!value) {
-    return '';
-  }
-
-  const trimmed = value.trim();
-
-  if (trimmed.length === 0) {
-    return '';
-  }
-
-  return trimmed
-    .replace(/<!DOCTYPE[^>]*>/gi, '')
-    .replace(/<\/?html[^>]*>/gi, '')
-    .replace(/<\/?head[^>]*>.*?<\/?head>/gis, '')
-    .replace(/<\/?body[^>]*>/gi, '')
-    .trim();
-};
-
-const buildContractPdfHtml = (
-  contract: ContractResponse,
-  contextLabel?: string,
-): string => {
-  const fallbackTitle = contextLabel ? `${contextLabel} Contract` : `Contract #${contract.contractId}`;
-  const contractTitle = contract.title && contract.title.trim().length > 0 ? contract.title.trim() : fallbackTitle;
-  const contractNumber =
-    contract.contractNumber && contract.contractNumber.trim().length > 0
-      ? contract.contractNumber.trim()
-      : contract.contractId
-        ? `#${contract.contractId}`
-        : '';
-  const contractStatusLabel = formatContractStatus(contract.status);
-  const totalAmountLabel =
-    typeof contract.totalAmount === 'number' ? formatCurrency(contract.totalAmount) : undefined;
-  const depositAmountLabel =
-    typeof contract.depositAmount === 'number' ? formatCurrency(contract.depositAmount) : undefined;
-
-  const metadata: { label: string; value: string }[] = [];
-
-  if (contractNumber) {
-    metadata.push({ label: 'Contract Number', value: contractNumber });
-  }
-
-  if (contractStatusLabel && contractStatusLabel !== 'Unknown') {
-    metadata.push({ label: 'Status', value: contractStatusLabel });
-  }
-
-  if (contract.startDate) {
-    metadata.push({ label: 'Start Date', value: formatDateTime(contract.startDate) });
-  }
-
-  if (contract.endDate) {
-    metadata.push({ label: 'End Date', value: formatDateTime(contract.endDate) });
-  }
-
-  if (contract.signedAt) {
-    metadata.push({ label: 'Signed At', value: formatDateTime(contract.signedAt) });
-  }
-
-  if (totalAmountLabel) {
-    metadata.push({ label: 'Total Amount', value: totalAmountLabel });
-  }
-
-  if (depositAmountLabel) {
-    metadata.push({ label: 'Deposit Amount', value: depositAmountLabel });
-  }
-
-  const sanitizedContent = sanitizeRichHtml(contract.contractContent);
-  const sanitizedTerms = sanitizeRichHtml(contract.termsAndConditions);
-
-  const resolveSignatureName = (
-    value: number | string | null | undefined,
-    fallback: string,
-  ): string => {
-    if (typeof value === 'string') {
-      const trimmed = value.trim();
-      if (trimmed.length > 0) {
-        return trimmed;
-      }
-    }
-
-    if (typeof value === 'number') {
-      return `${fallback} #${value}`;
-    }
-
-    return fallback;
-  };
-
-  const normalizeSignatureDateLabel = (value: string | null | undefined): string | null => {
-    if (!value) {
-      return null;
-    }
-
-    const formatted = formatDateTime(value);
-
-    if (!formatted || formatted === '—') {
-      return null;
-    }
-
-    return formatted;
-  };
-
-  const isCustomerSigned =
-    contract.customerSignedBy !== null && contract.customerSignedBy !== undefined;
-  const isAdminSigned = contract.adminSignedBy !== null && contract.adminSignedBy !== undefined;
-  const customerBaseName = resolveSignatureName(contract.customerSignedBy ?? null, 'Khách hàng');
-  const adminBaseName = resolveSignatureName(contract.adminSignedBy ?? null, 'CÔNG TY TECHRENT');
-  const customerSignedCaption = `${customerBaseName} đã ký`;
-  const adminSignedCaption = `${adminBaseName} đã ký`;
-  const customerUnsignedCaption = '(Ký, ghi rõ họ tên)';
-  const adminUnsignedCaption = adminBaseName;
-  const customerSignedAtLabel = normalizeSignatureDateLabel(contract.customerSignedAt ?? null);
-  const adminSignedAtLabel = normalizeSignatureDateLabel(contract.adminSignedAt ?? null);
-
-  const sections: string[] = [];
-
-  if (sanitizedContent.length > 0) {
-    sections.push(`<section><h2>Agreement</h2>${sanitizedContent}</section>`);
-  }
-
-  if (sanitizedTerms.length > 0) {
-    sections.push(`<section><h2>Terms &amp; Conditions</h2>${sanitizedTerms}</section>`);
-  }
-
-  if (sections.length === 0) {
-    sections.push('<section><p>No contract content is available at this time.</p></section>');
-  }
-
-  const signatureSection = `
-    <section class="signature-section">
-      <h2>Chữ ký</h2>
-      <div class="signature-grid">
-        <div class="signature-card">
-          <p class="signature-role">Đại diện bên A</p>
-          <div class="signature-box">
-            ${isAdminSigned ? '<span class="signature-check">✔</span>' : ''}
-          </div>
-          ${
-            isAdminSigned
-              ? `<p class="signature-caption">${escapeHtml(adminSignedCaption)}</p>`
-              : `<p class="signature-caption signature-placeholder">${escapeHtml(adminUnsignedCaption)}</p>`
-          }
-          ${
-            adminSignedAtLabel
-              ? `<p class="signature-date">Ký ngày: ${escapeHtml(adminSignedAtLabel)}</p>`
-              : ''
-          }
-        </div>
-        <div class="signature-card">
-          <p class="signature-role">Đại diện bên B</p>
-          <div class="signature-box">
-            ${isCustomerSigned ? '<span class="signature-check">✔</span>' : ''}
-          </div>
-          ${
-            isCustomerSigned
-              ? `<p class="signature-caption">${escapeHtml(customerSignedCaption)}</p>`
-              : `<p class="signature-caption signature-placeholder">${escapeHtml(customerUnsignedCaption)}</p>`
-          }
-          ${
-            customerSignedAtLabel
-              ? `<p class="signature-date">Ký ngày: ${escapeHtml(customerSignedAtLabel)}</p>`
-              : ''
-          }
-        </div>
-      </div>
-    </section>
-  `;
-
-  sections.push(signatureSection);
-
-  const metadataHtml = metadata
-    .map(
-      (item) =>
-        `<div class="meta-row"><span class="meta-label">${escapeHtml(item.label)}:</span><span class="meta-value">${escapeHtml(item.value)}</span></div>`,
-    )
-    .join('');
-
-  const contextHeading = contextLabel ? `<p class="context">${escapeHtml(contextLabel)}</p>` : '';
-
-  return `<!DOCTYPE html>
-  <html>
-    <head>
-      <meta charset="utf-8" />
-      <style>
-        body {
-          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-          padding: 32px;
-          color: #111111;
-          line-height: 1.6;
-          font-size: 14px;
-        }
-
-        h1 {
-          font-size: 24px;
-          margin-bottom: 8px;
-        }
-
-        h2 {
-          font-size: 18px;
-          margin-bottom: 8px;
-          margin-top: 24px;
-        }
-
-        p {
-          margin: 0 0 12px 0;
-        }
-
-        .context {
-          color: #4b5563;
-          margin-bottom: 16px;
-        }
-
-        .meta-row {
-          display: flex;
-          justify-content: space-between;
-          border-bottom: 1px solid #e5e7eb;
-          padding: 6px 0;
-        }
-
-        .meta-label {
-          font-weight: 600;
-          color: #374151;
-        }
-
-        .meta-value {
-          color: #111827;
-        }
-
-        section {
-          margin-top: 16px;
-        }
-
-        section:first-of-type {
-          margin-top: 24px;
-        }
-
-        ul {
-          padding-left: 20px;
-        }
-
-        li {
-          margin-bottom: 8px;
-        }
-
-        table {
-          width: 100%;
-          border-collapse: collapse;
-          margin-bottom: 16px;
-        }
-
-        th,
-        td {
-          border: 1px solid #d1d5db;
-          padding: 8px;
-          text-align: left;
-        }
-
-        strong {
-          font-weight: 600;
-        }
-
-        .signature-section {
-          margin-top: 32px;
-        }
-
-        .signature-grid {
-          display: flex;
-          gap: 24px;
-          justify-content: space-between;
-          flex-wrap: wrap;
-        }
-
-        .signature-card {
-          flex: 1 1 240px;
-          text-align: center;
-        }
-
-        .signature-role {
-          font-weight: 700;
-          text-transform: uppercase;
-          letter-spacing: 0.08em;
-          margin-bottom: 12px;
-        }
-
-        .signature-box {
-          border: 2px solid #d1d5db;
-          border-radius: 12px;
-          height: 120px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          margin-bottom: 12px;
-        }
-
-        .signature-check {
-          color: #22c55e;
-          font-size: 48px;
-          line-height: 1;
-        }
-
-        .signature-caption {
-          font-weight: 600;
-          margin-bottom: 4px;
-        }
-
-        .signature-date {
-          color: #6b7280;
-          font-size: 12px;
-        }
-
-        .signature-placeholder {
-          color: #6b7280;
-          font-weight: 500;
-          font-style: italic;
-        }
-      </style>
-    </head>
-    <body>
-      <h1>${escapeHtml(contractTitle)}</h1>
-      ${contextHeading}
-      ${metadataHtml}
-      ${sections.join('\n')}
-    </body>
-  </html>`;
-};
 
 const isValidEmail = (value: string): boolean => {
   if (!value) {
@@ -670,7 +196,10 @@ const isValidEmail = (value: string): boolean => {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed.toLowerCase());
 };
 
-const deriveDeviceSummary = (order: RentalOrderResponse, deviceNames: Map<string, string>): string => {
+const deriveDeviceSummary = (
+  order: RentalOrderResponse,
+  deviceDetails: Map<string, DeviceLookupEntry>,
+): string => {
   if (!order.orderDetails || order.orderDetails.length === 0) {
     return 'No devices listed';
   }
@@ -682,7 +211,7 @@ const deriveDeviceSummary = (order: RentalOrderResponse, deviceNames: Map<string
         return null;
       }
 
-      const name = deviceNames.get(String(id));
+      const name = deviceDetails.get(String(id))?.name;
       if (name && name.trim().length > 0) {
         return name;
       }
@@ -713,18 +242,23 @@ const isContractSignedByCustomer = (contract?: ContractResponse | null): boolean
 
 const mapOrderResponseToCard = (
   order: RentalOrderResponse,
-  deviceNames: Map<string, string>,
+  deviceDetails: Map<string, DeviceLookupEntry>,
   contract?: ContractResponse | null,
 ): OrderCard => {
   const statusMeta = mapStatusToMeta(order.orderStatus);
   const depositAmount = Number.isFinite(order.depositAmount) ? Number(order.depositAmount) : 0;
   const totalPrice = Number.isFinite(order.totalPrice) ? Number(order.totalPrice) : 0;
   const totalDue = depositAmount + totalPrice;
+  const deviceImageUrls =
+    order.orderDetails
+      ?.map((detail) => deviceDetails.get(String(detail.deviceModelId))?.imageURL?.trim())
+      .filter((url): url is string => Boolean(url && url.length > 0)) ?? [];
   return {
     orderId: order.orderId,
     id: String(order.orderId),
     title: `Order #${order.orderId}`,
-    deviceSummary: deriveDeviceSummary(order, deviceNames),
+    deviceSummary: deriveDeviceSummary(order, deviceDetails),
+    deviceImageUrls,
     rentalPeriod: formatRentalPeriod(order.startDate, order.endDate),
     totalAmount: formatCurrency(totalDue),
     totalPrice,
@@ -772,7 +306,7 @@ export default function OrdersScreen() {
   const defaultVerificationEmail = useMemo(() => user?.email?.trim() ?? '', [user?.email]);
   const [orders, setOrders] = useState<OrderCard[]>([]);
   const [contractsByOrderId, setContractsByOrderId] = useState<Record<string, ContractResponse>>({});
-  const [deviceNameLookup, setDeviceNameLookup] = useState<Record<string, string>>({});
+  const [deviceDetailsLookup, setDeviceDetailsLookup] = useState<Record<string, DeviceLookupEntry>>({});
   const [selectedFilter, setSelectedFilter] = useState<OrderStatusFilter>('All');
   const [highlightedOrderId, setHighlightedOrderId] = useState<string | null>(null);
   const [pendingScrollOrderId, setPendingScrollOrderId] = useState<string | null>(null);
@@ -793,7 +327,6 @@ export default function OrdersScreen() {
   const [emailEditorError, setEmailEditorError] = useState<string | null>(null);
   const [isSendingPin, setIsSendingPin] = useState(false);
   const [isSigningContract, setIsSigningContract] = useState(false);
-  const [activeContractDownloadId, setActiveContractDownloadId] = useState<number | null>(null);
   const [verificationError, setVerificationError] = useState<string | null>(null);
   const [isCreatingPayment, setIsCreatingPayment] = useState(false);
   const [paymentError, setPaymentError] = useState<string | null>(null);
@@ -803,6 +336,11 @@ export default function OrdersScreen() {
   const [paymentModalError, setPaymentModalError] = useState<string | null>(null);
   const [paymentWebViewKey, setPaymentWebViewKey] = useState(0);
   const [isPaymentWebViewLoading, setIsPaymentWebViewLoading] = useState(false);
+  const paymentModalTitle = activePaymentSession?.orderCode
+    ? `Checkout ${activePaymentSession.orderCode}`
+    : activeOrder
+      ? `Order #${activeOrder.orderId} Payment`
+      : 'Payment Checkout';
   const lastContractLoadRef = useRef<{ orderId: number | null; requestId: number }>({
     orderId: null,
     requestId: 0,
@@ -865,7 +403,7 @@ export default function OrdersScreen() {
         }
 
         const response = await fetchRentalOrders(activeSession);
-        const deviceNameMap = new Map<string, string>();
+        const deviceDetailsMap = new Map<string, DeviceLookupEntry>();
         const uniqueDeviceModelIds = new Set<string>();
 
         response.forEach((order) => {
@@ -883,9 +421,12 @@ export default function OrdersScreen() {
                 const device = await fetchDeviceModelById(id);
                 if (device) {
                   const label = device.name?.trim().length ? device.name : device.model;
-                  if (label && label.trim().length > 0) {
-                    deviceNameMap.set(id, label.trim());
-                  }
+                  const normalizedName =
+                    label && label.trim().length > 0 ? label.trim() : `Device Model ${id}`;
+                  deviceDetailsMap.set(id, {
+                    name: normalizedName,
+                    imageURL: device.imageURL?.trim() ?? null,
+                  });
                 }
               } catch (deviceError) {
                 console.warn(`Failed to load device model ${id} for rental orders`, deviceError);
@@ -926,18 +467,18 @@ export default function OrdersScreen() {
           return bTime - aTime;
         });
 
-        const deviceNameRecord: Record<string, string> = {};
-        deviceNameMap.forEach((label, key) => {
-          deviceNameRecord[key] = label;
+        const deviceDetailsRecord: Record<string, DeviceLookupEntry> = {};
+        deviceDetailsMap.forEach((details, key) => {
+          deviceDetailsRecord[key] = details;
         });
 
         setOrders(
           sorted.map((order) =>
-            mapOrderResponseToCard(order, deviceNameMap, contractLookup[String(order.orderId)]),
+            mapOrderResponseToCard(order, deviceDetailsMap, contractLookup[String(order.orderId)]),
           ),
         );
         setContractsByOrderId(contractLookup);
-        setDeviceNameLookup(deviceNameRecord);
+        setDeviceDetailsLookup(deviceDetailsRecord);
         setErrorMessage(null);
       } catch (error) {
         const fallbackMessage = 'Failed to load rental orders. Please try again.';
@@ -1008,7 +549,7 @@ export default function OrdersScreen() {
   }, [orders, selectedFilter]);
 
   const openFlow = useCallback(
-    (order: OrderCard) => {
+    (order: OrderCard, initialPaymentMethod?: PaymentMethod) => {
       const shouldSkipToPayment = isContractSignedByCustomer(order.contract);
       lastContractLoadRef.current = { orderId: null, requestId: 0 };
       setActiveOrder(order);
@@ -1018,7 +559,7 @@ export default function OrdersScreen() {
       setModalVisible(true);
       setCurrentStep(shouldSkipToPayment ? 3 : 1);
       setOtpDigits(Array(6).fill(''));
-      setSelectedPayment(PAYMENT_OPTIONS[0].id);
+      setSelectedPayment(initialPaymentMethod ?? PAYMENT_OPTIONS[0].id);
       setHasAgreed(shouldSkipToPayment);
       setVerificationEmail(defaultVerificationEmail);
       setPendingEmailInput(defaultVerificationEmail);
@@ -1693,124 +1234,21 @@ export default function OrdersScreen() {
     }
   };
 
-  const handleDownloadContract = useCallback(
-    async (contract: ContractResponse | null, contextLabel?: string) => {
-      const contractId = contract?.contractId;
-
-      if (!contractId) {
-        Alert.alert(
-          'Contract unavailable',
-          contextLabel
-            ? `A downloadable contract for ${contextLabel} is not available yet.`
-            : 'This rental does not have a downloadable contract yet.',
-        );
-        return;
-      }
-
-      try {
-        if (Platform.OS === 'web') {
-          Alert.alert(
-            'Download unavailable',
-            'Contract downloads are only supported from the mobile application.',
-          );
-          return;
-        }
-
-        setActiveContractDownloadId(contractId);
-
-        const activeSession = session?.accessToken ? session : await ensureSession();
-
-        if (!activeSession?.accessToken) {
-          throw new Error('You must be signed in to download the contract.');
-        }
-
-        const sessionCredentials = {
-          accessToken: activeSession.accessToken,
-          tokenType: activeSession.tokenType,
-        };
-
-        let contractDetails: ContractResponse | null = contract ?? null;
-        const hasExistingContent = Boolean(
-          contractDetails &&
-            ((contractDetails.contractContent && contractDetails.contractContent.trim().length > 0) ||
-              (contractDetails.termsAndConditions && contractDetails.termsAndConditions.trim().length > 0)),
-        );
-
-        if (!hasExistingContent) {
-          contractDetails = await fetchContractById(sessionCredentials, contractId);
-        }
-
-        const hasDownloadableContent = Boolean(
-          contractDetails &&
-            ((contractDetails.contractContent && contractDetails.contractContent.trim().length > 0) ||
-              (contractDetails.termsAndConditions && contractDetails.termsAndConditions.trim().length > 0)),
-        );
-
-        if (!hasDownloadableContent || !contractDetails) {
-          throw new Error('The contract details are not yet available for download.');
-        }
-
-        const html = buildContractPdfHtml(contractDetails, contextLabel);
-        const pdfResult = await printToFileAsync({
-          html,
-          fileName: `contract-${contractId}`,
-        });
-
-        if (!pdfResult?.uri) {
-          throw new Error('Failed to generate the contract PDF. Please try again.');
-        }
-
-        const normalizedPath =
-          Platform.OS === 'android' && !pdfResult.uri.startsWith('file://')
-            ? `file://${pdfResult.uri}`
-            : pdfResult.uri;
-
-        const shareTitle =
-          contextLabel && contextLabel.trim().length > 0
-            ? `${contextLabel} Contract`
-            : contractDetails.title && contractDetails.title.trim().length > 0
-              ? contractDetails.title.trim()
-              : `Contract #${contractId}`;
-        const isSharingAvailable = await Sharing.isAvailableAsync();
-
-        if (!isSharingAvailable) {
-          const fallbackDir = documentDirectory ?? cacheDirectory;
-
-          if (!fallbackDir) {
-            throw new Error('Sharing contracts is not supported on this device.');
-          }
-
-          const timestamp = Date.now();
-          const fallbackPath = `${fallbackDir}contract-${contractId}-${timestamp}.pdf`;
-
-          await copyAsync({ from: normalizedPath, to: fallbackPath });
-
-          Alert.alert(
-            'Contract saved',
-            `Sharing is not available on this device. The contract PDF has been saved to:\n${fallbackPath}`,
-          );
-          return;
-        }
-
-        await Sharing.shareAsync(normalizedPath, {
-          mimeType: 'application/pdf',
-          dialogTitle: shareTitle,
-          UTI: 'com.adobe.pdf',
-        });
-      } catch (error) {
-        const fallbackMessage = 'Unable to download the contract. Please try again later.';
-        const normalizedError = error instanceof Error ? error : new Error(fallbackMessage);
-        Alert.alert(
-          'Download contract',
-          normalizedError.message && normalizedError.message.trim().length > 0
-            ? normalizedError.message
-            : fallbackMessage,
-        );
-      } finally {
-        setActiveContractDownloadId((current) => (current === contractId ? null : current));
+  const handleSelectPayment = useCallback(
+    (method: PaymentMethod) => {
+      setSelectedPayment(method);
+      if (paymentError) {
+        setPaymentError(null);
       }
     },
-    [ensureSession, session],
+    [paymentError],
+  );
+
+  const handleQuickPaymentStart = useCallback(
+    (order: OrderCard, method: PaymentMethod) => {
+      openFlow(order, method);
+    },
+    [openFlow],
   );
 
   const handleCardAction = useCallback(
@@ -1976,407 +1414,24 @@ export default function OrdersScreen() {
     }
   }, [loadOrderDetails, orderDetailsTargetId]);
 
-  const renderStepContent = () => {
-    switch (currentStep) {
-      case 1: {
-        const isSignedContract = isContractAlreadySigned;
-        const canAgreeToContract =
-          Boolean(activeContract) && !isContractLoading && !contractErrorMessage && !isSignedContract;
-        const contractTitle = activeContract
-          ? activeContract.title && activeContract.title.trim().length > 0
-            ? activeContract.title.trim()
-            : `Contract #${activeContract.contractId}`
-          : 'Rental Contract';
-        const contractNumber = activeContract
-          ? activeContract.contractNumber && activeContract.contractNumber.trim().length > 0
-            ? activeContract.contractNumber.trim()
-            : `#${activeContract.contractId}`
-          : '—';
-        const contractStatusLabel = formatContractStatus(activeContract?.status);
-        const contractPeriod = activeContract
-          ? formatRentalPeriod(activeContract.startDate ?? '', activeContract.endDate ?? '')
-          : '—';
-        const contractTotal =
-          typeof activeContract?.totalAmount === 'number'
-            ? formatCurrency(activeContract.totalAmount)
-            : '—';
-        const contractDeposit =
-          typeof activeContract?.depositAmount === 'number'
-            ? formatCurrency(activeContract.depositAmount)
-            : '—';
-        const isDownloadingActiveContract = Boolean(
-          activeContract?.contractId && activeContractDownloadId === activeContract.contractId,
-        );
-        const contractRentalDays =
-          typeof activeContract?.rentalPeriodDays === 'number'
-            ? `${activeContract.rentalPeriodDays} day${activeContract.rentalPeriodDays === 1 ? '' : 's'}`
-            : '—';
-        const contractStart = formatDateTime(activeContract?.startDate);
-        const contractEnd = formatDateTime(activeContract?.endDate);
-        const contractExpires = formatDateTime(activeContract?.expiresAt);
-        const contractCreated = formatDateTime(activeContract?.createdAt);
-        const contractUpdated = formatDateTime(activeContract?.updatedAt);
-        const contractDescription = normalizeHtmlContent(activeContract?.description);
-        const contractBody = normalizeHtmlContent(activeContract?.contractContent);
-        const contractTerms = normalizeHtmlContent(activeContract?.termsAndConditions);
-
-        return (
-          <View style={styles.stepContent}>
-            <View style={styles.modalOrderHeader}>
-              <Text style={styles.modalOrderName}>{activeOrder?.title ?? 'Rental Order'}</Text>
-              <Text style={styles.modalOrderMeta}>{activeOrder?.deviceSummary}</Text>
-            </View>
-            <Text style={styles.stepTitle}>Rental Agreement Contract</Text>
-            <Text style={styles.stepSubtitle}>
-              Please review the complete terms and conditions below
-            </Text>
-            <View style={styles.contractContainer}>
-              {isContractLoading ? (
-                <View style={styles.contractStateWrapper}>
-                  <ActivityIndicator color="#111111" />
-                  <Text style={styles.contractStateText}>Loading rental contract…</Text>
-                </View>
-              ) : contractErrorMessage ? (
-                <View style={styles.contractStateWrapper}>
-                  <Text style={[styles.contractStateText, styles.contractErrorText]}>
-                    {contractErrorMessage}
-                  </Text>
-                  <Pressable style={styles.contractRetryButton} onPress={handleRetryContract}>
-                    <Text style={styles.contractRetryButtonText}>Try Again</Text>
-                  </Pressable>
-                </View>
-              ) : activeContract ? (
-                <ScrollView showsVerticalScrollIndicator={false}>
-                  <Text style={styles.contractHeading}>{contractTitle}</Text>
-                  <View style={styles.contractMetaList}>
-                    <View style={styles.contractMetaRow}>
-                      <Text style={styles.contractMetaLabel}>Contract Number</Text>
-                      <Text style={styles.contractMetaValue}>{contractNumber}</Text>
-                    </View>
-                    <View style={styles.contractMetaRow}>
-                      <Text style={styles.contractMetaLabel}>Status</Text>
-                      <Text style={styles.contractMetaValue}>{contractStatusLabel}</Text>
-                    </View>
-                    <View style={styles.contractMetaRow}>
-                      <Text style={styles.contractMetaLabel}>Rental Period</Text>
-                      <Text style={styles.contractMetaValue}>{contractPeriod}</Text>
-                    </View>
-                    <View style={styles.contractMetaRow}>
-                      <Text style={styles.contractMetaLabel}>Rental Days</Text>
-                      <Text style={styles.contractMetaValue}>{contractRentalDays}</Text>
-                    </View>
-                    <View style={styles.contractMetaRow}>
-                      <Text style={styles.contractMetaLabel}>Start Date</Text>
-                      <Text style={styles.contractMetaValue}>{contractStart}</Text>
-                    </View>
-                    <View style={styles.contractMetaRow}>
-                      <Text style={styles.contractMetaLabel}>End Date</Text>
-                      <Text style={styles.contractMetaValue}>{contractEnd}</Text>
-                    </View>
-                    <View style={styles.contractMetaRow}>
-                      <Text style={styles.contractMetaLabel}>Total Amount</Text>
-                      <Text style={styles.contractMetaValue}>{contractTotal}</Text>
-                    </View>
-                    <View style={styles.contractMetaRow}>
-                      <Text style={styles.contractMetaLabel}>Deposit</Text>
-                      <Text style={styles.contractMetaValue}>{contractDeposit}</Text>
-                    </View>
-                    <View style={styles.contractMetaRow}>
-                      <Text style={styles.contractMetaLabel}>Expires</Text>
-                      <Text style={styles.contractMetaValue}>{contractExpires}</Text>
-                    </View>
-                    <View style={styles.contractMetaRow}>
-                      <Text style={styles.contractMetaLabel}>Created</Text>
-                      <Text style={styles.contractMetaValue}>{contractCreated}</Text>
-                    </View>
-                  <View style={styles.contractMetaRow}>
-                    <Text style={styles.contractMetaLabel}>Updated</Text>
-                    <Text style={styles.contractMetaValue}>{contractUpdated}</Text>
-                  </View>
-                </View>
-                {isSignedContract ? (
-                  <View style={styles.contractSignedBanner}>
-                    <Ionicons name="checkmark-circle" size={16} color="#15803d" />
-                    <Text style={styles.contractSignedText}>
-                      This contract has already been signed. Use the download button below to keep a copy for your
-                      records.
-                    </Text>
-                  </View>
-                ) : null}
-                {contractDescription.length > 0 && (
-                  <Text style={styles.contractBody}>{contractDescription}</Text>
-                )}
-                  {contractBody.length > 0 && (
-                    <View style={styles.contractSection}>
-                      <Text style={styles.contractSectionHeading}>Contract Content</Text>
-                      <Text style={styles.contractBody}>{contractBody}</Text>
-                    </View>
-                  )}
-                  {contractTerms.length > 0 && (
-                    <View style={styles.contractTermsSection}>
-                      <Text style={styles.contractTermsHeading}>Terms &amp; Conditions</Text>
-                      <Text style={styles.contractTermsText}>{contractTerms}</Text>
-                    </View>
-                  )}
-                </ScrollView>
-              ) : (
-                <View style={styles.contractStateWrapper}>
-                  <Text style={styles.contractStateText}>
-                    No rental contract is available for this order yet.
-                  </Text>
-                </View>
-              )}
-            </View>
-            <Pressable
-              style={[styles.agreementRow, !canAgreeToContract && styles.agreementRowDisabled]}
-              onPress={() => setHasAgreed((previous) => !previous)}
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: hasAgreed, disabled: !canAgreeToContract }}
-              disabled={!canAgreeToContract}
-            >
-              <MaterialCommunityIcons
-                name={hasAgreed ? 'checkbox-marked' : 'checkbox-blank-outline'}
-                size={24}
-                color={
-                  canAgreeToContract ? (hasAgreed ? '#111111' : '#8a8a8a') : '#d1d5db'
-                }
-              />
-              <View style={styles.agreementTextWrapper}>
-                <Text style={styles.agreementLabel}>I agree to the rental contract terms</Text>
-                <Text style={styles.agreementHelper}>
-                  You must accept before proceeding to the verification step.
-                </Text>
-              </View>
-            </Pressable>
-            <View style={styles.primaryActions}>
-              {isSignedContract ? (
-                <Pressable
-                  style={[
-                    styles.primaryButton,
-                    styles.buttonFlex,
-                    styles.primaryButtonEnabled,
-                    isDownloadingActiveContract && styles.primaryButtonBusy,
-                  ]}
-                  onPress={() =>
-                    !isDownloadingActiveContract &&
-                    handleDownloadContract(activeContract, activeOrder?.title)
-                  }
-                  disabled={isDownloadingActiveContract}
-                >
-                  {isDownloadingActiveContract ? (
-                    <ActivityIndicator color="#ffffff" />
-                  ) : (
-                    <Text style={styles.primaryButtonText}>Download Contract</Text>
-                  )}
-                </Pressable>
-              ) : (
-                <Pressable
-                  style={[
-                    styles.primaryButton,
-                    styles.buttonFlex,
-                    isAgreementComplete ? styles.primaryButtonEnabled : styles.primaryButtonDisabled,
-                  ]}
-                  onPress={handleAgreementContinue}
-                  disabled={!isAgreementComplete || isSendingPin}
-                >
-                  {isSendingPin ? (
-                    <ActivityIndicator color="#ffffff" />
-                  ) : (
-                    <Text
-                      style={[
-                        styles.primaryButtonText,
-                        !isAgreementComplete && styles.primaryButtonTextDisabled,
-                      ]}
-                    >
-                      Next
-                    </Text>
-                  )}
-                </Pressable>
-              )}
-              <Pressable style={[styles.secondaryButton, styles.buttonFlex]} onPress={resetFlow}>
-                <Text style={styles.secondaryButtonText}>Cancel</Text>
-              </Pressable>
-            </View>
-          </View>
-        );
-      }
-      case 2:
-        return (
-          <View style={styles.stepContent}>
-            <View style={styles.verificationIconWrapper}>
-              <Ionicons name="shield-checkmark-outline" size={32} color="#111" />
-            </View>
-            <Text style={styles.stepTitle}>Verify Your Signature</Text>
-            <Text style={styles.stepSubtitle}>
-              {verificationEmail
-                ? `We've sent a 6-digit code to ${verificationEmail}`
-                : 'Enter the 6-digit code we sent to your email address'}
-            </Text>
-            <View style={styles.otpInputsRow}>
-              {otpDigits.map((digit, index) => (
-                <TextInput
-                  key={`otp-${index}`}
-                  ref={(ref) => {
-                    otpRefs.current[index] = ref;
-                  }}
-                  style={styles.otpInput}
-                  keyboardType="number-pad"
-                  maxLength={1}
-                  value={digit}
-                  onChangeText={(value) => handleOtpChange(value, index)}
-                  onKeyPress={(event) => handleOtpKeyPress(event, index)}
-                  returnKeyType="next"
-                />
-              ))}
-            </View>
-            {verificationError ? (
-              <Text style={styles.otpErrorText} accessibilityRole="alert">
-                {verificationError}
-              </Text>
-            ) : null}
-            <View style={styles.verificationHelpers}>
-              <Pressable onPress={handleResendCode} disabled={isSendingPin}>
-                <Text
-                  style={[styles.helperLink, isSendingPin && styles.helperLinkDisabled]}
-                >
-                  Didn&apos;t receive the code?
-                </Text>
-              </Pressable>
-              <Text style={styles.helperText}>Resend available in 00:45</Text>
-            </View>
-            <Pressable
-              style={[
-                styles.primaryButton,
-                isOtpComplete ? styles.primaryButtonEnabled : styles.primaryButtonDisabled,
-              ]}
-              onPress={handleVerifyCode}
-              disabled={!isOtpComplete || isSigningContract}
-            >
-              {isSigningContract ? (
-                <ActivityIndicator color="#ffffff" />
-              ) : (
-                <Text
-                  style={[
-                    styles.primaryButtonText,
-                    !isOtpComplete && styles.primaryButtonTextDisabled,
-                  ]}
-                >
-                  Verify Code
-                </Text>
-              )}
-            </Pressable>
-            <Pressable
-              style={[
-                styles.helperButton,
-                (isSigningContract || isSendingPin) && styles.helperButtonDisabled,
-              ]}
-              onPress={handleOpenEmailEditor}
-              disabled={isSigningContract || isSendingPin}
-            >
-              <Text style={styles.helperButtonText}>Use a different email</Text>
-            </Pressable>
-            <Pressable style={styles.secondaryButton} onPress={goToPreviousStep}>
-              <Text style={styles.secondaryButtonText}>Back</Text>
-            </Pressable>
-          </View>
-        );
-      case 3:
-      default:
-        return (
-          <View style={styles.stepContent}>
-            <Text style={styles.stepTitle}>Review &amp; Pay</Text>
-            <View style={styles.summaryCard}>
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Order</Text>
-                <Text style={styles.summaryValue}>{activeOrder?.deviceSummary ?? '—'}</Text>
-              </View>
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Rental Period</Text>
-                <Text style={styles.summaryValue}>{activeOrder?.rentalPeriod ?? '—'}</Text>
-              </View>
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Rental Fees</Text>
-                <Text style={styles.summaryValue}>
-                  {activeOrder?.totalPriceLabel ?? formatCurrency(0)}
-                </Text>
-              </View>
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Deposit</Text>
-                <Text style={styles.summaryValue}>
-                  {activeOrder?.depositLabel ?? formatCurrency(0)}
-                </Text>
-              </View>
-              <View style={[styles.summaryRow, styles.summaryRowEmphasis]}>
-                <Text style={styles.summaryLabel}>Total Due</Text>
-                <Text style={styles.summaryTotal}>
-                  {activeOrder?.totalAmount ?? formatCurrency(0)}
-                </Text>
-              </View>
-            </View>
-            <View style={styles.paymentList}>
-              {PAYMENT_OPTIONS.map((option) => {
-                const isSelected = option.id === selectedPayment;
-                return (
-                  <Pressable
-                    key={option.id}
-                    style={[styles.paymentOption, isSelected && styles.paymentOptionSelected]}
-                    onPress={() => {
-                      setSelectedPayment(option.id);
-                      if (paymentError) {
-                        setPaymentError(null);
-                      }
-                    }}
-                  >
-                    <View style={styles.paymentIcon}>{option.icon}</View>
-                    <View style={styles.paymentDetails}>
-                      <Text style={styles.paymentLabel}>{option.label}</Text>
-                      <Text style={styles.paymentDescription}>{option.description}</Text>
-                    </View>
-                    <Ionicons
-                      name={isSelected ? 'radio-button-on' : 'radio-button-off'}
-                      size={20}
-                      color={isSelected ? '#1f7df4' : '#c1c1c1'}
-                    />
-                  </Pressable>
-                );
-              })}
-            </View>
-            {paymentError ? (
-              <Text style={styles.paymentErrorText} accessibilityRole="alert">
-                {paymentError}
-              </Text>
-            ) : null}
-            <View style={styles.paymentSecurity}>
-              <Ionicons name="shield-checkmark" size={16} color="#1f7df4" />
-              <Text style={styles.paymentSecurityText}>Your payment information is secure</Text>
-            </View>
-            <Pressable
-              style={[
-                styles.primaryButton,
-                styles.buttonFlex,
-                styles.primaryButtonEnabled,
-                isCreatingPayment && styles.primaryButtonBusy,
-              ]}
-              onPress={handleCreatePayment}
-              disabled={isCreatingPayment || !activeOrder}
-            >
-              {isCreatingPayment ? (
-                <ActivityIndicator color="#ffffff" />
-              ) : (
-                <Text style={styles.primaryButtonText}>Proceed to Payment</Text>
-              )}
-            </Pressable>
-            <Pressable style={styles.secondaryButton} onPress={goToPreviousStep}>
-              <Text style={styles.secondaryButtonText}>Back</Text>
-            </Pressable>
-          </View>
-        );
-    }
-  };
+  const handleToggleAgreement = useCallback(() => {
+    setHasAgreed((previous) => !previous);
+  }, []);
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top']}>
-      <FlatList
+    <ContractPdfDownloader ensureSession={ensureSession} session={session}>
+      {({ downloadContract, downloadingContractId }) => {
+        const isSelectedContractDownloading = Boolean(
+          contractForSelectedOrder?.contractId &&
+            downloadingContractId === contractForSelectedOrder.contractId,
+        );
+        const isActiveContractDownloading = Boolean(
+          activeContract?.contractId && downloadingContractId === activeContract.contractId,
+        );
+
+        return (
+          <SafeAreaView style={styles.safeArea} edges={['top']}>
+            <FlatList
         ref={listRef}
         data={filteredOrders}
         keyExtractor={(item) => item.id}
@@ -2386,6 +1441,14 @@ export default function OrdersScreen() {
         onRefresh={handleRefresh}
         renderItem={({ item }) => {
           const isHighlighted = highlightedOrderId === item.id;
+          const thumbnailImages = item.deviceImageUrls?.filter((uri) => uri && uri.length > 0) ?? [];
+          const maxVisibleThumbnails = 3;
+          const visibleImages = thumbnailImages.slice(0, maxVisibleThumbnails);
+          const stackWidth =
+            64 +
+            Math.max(visibleImages.length - 1, 0) * 16 +
+            (thumbnailImages.length > maxVisibleThumbnails ? 16 : 0);
+          const canQuickPay = isContractSignedByCustomer(item.contract);
           return (
             <View
               style={[
@@ -2394,9 +1457,29 @@ export default function OrdersScreen() {
               ]}
             >
               <View style={styles.cardLeading}>
-                <View style={styles.thumbnail}>
-                  <Text style={styles.thumbnailText}>IMG</Text>
-                </View>
+                {visibleImages.length > 0 ? (
+                  <View style={[styles.thumbnailStack, { width: stackWidth }]}>
+                    {visibleImages.map((uri, index) => (
+                      <Image
+                        key={`${item.id}-thumb-${index}`}
+                        source={{ uri }}
+                        resizeMode="cover"
+                        style={[styles.thumbnailImage, { left: index * 16, zIndex: visibleImages.length - index }]}
+                      />
+                    ))}
+                    {thumbnailImages.length > maxVisibleThumbnails ? (
+                      <View style={[styles.thumbnailMore, { left: visibleImages.length * 16 }]}>
+                        <Text style={styles.thumbnailMoreLabel}>
+                          +{thumbnailImages.length - maxVisibleThumbnails}
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
+                ) : (
+                  <View style={styles.thumbnail}>
+                    <Text style={styles.thumbnailText}>IMG</Text>
+                  </View>
+                )}
               </View>
               <View style={styles.cardBody}>
                 <View style={styles.cardHeader}>
@@ -2438,6 +1521,27 @@ export default function OrdersScreen() {
                     </Pressable>
                   ) : null}
                 </View>
+                {canQuickPay ? (
+                  <View style={styles.quickPaySection}>
+                    <Text style={styles.quickPayLabel}>Quick payment</Text>
+                    <View style={styles.quickPayButtons}>
+                      {PAYMENT_OPTIONS.map((option) => (
+                        <Pressable
+                          key={`${item.id}-${option.id}`}
+                          style={styles.quickPayButton}
+                          onPress={() => handleQuickPaymentStart(item, option.id)}
+                        >
+                          <View style={styles.quickPayButtonIcon}>
+                            {React.isValidElement(option.icon)
+                              ? React.cloneElement(option.icon, { size: 18 })
+                              : option.icon}
+                          </View>
+                          <Text style={styles.quickPayButtonLabel}>{option.label}</Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  </View>
+                ) : null}
               </View>
             </View>
           );
@@ -2520,314 +1624,121 @@ export default function OrdersScreen() {
         ItemSeparatorComponent={() => <View style={styles.separator} />}
       />
 
-      <Modal animationType="slide" visible={isModalVisible} transparent onRequestClose={resetFlow}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Complete Rental Agreement</Text>
-              <Pressable style={styles.closeButton} onPress={resetFlow}>
-                <Ionicons name="close" size={20} color="#111" />
-              </Pressable>
-            </View>
-            <View style={styles.progressHeader}>
-              <Text style={styles.progressLabel}>Step {currentStep} of 3</Text>
-              <Text style={styles.progressStage}>Final Review</Text>
-            </View>
-            <View style={styles.progressBar}>
-              <View style={[styles.progressFill, { width: progressWidth }]} />
-            </View>
-            {renderStepContent()}
-          </View>
-        </View>
-      </Modal>
-      <Modal
-        animationType="fade"
-        transparent
+      <OrderStepsModal
+        visible={isModalVisible}
+        onClose={resetFlow}
+        currentStep={currentStep}
+        progressWidth={progressWidth}
+      >
+        <RentalOrderStepsContent
+          currentStep={currentStep}
+          activeOrder={activeOrder}
+          activeContract={activeContract}
+          isContractAlreadySigned={isContractAlreadySigned}
+          isContractLoading={isContractLoading}
+          contractErrorMessage={contractErrorMessage}
+          onRetryContract={handleRetryContract}
+          isDownloadingActiveContract={isActiveContractDownloading}
+          onDownloadContract={() => downloadContract(activeContract, activeOrder?.title)}
+          hasAgreed={hasAgreed}
+          onToggleAgreement={handleToggleAgreement}
+          isAgreementComplete={isAgreementComplete}
+          isSendingPin={isSendingPin}
+          onAgreementContinue={handleAgreementContinue}
+          onResetFlow={resetFlow}
+          verificationEmail={verificationEmail}
+          otpDigits={otpDigits}
+          otpRefs={otpRefs}
+          onOtpChange={handleOtpChange}
+          onOtpKeyPress={handleOtpKeyPress}
+          verificationError={verificationError}
+          onResendCode={handleResendCode}
+          isOtpComplete={isOtpComplete}
+          onVerifyCode={handleVerifyCode}
+          isSigningContract={isSigningContract}
+          onOpenEmailEditor={handleOpenEmailEditor}
+          onGoBack={goToPreviousStep}
+          paymentOptions={PAYMENT_OPTIONS}
+          selectedPayment={selectedPayment}
+          onSelectPayment={handleSelectPayment}
+          paymentError={paymentError}
+          onCreatePayment={handleCreatePayment}
+          isCreatingPayment={isCreatingPayment}
+        />
+      </OrderStepsModal>
+      <EmailEditorModal
         visible={isEmailEditorVisible}
-        onRequestClose={handleCloseEmailEditor}
-      >
-        <View style={styles.emailModalOverlay}>
-          <View style={styles.emailModalCard}>
-            <Text style={styles.emailModalTitle}>Update email address</Text>
-            <Text style={styles.emailModalDescription}>
-              Enter the email you want to use to receive the verification code.
-            </Text>
-            <TextInput
-              style={[
-                styles.emailInput,
-                emailEditorError ? styles.emailInputError : null,
-              ]}
-              placeholder="name@example.com"
-              value={pendingEmailInput}
-              onChangeText={(value) => {
-                setPendingEmailInput(value);
-                if (emailEditorError) {
-                  setEmailEditorError(null);
-                }
-              }}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              autoCorrect={false}
-              inputMode="email"
-            />
-            {emailEditorError ? (
-              <Text style={styles.emailErrorText} accessibilityRole="alert">
-                {emailEditorError}
-              </Text>
-            ) : null}
-            <View style={styles.emailModalActions}>
-              <Pressable style={styles.emailModalCancelButton} onPress={handleCloseEmailEditor}>
-                <Text style={styles.emailModalCancelText}>Cancel</Text>
-              </Pressable>
-              <Pressable style={styles.emailModalSaveButton} onPress={handleSaveEmail}>
-                <Text style={styles.emailModalSaveText}>Save</Text>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
-      <Modal
-        animationType="slide"
-        transparent
+        value={pendingEmailInput}
+        error={emailEditorError}
+        onChangeText={(value) => {
+          setPendingEmailInput(value);
+          if (emailEditorError) {
+            setEmailEditorError(null);
+          }
+        }}
+        onCancel={handleCloseEmailEditor}
+        onSave={handleSaveEmail}
+      />
+      <OrderDetailsModal
         visible={isOrderDetailsModalVisible}
-        onRequestClose={handleCloseOrderDetails}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.orderDetailsCard}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Order Details</Text>
-              <Pressable style={styles.closeButton} onPress={handleCloseOrderDetails}>
-                <Ionicons name="close" size={20} color="#111" />
-              </Pressable>
-            </View>
-            {orderDetailsLoading ? (
-              <View style={styles.orderDetailsState}>
-                <ActivityIndicator color="#111111" />
-                <Text style={styles.orderDetailsStateText}>Loading order details…</Text>
-              </View>
-            ) : orderDetailsError ? (
-              <View style={styles.orderDetailsState}>
-                <Text style={[styles.orderDetailsStateText, styles.orderDetailsErrorText]}>
-                  {orderDetailsError}
-                </Text>
-                <Pressable style={styles.contractRetryButton} onPress={handleRetryOrderDetails}>
-                  <Text style={styles.contractRetryButtonText}>Try Again</Text>
-                </Pressable>
-              </View>
-            ) : orderDetailsData ? (
-              <ScrollView style={styles.orderDetailsScroll} showsVerticalScrollIndicator={false}>
-                <View style={styles.detailSection}>
-                  <Text style={styles.detailSectionHeading}>Summary</Text>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Order ID</Text>
-                    <Text style={styles.detailValue}>#{orderDetailsData.orderId}</Text>
-                  </View>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Status</Text>
-                    <Text style={styles.detailValue}>{toTitleCase(orderDetailsData.orderStatus)}</Text>
-                  </View>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Created</Text>
-                    <Text style={styles.detailValue}>{formatDateTime(orderDetailsData.createdAt)}</Text>
-                  </View>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Rental Period</Text>
-                    <Text style={styles.detailValue}>
-                      {formatRentalPeriod(orderDetailsData.startDate, orderDetailsData.endDate)}
-                    </Text>
-                  </View>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Shipping Address</Text>
-                    <Text style={[styles.detailValue, styles.detailValueMultiline]}>
-                      {orderDetailsData.shippingAddress || '—'}
-                    </Text>
-                  </View>
-                </View>
-                <View style={styles.detailSection}>
-                  <Text style={styles.detailSectionHeading}>Payment</Text>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Total Due</Text>
-                    <Text style={styles.detailValue}>
-                      {formatCurrency(
-                        orderDetailsData.totalPrice + orderDetailsData.depositAmount,
-                      )}
-                    </Text>
-                  </View>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Total Price</Text>
-                    <Text style={styles.detailValue}>{formatCurrency(orderDetailsData.totalPrice)}</Text>
-                  </View>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Price / Day</Text>
-                    <Text style={styles.detailValue}>{formatCurrency(orderDetailsData.pricePerDay)}</Text>
-                  </View>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Deposit Due</Text>
-                    <Text style={styles.detailValue}>{formatCurrency(orderDetailsData.depositAmount)}</Text>
-                  </View>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Deposit Held</Text>
-                    <Text style={styles.detailValue}>{formatCurrency(orderDetailsData.depositAmountHeld)}</Text>
-                  </View>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Deposit Used</Text>
-                    <Text style={styles.detailValue}>{formatCurrency(orderDetailsData.depositAmountUsed)}</Text>
-                  </View>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Deposit Refunded</Text>
-                    <Text style={styles.detailValue}>{formatCurrency(orderDetailsData.depositAmountRefunded)}</Text>
-                  </View>
-                </View>
-                <View style={styles.detailSection}>
-                  <Text style={styles.detailSectionHeading}>Items</Text>
-                  {orderDetailsData.orderDetails && orderDetailsData.orderDetails.length > 0 ? (
-                    orderDetailsData.orderDetails.map((item) => {
-                      const deviceName =
-                        deviceNameLookup[String(item.deviceModelId)] ?? `Device Model ${item.deviceModelId}`;
-                      return (
-                        <View key={item.orderDetailId} style={styles.detailItemRow}>
-                          <View style={styles.detailItemHeader}>
-                            <Text style={styles.detailItemName}>{deviceName}</Text>
-                            <Text style={styles.detailItemQty}>×{item.quantity}</Text>
-                          </View>
-                          <Text style={styles.detailItemMeta}>
-                            Price / Day: {formatCurrency(item.pricePerDay)}
-                          </Text>
-                          <Text style={styles.detailItemMeta}>
-                            Deposit / Unit: {formatCurrency(item.depositAmountPerUnit)}
-                          </Text>
-                        </View>
-                      );
-                    })
-                  ) : (
-                    <Text style={styles.detailEmptyText}>No devices were found for this rental.</Text>
-                  )}
-                </View>
-                {contractForSelectedOrder ? (
-                  <View style={styles.detailSection}>
-                    <Text style={styles.detailSectionHeading}>Contract</Text>
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Status</Text>
-                      <Text style={styles.detailValue}>
-                        {formatContractStatus(contractForSelectedOrder.status)}
-                      </Text>
-                    </View>
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Contract Number</Text>
-                      <Text style={styles.detailValue}>
-                        {contractForSelectedOrder.contractNumber &&
-                        contractForSelectedOrder.contractNumber.trim().length > 0
-                          ? contractForSelectedOrder.contractNumber.trim()
-                          : `#${contractForSelectedOrder.contractId}`}
-                      </Text>
-                    </View>
-                    <Pressable
-                      style={[
-                        styles.detailDownloadButton,
-                        activeContractDownloadId === contractForSelectedOrder.contractId &&
-                          styles.detailDownloadButtonDisabled,
-                      ]}
-                      onPress={() => {
-                        if (activeContractDownloadId !== contractForSelectedOrder.contractId) {
-                          handleDownloadContract(
-                            contractForSelectedOrder,
-                            `Order #${orderDetailsData.orderId}`,
-                          );
-                        }
-                      }}
-                      disabled={activeContractDownloadId === contractForSelectedOrder.contractId}
-                    >
-                      {activeContractDownloadId === contractForSelectedOrder.contractId ? (
-                        <ActivityIndicator color="#1f7df4" />
-                      ) : (
-                        <>
-                          <Ionicons name="download-outline" size={18} color="#1f7df4" />
-                          <Text style={styles.detailDownloadLabel}>Download Contract</Text>
-                        </>
-                      )}
-                    </Pressable>
-                    <Text style={styles.detailDownloadHint}>
-                      The contract PDF includes signature placeholders for both parties.
-                    </Text>
-                  </View>
-                ) : null}
-              </ScrollView>
-            ) : (
-              <View style={styles.orderDetailsState}>
-                <Text style={styles.orderDetailsStateText}>No additional details are available.</Text>
-              </View>
-            )}
-          </View>
-        </View>
-      </Modal>
-      <Modal
-        animationType="slide"
+        loading={orderDetailsLoading}
+        error={orderDetailsError}
+        order={orderDetailsData}
+        deviceDetailsLookup={deviceDetailsLookup}
+        contract={contractForSelectedOrder}
+        isDownloadingContract={isSelectedContractDownloading}
+        onClose={handleCloseOrderDetails}
+        onRetry={handleRetryOrderDetails}
+        onDownloadContract={
+          contractForSelectedOrder
+            ? () =>
+                downloadContract(
+                  contractForSelectedOrder,
+                  orderDetailsData ? `Order #${orderDetailsData.orderId}` : undefined,
+                )
+            : undefined
+        }
+      />
+      <PaymentModal
         visible={isPaymentModalVisible}
-        onRequestClose={handleClosePaymentModal}
+        title={paymentModalTitle}
+        onClose={handleClosePaymentModal}
+        canOpenInBrowser={Boolean(paymentCheckoutUrl)}
+        onOpenInBrowser={paymentCheckoutUrl ? handleOpenPaymentInBrowser : undefined}
+        errorMessage={paymentModalError}
       >
-        <SafeAreaView style={styles.paymentModalContainer} edges={['top']}>
-          <View style={styles.paymentModalHeader}>
-            <Pressable style={styles.paymentModalCloseButton} onPress={handleClosePaymentModal}>
-              <Ionicons name="chevron-back" size={20} color="#111111" />
-            </Pressable>
-            <Text style={styles.paymentModalTitle}>
-              {activePaymentSession?.orderCode
-                ? `Checkout ${activePaymentSession.orderCode}`
-                : activeOrder
-                  ? `Order #${activeOrder.orderId} Payment`
-                  : 'Payment Checkout'}
+        {paymentCheckoutUrl ? (
+          <View style={styles.paymentWebViewContainer}>
+            <WebView
+              key={`payment-webview-${paymentWebViewKey}`}
+              source={{ uri: paymentCheckoutUrl }}
+              javaScriptEnabled
+              domStorageEnabled
+              cacheEnabled={false}
+              sharedCookiesEnabled
+              setSupportMultipleWindows={false}
+              originWhitelist={['https://*', 'http://*']}
+              mixedContentMode="always"
+              onLoadStart={handlePaymentWebViewLoadStart}
+              onLoadEnd={handlePaymentWebViewLoadEnd}
+              onError={handlePaymentWebViewError}
+              onHttpError={handlePaymentWebViewHttpError}
+              style={styles.paymentWebView}
+            />
+            {isPaymentWebViewLoading ? renderPaymentLoading() : null}
+          </View>
+        ) : (
+          <View style={styles.paymentModalPlaceholder}>
+            <Ionicons name="warning-outline" size={24} color="#6b7280" />
+            <Text style={styles.paymentModalPlaceholderText}>
+              The payment link is unavailable. Close this screen and try again.
             </Text>
-            {paymentCheckoutUrl ? (
-              <Pressable
-                style={styles.paymentModalCloseButton}
-                onPress={handleOpenPaymentInBrowser}
-                accessibilityRole="button"
-                accessibilityLabel="Open checkout in browser"
-              >
-                <Ionicons name="open-outline" size={20} color="#111111" />
-              </Pressable>
-            ) : (
-              <View style={styles.paymentModalHeaderSpacer} />
-            )}
           </View>
-          {paymentModalError ? (
-            <View style={styles.paymentModalErrorBanner}>
-              <Ionicons name="warning-outline" size={16} color="#b91c1c" />
-              <Text style={styles.paymentModalErrorText}>{paymentModalError}</Text>
-            </View>
-          ) : null}
-          <View style={styles.paymentModalBody}>
-            {paymentCheckoutUrl ? (
-              <View style={styles.paymentWebViewContainer}>
-                <WebView
-                  key={`payment-webview-${paymentWebViewKey}`}
-                  source={{ uri: paymentCheckoutUrl }}
-                  javaScriptEnabled
-                  domStorageEnabled
-                  cacheEnabled={false}
-                  sharedCookiesEnabled
-                  setSupportMultipleWindows={false}
-                  originWhitelist={['https://*', 'http://*']}
-                  mixedContentMode="always"
-                  onLoadStart={handlePaymentWebViewLoadStart}
-                  onLoadEnd={handlePaymentWebViewLoadEnd}
-                  onError={handlePaymentWebViewError}
-                  onHttpError={handlePaymentWebViewHttpError}
-                  style={styles.paymentWebView}
-                />
-                {isPaymentWebViewLoading ? renderPaymentLoading() : null}
-              </View>
-            ) : (
-              <View style={styles.paymentModalPlaceholder}>
-                <Ionicons name="warning-outline" size={24} color="#6b7280" />
-                <Text style={styles.paymentModalPlaceholderText}>
-                  The payment link is unavailable. Close this screen and try again.
-                </Text>
-              </View>
-            )}
-          </View>
-        </SafeAreaView>
-      </Modal>
+        )}
+      </PaymentModal>
     </SafeAreaView>
+        );
+      }}
+    </ContractPdfDownloader>
   );
 }

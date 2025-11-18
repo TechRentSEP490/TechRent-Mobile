@@ -4,7 +4,6 @@ import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Modal,
   RefreshControl,
   ScrollView,
   Text,
@@ -14,6 +13,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import DocumentPreviewModal from '@/components/modals/DocumentPreviewModal';
 import { useAuth } from '@/contexts/AuthContext';
 import { getMyKycDetails, type CustomerKycDetails } from '@/services/kyc';
 import styles from '@/style/kyc-status.styles';
@@ -275,29 +275,12 @@ export default function KycStatusScreen() {
       </View>
 
       {preview ? (
-        <Modal transparent animationType="fade" visible onRequestClose={closePreview}>
-          <View style={styles.previewBackdrop}>
-            <View style={styles.previewContent}>
-              <View style={styles.previewHeader}>
-                <Text style={styles.previewTitle}>{preview.label}</Text>
-                <TouchableOpacity
-                  style={styles.previewCloseButton}
-                  onPress={closePreview}
-                  accessibilityRole="button"
-                  accessibilityLabel="Close document preview"
-                >
-                  <Ionicons name="close" size={20} color="#111111" />
-                </TouchableOpacity>
-              </View>
-              <Image
-                source={{ uri: preview.uri }}
-                style={[styles.previewImage, previewImageDimensions]}
-                contentFit="contain"
-              />
-              <Text style={styles.previewHint}>Use the close button to return to your documents.</Text>
-            </View>
-          </View>
-        </Modal>
+        <DocumentPreviewModal
+          visible
+          preview={preview}
+          imageStyle={previewImageDimensions}
+          onClose={closePreview}
+        />
       ) : null}
     </SafeAreaView>
   );
