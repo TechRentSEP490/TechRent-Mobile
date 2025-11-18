@@ -76,6 +76,22 @@ export default function HomeScreen() {
         onPress: () => router.push('/(app)/notifications'),
       },
       {
+        key: 'chat',
+        icon: 'chatbubble-ellipses-outline',
+        onPress: () => {
+          if (isHydrating) {
+            return;
+          }
+
+          if (!isSignedIn) {
+            router.push('/(auth)/sign-in');
+            return;
+          }
+
+          router.push('/(app)/chat');
+        },
+      },
+      {
         key: 'cart',
         icon: 'cart-outline',
         onPress: () => {
