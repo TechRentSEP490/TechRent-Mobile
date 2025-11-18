@@ -11,7 +11,7 @@ import {
   View,
 } from 'react-native';
 
-import type { OrderCard } from '@/app/(app)/(tabs)/orders';
+import type { OrderCard } from '@/types/orders';
 import type { ContractResponse } from '@/services/contracts';
 import type { PaymentMethod } from '@/services/payments';
 import styles from '@/style/orders.styles';

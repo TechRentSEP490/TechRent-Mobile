@@ -63,39 +63,12 @@ import {
   formatRentalPeriod,
   toTitleCase,
 } from '@/utils/order-formatters';
-
-type OrderStatusFilter = 'All' | 'Pending' | 'Delivered' | 'In Use' | 'Completed';
-type OrderStatus = Exclude<OrderStatusFilter, 'All'>;
-type OrderActionType =
-  | 'continueProcess'
-  | 'extendRental'
-  | 'confirmReceipt'
-  | 'cancelOrder'
-  | 'rentAgain'
-  | 'completeKyc';
-
-export type OrderCard = {
-  orderId: number;
-  id: string;
-  title: string;
-  deviceSummary: string;
-  rentalPeriod: string;
-  totalAmount: string;
-  totalPrice: number;
-  totalPriceLabel: string;
-  depositAmount: number;
-  depositLabel: string;
-  totalDue: number;
-  statusFilter: OrderStatus;
-  statusLabel: string;
-  statusColor: string;
-  statusBackground: string;
-  action?: {
-    label: string;
-    type: OrderActionType;
-  };
-  contract?: ContractResponse | null;
-};
+import type {
+  OrderActionType,
+  OrderCard,
+  OrderStatus,
+  OrderStatusFilter,
+} from '@/types/orders';
 
 type ApiErrorWithStatus = Error & { status?: number };
 
