@@ -138,11 +138,17 @@ export function CustomerSupportChat({ customerId, customerName, ensureSession, s
     setIsEnsuringConversation(true);
 
     try {
+      console.log('[Chat] Ensuring conversation for customer', customerId);
       const authSession = await resolveSession();
       const nextConversation = await ensureCustomerConversation(customerId, authSession);
+      console.log('[Chat] Conversation ensured', {
+        conversationId: nextConversation.conversationId,
+        customerId,
+      });
       setConversation(nextConversation);
       return nextConversation;
     } catch (error) {
+      console.error('[Chat] Failed to ensure conversation', error);
       const message = error instanceof Error ? error.message : 'Unable to open chat. Please try again.';
       setConversation(null);
       setConversationError(message);
@@ -175,6 +181,10 @@ export function CustomerSupportChat({ customerId, customerName, ensureSession, s
       }
 
       try {
+        console.log('[Chat] Loading messages page', {
+          conversationId,
+          page: pageToLoad,
+        });
         const authSession = await resolveSession();
         const page = await fetchConversationMessages({
           conversationId,
@@ -186,7 +196,14 @@ export function CustomerSupportChat({ customerId, customerName, ensureSession, s
         setMessagesPage(page.page);
         setHasMoreMessages(!page.last);
         upsertMessages(page.content, { replace: isInitial, scrollToBottom: isInitial });
+        console.log('[Chat] Loaded messages page', {
+          conversationId,
+          page: page.page,
+          count: page.numberOfElements,
+          total: page.totalElements,
+        });
       } catch (error) {
+        console.error('[Chat] Failed to load messages', error);
         const message = error instanceof Error ? error.message : 'Unable to load chat messages. Please try again.';
         setMessagesError(message);
       } finally {
@@ -255,6 +272,10 @@ export function CustomerSupportChat({ customerId, customerName, ensureSession, s
     setIsSending(true);
 
     try {
+      console.log('[Chat] Sending chat message', {
+        conversationId,
+        customerId,
+      });
       const authSession = await resolveSession();
       const message = await sendChatMessage(
         {
@@ -268,7 +289,12 @@ export function CustomerSupportChat({ customerId, customerName, ensureSession, s
 
       setComposerValue('');
       upsertMessages([message], { replace: false, scrollToBottom: true });
+      console.log('[Chat] Message sent', {
+        messageId: message.messageId,
+        conversationId: message.conversationId,
+      });
     } catch (error) {
+      console.error('[Chat] Failed to send chat message', error);
       const message = error instanceof Error ? error.message : 'Unable to send your message. Please try again.';
       setComposerError(message);
     } finally {
@@ -298,6 +324,11 @@ export function CustomerSupportChat({ customerId, customerName, ensureSession, s
         return;
       }
 
+      const attemptNumber = reconnectAttemptsRef.current + 1;
+      console.log('[Chat] Attempting websocket connection', {
+        conversationId,
+        attempt: attemptNumber,
+      });
       setRealtimeStatus('connecting');
       setRealtimeError(null);
 
@@ -316,7 +347,12 @@ export function CustomerSupportChat({ customerId, customerName, ensureSession, s
 
         socket = socketOptions ? new WebSocket(wsUrl, undefined, socketOptions) : new WebSocket(wsUrl);
         reconnectAttemptsRef.current += 1;
+        console.log('[Chat] Websocket initiated', {
+          conversationId,
+          hasHeaders: Boolean(headers),
+        });
       } catch (error) {
+        console.error('[Chat] Failed to create websocket instance', error);
         const message = error instanceof Error ? error.message : 'Unable to connect to live chat.';
         setRealtimeStatus('disconnected');
         setRealtimeError(message);
@@ -332,6 +368,9 @@ export function CustomerSupportChat({ customerId, customerName, ensureSession, s
 
         hasConnectedRef.current = true;
         reconnectAttemptsRef.current = 0;
+        console.log('[Chat] Websocket connected', {
+          conversationId,
+        });
         setRealtimeStatus('connected');
         setRealtimeError(null);
       };
@@ -347,27 +386,37 @@ export function CustomerSupportChat({ customerId, customerName, ensureSession, s
 
           if (upsertable) {
             upsertMessages([upsertable], { scrollToBottom: true });
+            console.log('[Chat] Websocket message received', {
+              messageId: upsertable.messageId,
+              senderType: upsertable.senderType,
+            });
           }
         } catch (error) {
           console.warn('Failed to parse chat socket message', error);
         }
       };
 
-      socket.onerror = () => {
+      socket.onerror = (event) => {
         if (!isMounted) {
           return;
         }
 
+        console.error('[Chat] Websocket error event', event);
         setRealtimeStatus('disconnected');
         setRealtimeError('Realtime connection interrupted. Reconnecting...');
       };
 
-      socket.onclose = () => {
+      socket.onclose = (event) => {
         if (!isMounted) {
           return;
         }
 
         wsRef.current = null;
+        console.warn('[Chat] Websocket closed', {
+          code: event?.code,
+          reason: event?.reason,
+          wasClean: event?.wasClean,
+        });
         setRealtimeStatus('disconnected');
 
         const reachedLimit =
@@ -378,6 +427,10 @@ export function CustomerSupportChat({ customerId, customerName, ensureSession, s
           return;
         }
 
+        console.log('[Chat] Scheduling websocket reconnect', {
+          conversationId,
+          delayMs: RECONNECT_DELAY_MS,
+        });
         reconnectHandle = setTimeout(connect, RECONNECT_DELAY_MS);
       };
     };
@@ -397,6 +450,7 @@ export function CustomerSupportChat({ customerId, customerName, ensureSession, s
   }, [activeSession, conversationId, customerId, reconnectNonce, upsertMessages]);
 
   const handleRealtimeRetry = useCallback(() => {
+    console.log('[Chat] Manual realtime retry requested');
     setReconnectNonce((prev) => prev + 1);
   }, []);
 
