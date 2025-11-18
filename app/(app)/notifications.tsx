@@ -16,9 +16,6 @@ import { useAuth } from '@/contexts/AuthContext';
 import {
   buildNotificationRealtimeHeaders,
   buildNotificationStompUrls,
-  fetchCustomerNotifications,
-  markAllNotificationsRead,
-  markNotificationRead,
   normalizeNotification,
   type CustomerNotification,
   type NotificationType,
@@ -132,20 +129,16 @@ const formatTimestamp = (value: string | null) => {
   return date.toLocaleDateString();
 };
 
-const PAGE_SIZE = 20;
 const RECONNECT_DELAY_MS = 4000;
 
 export default function NotificationsScreen() {
   const router = useRouter();
-  const { isSignedIn, isHydrating, user, session, ensureSession } = useAuth();
+  const { isSignedIn, isHydrating, user, session } = useAuth();
   const customerId = user?.customerId ?? null;
 
   const [notifications, setNotifications] = useState<CustomerNotification[]>([]);
-  const [pagination, setPagination] = useState({ page: -1, last: false });
   const [isInitialLoading, setIsInitialLoading] = useState(false);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [isMarkingAll, setIsMarkingAll] = useState(false);
   const [realtimeStatus, setRealtimeStatus] = useState<RealtimeStatus>('idle');
   const [realtimeError, setRealtimeError] = useState<string | null>(null);
@@ -155,141 +148,29 @@ export default function NotificationsScreen() {
   const stompConnectedRef = useRef(false);
   const reconnectHandleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const hasMore = !pagination.last;
   const hasNotifications = notifications.length > 0;
   const markAllDisabled = !hasNotifications || isMarkingAll;
 
-  const loadNotifications = useCallback(
-    async ({ page: pageToLoad, replace }: { page: number; replace: boolean }) => {
-      if (!customerId || !isSignedIn) {
-        return;
-      }
-
-      setLoadError(null);
-
-      try {
-        const activeSession = session?.accessToken ? session : await ensureSession();
-
-        if (!activeSession?.accessToken) {
-          throw new Error('Please sign in to view notifications.');
-        }
-
-        const response = await fetchCustomerNotifications({
-          customerId,
-          session: activeSession,
-          page: pageToLoad,
-          size: PAGE_SIZE,
-        });
-
-        setPagination({ page: response.page, last: response.last });
-        setNotifications((prev) => {
-          const base = replace ? [] : prev;
-          const merged = replace ? response.content : [...base, ...response.content];
-          const byId = new Map<number, CustomerNotification>();
-
-          merged.forEach((item) => {
-            byId.set(item.notificationId, item);
-          });
-
-          return Array.from(byId.values()).sort((a, b) => {
-            const left = a.createdAt ? Date.parse(a.createdAt) : 0;
-            const right = b.createdAt ? Date.parse(b.createdAt) : 0;
-            return right - left;
-          });
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unable to load notifications.';
-        setLoadError(message);
-        throw error;
-      }
-    },
-    [customerId, ensureSession, isSignedIn, session],
-  );
-
-  useEffect(() => {
-    if (!customerId || !isSignedIn) {
-      setNotifications([]);
-      setPagination({ page: -1, last: true });
-      setLoadError(null);
-      setRealtimeStatus('idle');
-      setRealtimeError(null);
-      return;
-    }
-
-    let isMounted = true;
-    setIsInitialLoading(true);
-
-    loadNotifications({ page: 0, replace: true })
-      .catch(() => null)
-      .finally(() => {
-        if (isMounted) {
-          setIsInitialLoading(false);
-        }
-      });
-
-    return () => {
-      isMounted = false;
-    };
-  }, [customerId, isSignedIn, loadNotifications]);
-
-  const handleRefresh = useCallback(async () => {
+  const handleRefresh = useCallback(() => {
     if (!customerId || !isSignedIn) {
       return;
     }
 
     setRefreshing(true);
+    setNotifications([]);
+    setIsInitialLoading(true);
+    setReconnectNonce((prev) => prev + 1);
 
-    try {
-      await loadNotifications({ page: 0, replace: true });
-    } catch (error) {
-      console.error('Failed to refresh notifications', error);
-    } finally {
+    setTimeout(() => {
       setRefreshing(false);
-    }
-  }, [customerId, isSignedIn, loadNotifications]);
-
-  const handleLoadMore = useCallback(async () => {
-    if (!customerId || !isSignedIn || !hasMore || isLoadingMore) {
-      return;
-    }
-
-    setIsLoadingMore(true);
-
-    try {
-      await loadNotifications({ page: Math.max(pagination.page + 1, 0), replace: false });
-    } catch (error) {
-      console.error('Failed to load more notifications', error);
-    } finally {
-      setIsLoadingMore(false);
-    }
-  }, [customerId, hasMore, isLoadingMore, isSignedIn, loadNotifications, pagination.page]);
+    }, 600);
+  }, [customerId, isSignedIn]);
 
   const markNotificationLocally = useCallback((notificationId: number) => {
     setNotifications((prev) =>
       prev.map((item) => (item.notificationId === notificationId ? { ...item, read: true } : item)),
     );
   }, []);
-
-  const markNotificationRemotely = useCallback(
-    async (notificationId: number) => {
-      if (!customerId || !isSignedIn) {
-        return;
-      }
-
-      try {
-        const activeSession = session?.accessToken ? session : await ensureSession();
-
-        if (!activeSession?.accessToken) {
-          throw new Error('Please sign in to continue.');
-        }
-
-        await markNotificationRead(notificationId, activeSession);
-      } catch (error) {
-        console.warn('Failed to mark notification as read', error);
-      }
-    },
-    [customerId, ensureSession, isSignedIn, session],
-  );
 
   const handleCardPress = useCallback(
     (notification: CustomerNotification) => {
@@ -298,9 +179,8 @@ export default function NotificationsScreen() {
       }
 
       markNotificationLocally(notification.notificationId);
-      void markNotificationRemotely(notification.notificationId);
     },
-    [markNotificationLocally, markNotificationRemotely],
+    [markNotificationLocally],
   );
 
   const handleActionPress = useCallback(
@@ -308,7 +188,6 @@ export default function NotificationsScreen() {
       const meta = resolveNotificationMeta(notification.type);
 
       markNotificationLocally(notification.notificationId);
-      void markNotificationRemotely(notification.notificationId);
 
       if (meta.action === 'orders') {
         router.push('/(app)/(tabs)/orders');
@@ -322,10 +201,10 @@ export default function NotificationsScreen() {
 
       Alert.alert('Notification', 'Additional handling for this notification is coming soon.');
     },
-    [markNotificationLocally, markNotificationRemotely, router],
+    [markNotificationLocally, router],
   );
 
-  const handleMarkAllRead = useCallback(async () => {
+  const handleMarkAllRead = useCallback(() => {
     if (!customerId || !isSignedIn || markAllDisabled) {
       return;
     }
@@ -333,21 +212,10 @@ export default function NotificationsScreen() {
     setIsMarkingAll(true);
     setNotifications((prev) => prev.map((item) => ({ ...item, read: true })));
 
-    try {
-      const activeSession = session?.accessToken ? session : await ensureSession();
-
-      if (!activeSession?.accessToken) {
-        throw new Error('Please sign in to continue.');
-      }
-
-      await markAllNotificationsRead(customerId, activeSession);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to mark notifications as read.';
-      Alert.alert('Notifications', message);
-    } finally {
+    setTimeout(() => {
       setIsMarkingAll(false);
-    }
-  }, [customerId, ensureSession, isSignedIn, markAllDisabled, session]);
+    }, 300);
+  }, [customerId, isSignedIn, markAllDisabled]);
 
   const realtimeLabel = useMemo(() => {
     switch (realtimeStatus) {
@@ -368,10 +236,15 @@ export default function NotificationsScreen() {
 
   useEffect(() => {
     if (!customerId || !isSignedIn) {
+      setNotifications([]);
+      setRealtimeStatus('idle');
+      setRealtimeError(null);
+      setIsInitialLoading(false);
       return () => {};
     }
 
     let isMounted = true;
+    setIsInitialLoading(true);
 
     const connect = () => {
       if (!isMounted) {
@@ -400,6 +273,7 @@ export default function NotificationsScreen() {
         if (index >= candidates.length) {
           setRealtimeStatus('disconnected');
           setRealtimeError('Unable to connect to live notifications.');
+          setIsInitialLoading(false);
           reconnectHandleRef.current = setTimeout(connect, RECONNECT_DELAY_MS);
           return;
         }
@@ -448,6 +322,7 @@ export default function NotificationsScreen() {
                 stompConnectedRef.current = true;
                 setRealtimeStatus('connected');
                 setRealtimeError(null);
+                setIsInitialLoading(false);
                 const subscriptionId = `notifications-${customerId}-${Date.now()}`;
                 subscriptionIdRef.current = subscriptionId;
                 sendFrame('SUBSCRIBE', {
@@ -518,6 +393,7 @@ export default function NotificationsScreen() {
 
           setRealtimeStatus('disconnected');
           setRealtimeError('Connection lost. Retrying…');
+          setIsInitialLoading(false);
 
           const nextIndex = index + 1;
 
@@ -562,7 +438,7 @@ export default function NotificationsScreen() {
   }, [customerId, isSignedIn, reconnectNonce, session]);
 
   const renderEmptyComponent = useCallback(() => {
-    if (isInitialLoading) {
+    if (isInitialLoading || realtimeStatus === 'connecting') {
       return (
         <View style={styles.emptyState}>
           <ActivityIndicator size="small" color="#111111" />
@@ -571,12 +447,12 @@ export default function NotificationsScreen() {
       );
     }
 
-    if (loadError) {
+    if (realtimeError) {
       return (
         <View style={styles.emptyState}>
-          <Text style={styles.emptyStateText}>{loadError}</Text>
-          <TouchableOpacity style={styles.retryButton} onPress={handleRefresh}>
-            <Text style={styles.retryButtonText}>Try again</Text>
+          <Text style={styles.emptyStateText}>{realtimeError}</Text>
+          <TouchableOpacity style={styles.retryButton} onPress={handleRealtimeRetry}>
+            <Text style={styles.retryButtonText}>Retry</Text>
           </TouchableOpacity>
         </View>
       );
@@ -587,27 +463,9 @@ export default function NotificationsScreen() {
         <Text style={styles.emptyStateText}>You are all caught up.</Text>
       </View>
     );
-  }, [handleRefresh, isInitialLoading, loadError]);
+  }, [handleRealtimeRetry, isInitialLoading, realtimeError, realtimeStatus]);
 
-  const renderListFooter = useMemo(() => {
-    if (isLoadingMore) {
-      return (
-        <View style={styles.footerLoader}>
-          <ActivityIndicator size="small" color="#111111" />
-        </View>
-      );
-    }
-
-    if (hasMore && hasNotifications) {
-      return (
-        <TouchableOpacity style={styles.loadMoreButton} onPress={handleLoadMore}>
-          <Text style={styles.loadMoreText}>Load more notifications</Text>
-        </TouchableOpacity>
-      );
-    }
-
-    return <View style={styles.footerSpacer} />;
-  }, [handleLoadMore, hasMore, hasNotifications, isLoadingMore]);
+  const renderListFooter = useMemo(() => <View style={styles.footerSpacer} />, []);
 
   const renderNotification = useCallback(
     ({ item }: { item: CustomerNotification }) => {
