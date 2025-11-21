@@ -40,12 +40,21 @@ export type ProductSummary = {
 
 export type ProductDetail = ProductSummary & {
   brand: string;
+  description?: string;
   status: string;
   stock: number;
   specs: ProductSpecsPayload;
   accessories: ProductAccessory[];
   relatedProducts: RelatedProduct[];
   reviews: ProductReview[];
+  imageURL?: string | null;
+  pricePerDay?: number;
+  depositPercent?: number;
+  deviceValue?: number;
+  deviceCategoryId?: number;
+  depositPercentage?: number;
+  currency?: 'USD' | 'VND';
+  source?: 'static' | 'api';
 };
 
 export const products: ProductDetail[] = [
@@ -54,6 +63,7 @@ export const products: ProductDetail[] = [
     name: 'Sleek smartphone',
     model: 'SmartPhone X',
     price: '$5/day',
+    pricePerDay: 5,
     brand: 'SuperTech',
     status: 'Active',
     stock: 12,
@@ -78,12 +88,16 @@ export const products: ProductDetail[] = [
       { id: 'alice', name: 'Alice', comment: 'Amazing product! Totally worth the price.', rating: 5 },
       { id: 'bob', name: 'Bob', comment: 'Great performance. Battery life could be better.', rating: 4 },
     ],
+    depositPercent: 0.12,
+    currency: 'USD',
+    source: 'static',
   },
   {
     id: '2',
     name: 'Gaming Laptop',
     model: 'PowerPlay Z',
     price: '$25/day',
+    pricePerDay: 25,
     brand: 'ProCompute',
     status: 'In stock',
     stock: 8,
@@ -108,12 +122,16 @@ export const products: ProductDetail[] = [
       { id: 'cara', name: 'Cara', comment: 'Runs every title on ultra settings.', rating: 5 },
       { id: 'dave', name: 'Dave', comment: 'Amazing performance but a bit heavy.', rating: 4 },
     ],
+    depositPercent: 0.12,
+    currency: 'USD',
+    source: 'static',
   },
   {
     id: '3',
     name: 'Tablet 2-in-1',
     model: 'FlexTab 12',
     price: '$10/day',
+    pricePerDay: 10,
     brand: 'FlexiTech',
     status: 'Active',
     stock: 15,
@@ -138,6 +156,9 @@ export const products: ProductDetail[] = [
       { id: 'emma', name: 'Emma', comment: 'Perfect for drawing and note taking.', rating: 5 },
       { id: 'frank', name: 'Frank', comment: 'Solid battery life throughout the day.', rating: 4 },
     ],
+    depositPercent: 0.12,
+    currency: 'USD',
+    source: 'static',
   },
 ];
 
