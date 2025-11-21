@@ -1,23 +1,30 @@
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   FlatList,
+  Image,
   Modal,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { products, type ProductDetail } from '../../constants/products';
+import { useAuth } from '@/contexts/AuthContext';
+import { useDeviceModel } from '@/hooks/use-device-model';
 
 type NormalizedSpecEntry = {
   label: string;
   value: string;
 };
+
+type AuthRoute = '/(auth)/sign-in' | '/(auth)/sign-up';
 
 const formatSpecKey = (key: string) =>
   key
@@ -190,12 +197,13 @@ const normalizeSpecsData = (data: ProductDetail['specs']): NormalizedSpecEntry[]
     : [];
 };
 
-const formatDate = (date: Date) => date.toISOString().split('T')[0];
-const addDays = (date: Date, days: number) => {
-  const nextDate = new Date(date);
-  nextDate.setDate(nextDate.getDate() + days);
-  return nextDate;
-};
+const VND_FORMATTER = new Intl.NumberFormat('vi-VN', {
+  style: 'currency',
+  currency: 'VND',
+  maximumFractionDigits: 0,
+});
+
+const formatCurrencyValue = (value: number) => VND_FORMATTER.format(value);
 
 export default function ProductDetailsScreen() {
   const [isSpecsOpen, setIsSpecsOpen] = useState(false);
@@ -203,25 +211,44 @@ export default function ProductDetailsScreen() {
   const [isRentOpen, setIsRentOpen] = useState(false);
   const [rentMode, setRentMode] = useState<'rent' | 'cart' | null>(null);
   const [quantity, setQuantity] = useState(1);
-  const [startDate, setStartDate] = useState(() => formatDate(new Date()));
-  const [endDate, setEndDate] = useState(() => formatDate(addDays(new Date(), 7)));
+  const [isAuthPromptOpen, setIsAuthPromptOpen] = useState(false);
+  const [authPromptMode, setAuthPromptMode] = useState<'rent' | 'cart' | null>(null);
   const router = useRouter();
-  const { productId } = useLocalSearchParams<{ productId?: string }>();
+  const { isSignedIn, isHydrating, session } = useAuth();
+  const { productId: productIdParam, deviceModelId } = useLocalSearchParams<{
+    productId?: string;
+    deviceModelId?: string;
+  }>();
+  const resolvedProductId = typeof deviceModelId === 'string' ? deviceModelId : productIdParam;
+  const {
+    data: fetchedProduct,
+    loading: isProductLoading,
+    error: productError,
+  } = useDeviceModel(resolvedProductId);
 
   const product = useMemo(() => {
-    if (typeof productId === 'string') {
-      const match = products.find((item) => item.id === productId);
+    if (fetchedProduct) {
+      return fetchedProduct;
+    }
+
+    if (typeof resolvedProductId === 'string') {
+      const match = products.find((item) => item.id === resolvedProductId);
       if (match) {
         return match;
       }
     }
-    return products[0];
-  }, [productId]);
 
-  const { name, model, brand, status, specs, accessories, relatedProducts, reviews, price, stock } = product;
+    return products[0] ?? null;
+  }, [fetchedProduct, resolvedProductId]);
+
+  const specsSource = product?.specs;
 
   const normalizedSpecs = useMemo(() => {
-    const entries = normalizeSpecsData(specs);
+    if (!specsSource) {
+      return [];
+    }
+
+    const entries = normalizeSpecsData(specsSource);
     const seen = new Set<string>();
 
     return entries.filter((entry) => {
@@ -232,29 +259,55 @@ export default function ProductDetailsScreen() {
       seen.add(key);
       return true;
     });
-  }, [specs]);
+  }, [specsSource]);
+
+  if (!product) {
+    return (
+      <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
+        <View style={styles.loadingState}>
+          {isProductLoading ? (
+            <ActivityIndicator size="large" color="#111111" />
+          ) : (
+            <Text style={styles.errorBannerText}>Device not found.</Text>
+          )}
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const {
+    name,
+    model,
+    brand,
+    status,
+    accessories,
+    relatedProducts,
+    reviews,
+    price,
+    stock,
+    description,
+    deviceValue,
+    depositPercent,
+  } = product;
+  const productImage = product.imageURL;
 
   const isOutOfStock = stock <= 0;
   const maxQuantity = Math.max(stock, 1);
   const stockLabel = stock > 0 ? `${stock} in stock` : 'Out of stock';
-
-  const rentalDuration = useMemo(() => {
-    const parsedStart = new Date(startDate);
-    const parsedEnd = new Date(endDate);
-    if (Number.isNaN(parsedStart.getTime()) || Number.isNaN(parsedEnd.getTime())) {
-      return 0;
-    }
-    const diff = Math.round((parsedEnd.getTime() - parsedStart.getTime()) / (1000 * 60 * 60 * 24));
-    return diff > 0 ? diff : 0;
-  }, [startDate, endDate]);
-
-  const rentalDurationLabel = rentalDuration === 1 ? '1 day' : `${rentalDuration} days`;
+  const isRestoringSession = isHydrating && Boolean(session?.accessToken);
 
   const openRentModal = (mode: 'rent' | 'cart') => {
-    const today = new Date();
+    if (isRestoringSession) {
+      return;
+    }
+
+    if (!isSignedIn) {
+      setAuthPromptMode(mode);
+      setIsAuthPromptOpen(true);
+      return;
+    }
+
     setQuantity(1);
-    setStartDate(formatDate(today));
-    setEndDate(formatDate(addDays(today, 7)));
     setRentMode(mode);
     setIsRentOpen(true);
   };
@@ -264,7 +317,35 @@ export default function ProductDetailsScreen() {
     setRentMode(null);
   };
 
-  const isPrimaryDisabled = isOutOfStock || rentalDuration <= 0 || rentMode === null;
+  const closeAuthPrompt = () => {
+    setIsAuthPromptOpen(false);
+    setAuthPromptMode(null);
+  };
+
+  const handleAuthNavigation = (path: AuthRoute) => {
+    closeAuthPrompt();
+    router.push(path);
+  };
+
+  const isPrimaryDisabled = isOutOfStock || rentMode === null;
+
+  const normalizedDepositPercent = typeof depositPercent === 'number' ? depositPercent : null;
+  const depositPercentageLabel = normalizedDepositPercent !== null
+    ? `${Math.round(normalizedDepositPercent * 100)}%`
+    : null;
+  const depositAmount =
+    normalizedDepositPercent !== null && typeof deviceValue === 'number'
+      ? deviceValue * normalizedDepositPercent
+      : null;
+  const depositSummary = depositPercentageLabel
+    ? depositAmount !== null
+      ? `${depositPercentageLabel} (~${formatCurrencyValue(depositAmount)})`
+      : depositPercentageLabel
+    : null;
+  const deviceValueLabel =
+    typeof deviceValue === 'number' && Number.isFinite(deviceValue)
+      ? formatCurrencyValue(deviceValue)
+      : null;
 
   const handlePrimaryAction = () => {
     if (isPrimaryDisabled || rentMode === null) {
@@ -273,19 +354,13 @@ export default function ProductDetailsScreen() {
 
     const destinationProductId = product.id;
 
-    if (rentMode === 'cart') {
-      closeRentModal();
-      return;
-    }
-
     closeRentModal();
     router.push({
       pathname: '/(app)/cart',
       params: {
         productId: destinationProductId,
         quantity: String(quantity),
-        startDate,
-        endDate,
+        mode: rentMode,
       },
     });
   };
@@ -310,8 +385,21 @@ export default function ProductDetailsScreen() {
           </View>
         </View>
 
+        {productError && (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorBannerText}>{productError}</Text>
+          </View>
+        )}
+
         <View style={styles.imagePreview}>
-          <Text style={styles.imageText}>Explore images of the product.</Text>
+          {productImage ? (
+            <Image source={{ uri: productImage }} style={styles.heroImage} resizeMode="cover" />
+          ) : (
+            <View style={styles.heroPlaceholder}>
+              <MaterialCommunityIcons name="image-off-outline" size={48} color="#6f6f6f" />
+              <Text style={styles.heroPlaceholderText}>Images coming soon</Text>
+            </View>
+          )}
         </View>
 
         <View style={styles.paginationDots}>
@@ -326,6 +414,28 @@ export default function ProductDetailsScreen() {
             <Text style={styles.productMeta}>{`Model: ${model} | Brand: ${brand} | ${status}`}</Text>
           </View>
           <MaterialCommunityIcons name="bookmark-outline" size={28} color="#111" />
+        </View>
+
+        {description ? <Text style={styles.productDescription}>{description}</Text> : null}
+
+        <View style={styles.pricingCard}>
+          <Text style={styles.pricingTitle}>Pricing</Text>
+          <View style={styles.pricingRow}>
+            <Text style={styles.pricingLabel}>Daily rate</Text>
+            <Text style={styles.pricingValue}>{price}</Text>
+          </View>
+          {depositSummary ? (
+            <View style={styles.pricingRow}>
+              <Text style={styles.pricingLabel}>Deposit</Text>
+              <Text style={styles.pricingValue}>{depositSummary}</Text>
+            </View>
+          ) : null}
+          {deviceValueLabel ? (
+            <View style={styles.pricingRow}>
+              <Text style={styles.pricingLabel}>Device value</Text>
+              <Text style={styles.pricingValue}>{deviceValueLabel}</Text>
+            </View>
+          ) : null}
         </View>
 
         <View style={styles.quickActions}>
@@ -443,53 +553,11 @@ export default function ProductDetailsScreen() {
               <Text style={styles.rentStockLabel}>{stockLabel}</Text>
             </View>
 
-            <View style={styles.rentFieldRow}>
-              <View style={styles.rentFieldHalf}>
-                <Text style={styles.rentFieldLabel}>Start Date</Text>
-                <View style={styles.rentDateControl}>
-                  <TextInput
-                    style={styles.rentDateInput}
-                    value={startDate}
-                    onChangeText={setStartDate}
-                    placeholder="YYYY-MM-DD"
-                    placeholderTextColor="#9c9c9c"
-                  />
-                  <TouchableOpacity
-                    style={styles.rentCalendarButton}
-                    onPress={() => setStartDate(formatDate(new Date()))}
-                  >
-                    <Ionicons name="calendar-outline" size={18} color="#111111" />
-                  </TouchableOpacity>
-                </View>
-              </View>
-              <View style={styles.rentFieldHalf}>
-                <Text style={styles.rentFieldLabel}>End Date</Text>
-                <View style={styles.rentDateControl}>
-                  <TextInput
-                    style={styles.rentDateInput}
-                    value={endDate}
-                    onChangeText={setEndDate}
-                    placeholder="YYYY-MM-DD"
-                    placeholderTextColor="#9c9c9c"
-                  />
-                  <TouchableOpacity
-                    style={styles.rentCalendarButton}
-                    onPress={() => {
-                      const base = new Date();
-                      setEndDate(formatDate(addDays(base, 7)));
-                    }}
-                  >
-                    <Ionicons name="calendar-outline" size={18} color="#111111" />
-                  </TouchableOpacity>
-                </View>
-              </View>
-            </View>
-
-            <View style={styles.rentFieldGroup}>
-              <Text style={styles.rentFieldLabel}>Rental Duration</Text>
-              <View style={styles.rentDurationRow}>
-                <Text style={styles.rentDurationValue}>{rentalDurationLabel}</Text>
-              </View>
+            <View style={styles.rentInfoBanner}>
+              <Ionicons name="calendar-outline" size={18} color="#1a73e8" />
+              <Text style={styles.rentInfoText}>
+                Select your rental dates and shipping address from the cart before checkout.
+              </Text>
             </View>
 
             <View style={styles.rentFooter}>
@@ -513,6 +581,36 @@ export default function ProductDetailsScreen() {
                 </Text>
               </TouchableOpacity>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={isAuthPromptOpen} transparent animationType="fade" onRequestClose={closeAuthPrompt}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.authModalContent}>
+            <Text style={styles.authModalTitle}>Sign in required</Text>
+            <Text style={styles.authModalDescription}>
+              {authPromptMode === 'cart'
+                ? 'Sign in or create an account to add this device to your cart.'
+                : 'Sign in or create an account to rent this device.'}
+            </Text>
+            <View style={styles.authModalActions}>
+              <TouchableOpacity style={styles.authModalSecondary} onPress={closeAuthPrompt}>
+                <Text style={styles.authModalSecondaryText}>Maybe later</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.authModalPrimary}
+                onPress={() => handleAuthNavigation('/(auth)/sign-in')}
+              >
+                <Text style={styles.authModalPrimaryText}>Sign In</Text>
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity
+              style={styles.authModalLink}
+              onPress={() => handleAuthNavigation('/(auth)/sign-up')}
+            >
+              <Text style={styles.authModalLinkText}>New here? Create an account</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -570,6 +668,13 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#ffffff',
   },
+  loadingState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+    backgroundColor: '#ffffff',
+  },
   container: {
     paddingBottom: 32,
     paddingHorizontal: 20,
@@ -593,18 +698,44 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 12,
   },
+  errorBanner: {
+    marginBottom: 16,
+    borderRadius: 12,
+    backgroundColor: '#fff5f5',
+    borderWidth: 1,
+    borderColor: '#f5c2c2',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  errorBannerText: {
+    color: '#c53030',
+    fontSize: 14,
+  },
   imagePreview: {
     height: 220,
     borderRadius: 20,
     borderWidth: 1,
     borderColor: '#e5e5e5',
+    backgroundColor: '#fafafa',
+    overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#fafafa',
   },
-  imageText: {
+  heroImage: {
+    width: '100%',
+    height: '100%',
+  },
+  heroPlaceholder: {
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  heroPlaceholderText: {
     color: '#6c6c6c',
-    fontSize: 15,
+    fontSize: 14,
+    marginTop: 12,
   },
   paginationDots: {
     flexDirection: 'row',
@@ -636,6 +767,40 @@ const styles = StyleSheet.create({
   productMeta: {
     color: '#6c6c6c',
     marginTop: 4,
+  },
+  productDescription: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#4a4a4a',
+    marginBottom: 16,
+  },
+  pricingCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#ececec',
+    backgroundColor: '#ffffff',
+    padding: 16,
+    marginBottom: 24,
+    gap: 12,
+  },
+  pricingTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111111',
+  },
+  pricingRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  pricingLabel: {
+    fontSize: 14,
+    color: '#6c6c6c',
+  },
+  pricingValue: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#111111',
   },
   quickActions: {
     flexDirection: 'row',
@@ -808,6 +973,60 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontWeight: '600',
   },
+  authModalContent: {
+    width: '100%',
+    borderRadius: 16,
+    backgroundColor: '#ffffff',
+    padding: 24,
+  },
+  authModalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111111',
+    marginBottom: 12,
+  },
+  authModalDescription: {
+    fontSize: 14,
+    color: '#444444',
+    marginBottom: 20,
+    lineHeight: 20,
+  },
+  authModalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 12,
+  },
+  authModalSecondary: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#d9d9d9',
+    backgroundColor: '#ffffff',
+  },
+  authModalSecondaryText: {
+    color: '#444444',
+    fontWeight: '600',
+  },
+  authModalPrimary: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    backgroundColor: '#111111',
+  },
+  authModalPrimaryText: {
+    color: '#ffffff',
+    fontWeight: '600',
+  },
+  authModalLink: {
+    marginTop: 16,
+    alignItems: 'center',
+  },
+  authModalLinkText: {
+    color: '#111111',
+    fontWeight: '600',
+    textDecorationLine: 'underline',
+  },
   rentModalContent: {
     width: '100%',
     borderRadius: 20,
@@ -873,6 +1092,24 @@ const styles = StyleSheet.create({
     color: '#111111',
     marginBottom: 8,
   },
+  rentInfoBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 16,
+    backgroundColor: '#eef4ff',
+    borderWidth: 1,
+    borderColor: '#d2e3ff',
+    marginBottom: 18,
+  },
+  rentInfoText: {
+    flex: 1,
+    color: '#1a73e8',
+    fontSize: 14,
+    lineHeight: 20,
+  },
   rentQuantityControl: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -905,52 +1142,6 @@ const styles = StyleSheet.create({
   rentStockLabel: {
     marginTop: 8,
     color: '#6f6f6f',
-  },
-  rentFieldRow: {
-    flexDirection: 'row',
-    gap: 16,
-  },
-  rentFieldHalf: {
-    flex: 1,
-  },
-  rentDateControl: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#e5e5e5',
-    borderRadius: 14,
-    paddingHorizontal: 16,
-    backgroundColor: '#fafafa',
-  },
-  rentDateInput: {
-    flex: 1,
-    fontSize: 15,
-    color: '#111111',
-    paddingVertical: 12,
-    marginRight: 12,
-  },
-  rentCalendarButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#e1e1e1',
-    backgroundColor: '#ffffff',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  rentDurationRow: {
-    borderWidth: 1,
-    borderColor: '#e5e5e5',
-    borderRadius: 14,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    backgroundColor: '#fafafa',
-  },
-  rentDurationValue: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111111',
   },
   rentFooter: {
     marginTop: 8,
