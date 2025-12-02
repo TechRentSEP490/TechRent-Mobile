@@ -1,18 +1,13 @@
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  FlatList,
-  Image,
-  Modal,
-  ScrollView,
-  Text,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { ActivityIndicator, FlatList, Image, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import Toast from 'react-native-toast-message';
+import AccessoriesModal from '@/components/modals/AccessoriesModal';
+import AuthPromptModal from '@/components/modals/AuthPromptModal';
+import DeviceSpecsModal from '@/components/modals/DeviceSpecsModal';
+import RentDeviceModal from '@/components/modals/RentDeviceModal';
 import { products, type ProductDetail } from '../../constants/products';
 import { useAuth } from '@/contexts/AuthContext';
 import { useCart } from '@/contexts/CartContext';
@@ -536,165 +531,43 @@ export default function ProductDetailsScreen() {
         </View>
       </ScrollView>
 
-      <Modal visible={isRentOpen} transparent animationType="fade" onRequestClose={closeRentModal}>
-        <View style={styles.modalBackdrop}>
-          <View style={styles.rentModalContent}>
-            <View style={styles.rentModalHeader}>
-              <Text style={styles.rentModalTitle}>Rent Device</Text>
-              <TouchableOpacity style={styles.rentModalClose} onPress={closeRentModal}>
-                <Ionicons name="close" size={20} color="#111111" />
-              </TouchableOpacity>
-            </View>
+      <RentDeviceModal
+        visible={isRentOpen}
+        name={name}
+        model={model}
+        brand={brand}
+        price={price}
+        quantity={quantity}
+        maxQuantity={maxQuantity}
+        stockLabel={stockLabel}
+        shouldShowTotalCost={shouldShowTotalCost}
+        totalCostLabel={totalCostLabel}
+        rentMode={rentMode}
+        isPrimaryDisabled={isPrimaryDisabled}
+        onClose={closeRentModal}
+        onDecreaseQuantity={decreaseQuantity}
+        onIncreaseQuantity={increaseQuantity}
+        onPrimaryAction={handlePrimaryAction}
+      />
 
-            <View style={styles.rentSummary}>
-              <View style={styles.rentSummaryThumb}>
-                <Ionicons name="phone-portrait-outline" size={24} color="#6f6f6f" />
-              </View>
-              <View style={styles.rentSummaryDetails}>
-                <Text style={styles.rentSummaryName}>{name}</Text>
-                <Text style={styles.rentSummaryMeta}>{`${model} • ${brand}`}</Text>
-                <Text style={styles.rentSummaryPrice}>{price}</Text>
-              </View>
-            </View>
+      <AuthPromptModal
+        visible={isAuthPromptOpen}
+        mode={authPromptMode}
+        onClose={closeAuthPrompt}
+        onNavigate={handleAuthNavigation}
+      />
 
-            <View style={styles.rentFieldGroup}>
-              <Text style={styles.rentFieldLabel}>Quantity</Text>
-              <View style={styles.rentQuantityControl}>
-                <TouchableOpacity
-                  style={[styles.rentQuantityButton, quantity === 1 && styles.rentQuantityButtonDisabled]}
-                  onPress={decreaseQuantity}
-                  disabled={quantity === 1}
-                >
-                  <Ionicons name="remove" size={18} color="#111111" />
-                </TouchableOpacity>
-                <Text style={styles.rentQuantityValue}>{quantity}</Text>
-                <TouchableOpacity
-                  style={[
-                    styles.rentQuantityButton,
-                    quantity === maxQuantity && styles.rentQuantityButtonDisabled,
-                  ]}
-                  onPress={increaseQuantity}
-                  disabled={quantity === maxQuantity}
-                >
-                  <Ionicons name="add" size={18} color="#111111" />
-                </TouchableOpacity>
-              </View>
-              <Text style={styles.rentStockLabel}>{stockLabel}</Text>
-            </View>
+      <DeviceSpecsModal
+        visible={isSpecsOpen}
+        items={normalizedSpecs}
+        onClose={() => setIsSpecsOpen(false)}
+      />
 
-            <View style={styles.rentInfoBanner}>
-              <Ionicons name="calendar-outline" size={18} color="#1a73e8" />
-              <Text style={styles.rentInfoText}>
-                Select your rental dates and shipping address from the cart before checkout.
-              </Text>
-            </View>
-
-            {shouldShowTotalCost && (
-              <View style={styles.rentTotalRow}>
-                <Text style={styles.rentTotalLabel}>Total Cost</Text>
-                <Text style={styles.rentTotalValue}>{totalCostLabel}</Text>
-              </View>
-            )}
-
-            <View style={styles.rentFooter}>
-              <TouchableOpacity
-                style={[
-                  styles.rentPrimaryAction,
-                  rentMode === 'cart' && styles.cartModeButton,
-                  isPrimaryDisabled && styles.disabledButton,
-                ]}
-                disabled={isPrimaryDisabled}
-                onPress={handlePrimaryAction}
-              >
-                <Text
-                  style={[
-                    styles.rentPrimaryActionText,
-                    rentMode === 'cart' && styles.cartModeButtonText,
-                    isPrimaryDisabled && styles.disabledButtonText,
-                  ]}
-                >
-                  {rentMode === 'cart' ? 'Add to Cart' : 'Rent Now'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      <Modal visible={isAuthPromptOpen} transparent animationType="fade" onRequestClose={closeAuthPrompt}>
-        <View style={styles.modalBackdrop}>
-          <View style={styles.authModalContent}>
-            <Text style={styles.authModalTitle}>Sign in required</Text>
-            <Text style={styles.authModalDescription}>
-              {authPromptMode === 'cart'
-                ? 'Sign in or create an account to add this device to your cart.'
-                : 'Sign in or create an account to rent this device.'}
-            </Text>
-            <View style={styles.authModalActions}>
-              <TouchableOpacity style={styles.authModalSecondary} onPress={closeAuthPrompt}>
-                <Text style={styles.authModalSecondaryText}>Maybe later</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.authModalPrimary}
-                onPress={() => handleAuthNavigation('/(auth)/sign-in')}
-              >
-                <Text style={styles.authModalPrimaryText}>Sign In</Text>
-              </TouchableOpacity>
-            </View>
-            <TouchableOpacity
-              style={styles.authModalLink}
-              onPress={() => handleAuthNavigation('/(auth)/sign-up')}
-            >
-              <Text style={styles.authModalLinkText}>New here? Create an account</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-
-      <Modal visible={isSpecsOpen} transparent animationType="fade">
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Device Specifications</Text>
-            {normalizedSpecs.length > 0 ? (
-              normalizedSpecs.map((item) => (
-                <View key={`${item.label}-${item.value}`} style={styles.modalRow}>
-                  <Text style={styles.modalLabel}>{item.label}</Text>
-                  <Text style={styles.modalValue}>{item.value}</Text>
-                </View>
-              ))
-            ) : (
-              <View style={styles.modalEmptyState}>
-                <Text style={styles.modalEmptyText}>
-                  Specifications will appear once they are available.
-                </Text>
-              </View>
-            )}
-            <TouchableOpacity style={styles.modalCloseButton} onPress={() => setIsSpecsOpen(false)}>
-              <Text style={styles.modalCloseText}>Close</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-
-      <Modal visible={isAccessoriesOpen} transparent animationType="fade">
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Accessories</Text>
-            {accessories.map((item) => (
-              <View key={item.label} style={styles.modalRow}>
-                <Text style={styles.modalLabel}>{item.label}</Text>
-                <Text style={styles.modalValue}>{item.category}</Text>
-              </View>
-            ))}
-            <TouchableOpacity
-              style={styles.modalCloseButton}
-              onPress={() => setIsAccessoriesOpen(false)}
-            >
-              <Text style={styles.modalCloseText}>Close</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+      <AccessoriesModal
+        visible={isAccessoriesOpen}
+        items={accessories}
+        onClose={() => setIsAccessoriesOpen(false)}
+      />
     </SafeAreaView>
   );
 }
