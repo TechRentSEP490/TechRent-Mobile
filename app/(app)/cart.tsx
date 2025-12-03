@@ -243,6 +243,28 @@ export default function CartScreen() {
     return formatCurrencyValue(totalAmount, summaryCurrency);
   }, [hasItems, summaryCurrency, totalAmount]);
 
+  const singleItemTotalPaymentLabel = useMemo(() => {
+    if (!hasItems || summaryCurrency === null) {
+      return '—';
+    }
+
+    const [firstItem] = items;
+    const itemCurrency = determineCurrency(firstItem.product);
+
+    if (itemCurrency !== summaryCurrency) {
+      return '—';
+    }
+
+    const lineTotal = getDailyRate(firstItem.product) * firstItem.quantity;
+    const depositRatio = getDepositRatio(firstItem.product);
+    const deviceValue = getDeviceValue(firstItem.product);
+
+    const depositAmount =
+      depositRatio !== null && deviceValue !== null ? depositRatio * deviceValue * firstItem.quantity : 0;
+
+    return formatCurrencyValue(lineTotal + depositAmount, summaryCurrency);
+  }, [hasItems, items, summaryCurrency]);
+
   const { depositTotalLabel, deviceValueTotalLabel, depositTotalValue } = useMemo(() => {
     if (!hasItems || summaryCurrency === null) {
       return {
@@ -315,6 +337,7 @@ export default function CartScreen() {
         { label: 'Total Items', value: deviceLabel },
         { label: 'Daily Total', value: formattedTotal },
         { label: 'Deposit Total', value: depositTotalLabel },
+        { label: 'Single Total Payment', value: singleItemTotalPaymentLabel },
         { label: 'Device Value Total', value: deviceValueTotalLabel },
       ];
 
@@ -322,7 +345,14 @@ export default function CartScreen() {
 
       return metrics;
     },
-    [depositTotalLabel, deviceLabel, deviceValueTotalLabel, formattedTotal, totalCostLabel]
+    [
+      depositTotalLabel,
+      deviceLabel,
+      deviceValueTotalLabel,
+      formattedTotal,
+      singleItemTotalPaymentLabel,
+      totalCostLabel,
+    ]
   );
 
   if (!hasItems && !product) {
