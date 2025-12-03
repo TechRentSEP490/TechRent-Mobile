@@ -322,7 +322,13 @@ export default function CartScreen() {
 
       return metrics;
     },
-    [depositTotalLabel, deviceLabel, deviceValueTotalLabel, formattedTotal, totalCostLabel]
+    [
+      depositTotalLabel,
+      deviceLabel,
+      deviceValueTotalLabel,
+      formattedTotal,
+      totalCostLabel,
+    ]
   );
 
   if (!hasItems && !product) {
@@ -520,7 +526,7 @@ export default function CartScreen() {
 
           <View style={styles.orderBody}>
             {hasItems ? (
-              items.map((item) => {
+              items.map((item, index) => {
                 const itemCurrency = determineCurrency(item.product);
                 const itemDailyRate = getDailyRate(item.product);
                 const itemLineTotal = formatCurrencyValue(itemDailyRate * item.quantity, itemCurrency);
@@ -546,6 +552,13 @@ export default function CartScreen() {
                 const itemDeviceValueTotalLabel =
                   deviceValue !== null && item.quantity > 1
                     ? formatCurrencyValue(deviceValue * item.quantity, itemCurrency)
+                    : null;
+                const singleItemTotalPaymentLabel =
+                  index === 0
+                    ? formatCurrencyValue(
+                        itemDailyRate * item.quantity + (depositAmountPerUnit ?? 0) * item.quantity,
+                        itemCurrency
+                      )
                     : null;
                 const availableStock = Number.isFinite(item.product.stock)
                   ? Math.max(0, Math.floor(item.product.stock))
@@ -614,6 +627,12 @@ export default function CartScreen() {
                         <Text style={styles.orderItemMetricLabel}>Daily rate</Text>
                         <Text style={styles.orderItemMetricValue}>{itemDailyRateLabel}</Text>
                       </View>
+                      {singleItemTotalPaymentLabel ? (
+                        <View style={styles.orderItemMetric}>
+                          <Text style={styles.orderItemMetricLabel}>Single total payment</Text>
+                          <Text style={styles.orderItemMetricValue}>{singleItemTotalPaymentLabel}</Text>
+                        </View>
+                      ) : null}
                       {depositSummary ? (
                         <View style={styles.orderItemMetric}>
                           <Text style={styles.orderItemMetricLabel}>Deposit</Text>
