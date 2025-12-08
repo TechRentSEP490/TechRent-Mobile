@@ -4,6 +4,7 @@ import { ActivityIndicator, Image, Modal, Pressable, ScrollView, Text, View } fr
 import type { ContractResponse } from '@/services/contracts';
 import type { RentalOrderResponse } from '@/services/rental-orders';
 import styles from '@/style/orders.styles';
+import type { DeviceLookupEntry } from '@/types/orders';
 import {
   formatContractStatus,
   formatCurrency,
@@ -11,7 +12,6 @@ import {
   formatRentalPeriod,
   toTitleCase,
 } from '@/utils/order-formatters';
-import type { DeviceLookupEntry } from '@/types/orders';
 
 export type OrderDetailsModalProps = {
   visible: boolean;
@@ -24,6 +24,15 @@ export type OrderDetailsModalProps = {
   onClose: () => void;
   onRetry: () => void;
   onDownloadContract?: () => void;
+  // New props for handover/settlement features
+  onViewHandoverReports?: () => void;
+  onViewSettlement?: () => void;
+  onEndContract?: () => void;
+  hasUnsignedHandover?: boolean;
+  hasPendingSettlement?: boolean;
+  canEndContract?: boolean;
+  daysUntilExpiry?: number;
+  shouldShowHandoverButton?: boolean; // Explicitly control handover button visibility
 };
 
 export default function OrderDetailsModal({
@@ -37,6 +46,14 @@ export default function OrderDetailsModal({
   onClose,
   onRetry,
   onDownloadContract,
+  onViewHandoverReports,
+  onViewSettlement,
+  onEndContract,
+  hasUnsignedHandover,
+  hasPendingSettlement,
+  canEndContract,
+  daysUntilExpiry,
+  shouldShowHandoverButton,
 }: OrderDetailsModalProps) {
   return (
     <Modal animationType="slide" transparent visible={visible} onRequestClose={onClose}>
@@ -197,11 +214,151 @@ export default function OrderDetailsModal({
                       </>
                     )}
                   </Pressable>
+                  {/* Handover Document Button - beside Download Contract */}
+                  {shouldShowHandoverButton && onViewHandoverReports && (
+                    <Pressable
+                      style={[
+                        styles.detailDownloadButton,
+                        { marginTop: 8, borderColor: hasUnsignedHandover ? '#ef4444' : '#3b82f6' },
+                      ]}
+                      onPress={onViewHandoverReports}
+                    >
+                      <Ionicons
+                        name="document-text-outline"
+                        size={18}
+                        color={hasUnsignedHandover ? '#ef4444' : '#3b82f6'}
+                      />
+                      <Text style={[
+                        styles.detailDownloadLabel,
+                        { color: hasUnsignedHandover ? '#ef4444' : '#3b82f6' }
+                      ]}>
+                        Handover Document
+                      </Text>
+                      {hasUnsignedHandover && (
+                        <View style={{
+                          backgroundColor: '#ef4444',
+                          paddingHorizontal: 6,
+                          paddingVertical: 2,
+                          borderRadius: 999,
+                          marginLeft: 8,
+                        }}>
+                          <Text style={{ fontSize: 10, fontWeight: '600', color: '#fff' }}>
+                            Pending
+                          </Text>
+                        </View>
+                      )}
+                    </Pressable>
+                  )}
                   <Text style={styles.detailDownloadHint}>
                     The contract PDF includes signature placeholders for both parties.
                   </Text>
                 </View>
               ) : null}
+
+              {/* Quick Actions Section */}
+              {((shouldShowHandoverButton && onViewHandoverReports) || onViewSettlement || (canEndContract && onEndContract)) && (
+                <View style={styles.detailSection}>
+                  <Text style={styles.detailSectionHeading}>Actions</Text>
+
+                  {/* Rental Expiry Warning */}
+                  {canEndContract && daysUntilExpiry !== undefined && daysUntilExpiry <= 3 && (
+                    <View style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      backgroundColor: daysUntilExpiry <= 1 ? '#fef2f2' : '#fffbeb',
+                      borderRadius: 10,
+                      padding: 12,
+                      marginBottom: 12,
+                      gap: 10,
+                    }}>
+                      <Ionicons
+                        name="time-outline"
+                        size={20}
+                        color={daysUntilExpiry <= 1 ? '#dc2626' : '#f59e0b'}
+                      />
+                      <Text style={{
+                        flex: 1,
+                        fontSize: 14,
+                        color: daysUntilExpiry <= 1 ? '#b91c1c' : '#b45309',
+                      }}>
+                        {daysUntilExpiry <= 0
+                          ? 'Đã hết hạn thuê'
+                          : daysUntilExpiry === 1
+                            ? 'Còn 1 ngày nữa hết hạn thuê'
+                            : `Còn ${daysUntilExpiry} ngày nữa hết hạn`}
+                      </Text>
+                    </View>
+                  )}
+
+                  {/* Settlement Button */}
+                  {onViewSettlement && (
+                    <Pressable
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        backgroundColor: '#f9fafb',
+                        borderRadius: 12,
+                        padding: 14,
+                        marginBottom: 10,
+                        gap: 12,
+                      }}
+                      onPress={onViewSettlement}
+                    >
+                      <View style={{
+                        width: 40,
+                        height: 40,
+                        borderRadius: 20,
+                        backgroundColor: '#dcfce7',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}>
+                        <Ionicons name="wallet-outline" size={20} color="#22c55e" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 15, fontWeight: '600', color: '#111827' }}>
+                          Quyết toán & Hoàn cọc
+                        </Text>
+                        <Text style={{ fontSize: 13, color: '#6b7280' }}>
+                          Xem chi tiết quyết toán
+                        </Text>
+                      </View>
+                      {hasPendingSettlement && (
+                        <View style={{
+                          backgroundColor: '#f59e0b',
+                          paddingHorizontal: 8,
+                          paddingVertical: 4,
+                          borderRadius: 999,
+                        }}>
+                          <Text style={{ fontSize: 11, fontWeight: '600', color: '#fff' }}>
+                            Chờ xác nhận
+                          </Text>
+                        </View>
+                      )}
+                      <Ionicons name="chevron-forward" size={18} color="#9ca3af" />
+                    </Pressable>
+                  )}
+
+                  {/* End Contract Button */}
+                  {canEndContract && onEndContract && (
+                    <Pressable
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        backgroundColor: '#111827',
+                        borderRadius: 12,
+                        padding: 14,
+                        gap: 12,
+                      }}
+                      onPress={onEndContract}
+                    >
+                      <Ionicons name="checkmark-circle-outline" size={22} color="#fff" />
+                      <Text style={{ fontSize: 15, fontWeight: '600', color: '#fff' }}>
+                        Kết thúc hợp đồng
+                      </Text>
+                    </Pressable>
+                  )}
+                </View>
+              )}
             </ScrollView>
           ) : (
             <View style={styles.orderDetailsState}>

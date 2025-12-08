@@ -82,9 +82,8 @@ export async function createRentalOrder(
     method: 'POST',
     headers: {
       ...jsonHeaders,
-      Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
-        session.accessToken
-      }`,
+      Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${session.accessToken
+        }`,
     },
     body: JSON.stringify(payload),
   });
@@ -143,9 +142,8 @@ export async function fetchRentalOrders(
   const response = await fetch(buildApiUrl('rental-orders'), {
     headers: {
       Accept: 'application/json',
-      Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
-        session.accessToken
-      }`,
+      Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${session.accessToken
+        }`,
     },
   });
 
@@ -178,9 +176,8 @@ export const fetchRentalOrderById = async (
   const response = await fetch(buildApiUrl(`rental-orders/${orderId}`), {
     headers: {
       Accept: 'application/json',
-      Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
-        session.accessToken
-      }`,
+      Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${session.accessToken
+        }`,
     },
   });
 
@@ -202,10 +199,55 @@ export const fetchRentalOrderById = async (
   return json.data;
 };
 
+/**
+ * Confirm return of rental order (End Contract)
+ * Customer confirms they want to return the rental, triggering the return process
+ */
+export const confirmReturnRentalOrder = async (
+  session: SessionCredentials,
+  orderId: number
+): Promise<RentalOrderResponse> => {
+  if (!session?.accessToken) {
+    throw new Error('An access token is required to confirm return.');
+  }
+
+  if (!Number.isFinite(orderId) || orderId <= 0) {
+    throw new Error('A valid rental order identifier is required.');
+  }
+
+  const response = await fetch(buildApiUrl(`rental-orders/${orderId}/confirm-return`), {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${session.accessToken
+        }`,
+    },
+  });
+
+  if (!response.ok) {
+    const apiMessage = await parseErrorMessage(response);
+    throw new Error(
+      apiMessage ?? `Unable to confirm return for order ${orderId} (status ${response.status}).`,
+    );
+  }
+
+  const json = (await response.json()) as RentalOrderDetailsResult | null;
+
+  if (!json || json.status !== 'SUCCESS' || !json.data) {
+    throw new Error(
+      json?.message ?? json?.details ?? 'Failed to confirm return. Please try again.',
+    );
+  }
+
+  return json.data;
+};
+
 export const rentalOrdersApi = {
   createRentalOrder,
   fetchRentalOrders,
   fetchRentalOrderById,
+  confirmReturnRentalOrder,
 };
 
 export default rentalOrdersApi;
