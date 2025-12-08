@@ -43,8 +43,13 @@ const styles = StyleSheet.create({
   },
   filterRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
+    alignItems: 'center',
+    gap: 8,
+  },
+  filterScrollContent: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingRight: 12,
   },
   inlineErrorBanner: {
     flexDirection: 'row',

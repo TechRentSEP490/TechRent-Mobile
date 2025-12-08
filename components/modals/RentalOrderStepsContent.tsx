@@ -11,10 +11,10 @@ import {
   View,
 } from 'react-native';
 
-import type { OrderCard } from '@/types/orders';
 import type { ContractResponse } from '@/services/contracts';
 import type { PaymentMethod } from '@/services/payments';
 import styles from '@/style/orders.styles';
+import type { OrderCard } from '@/types/orders';
 import { formatContractStatus, formatCurrency, formatDateTime, formatRentalPeriod } from '@/utils/order-formatters';
 
 const normalizeHtmlContent = (value: string | null | undefined): string => {
@@ -449,25 +449,27 @@ export default function RentalOrderStepsContent({
         <Ionicons name="shield-checkmark" size={16} color="#1f7df4" />
         <Text style={styles.paymentSecurityText}>Your payment information is secure</Text>
       </View>
-      <Pressable
-        style={[
-          styles.primaryButton,
-          styles.buttonFlex,
-          styles.primaryButtonEnabled,
-          isCreatingPayment && styles.primaryButtonBusy,
-        ]}
-        onPress={onCreatePayment}
-        disabled={isCreatingPayment || !activeOrder}
-      >
-        {isCreatingPayment ? (
-          <ActivityIndicator color="#ffffff" />
-        ) : (
-          <Text style={styles.primaryButtonText}>Proceed to Payment</Text>
-        )}
-      </Pressable>
-      <Pressable style={styles.secondaryButton} onPress={onGoBack}>
-        <Text style={styles.secondaryButtonText}>Back</Text>
-      </Pressable>
+      <View style={styles.primaryActions}>
+        <Pressable
+          style={[
+            styles.primaryButton,
+            styles.buttonFlex,
+            styles.primaryButtonEnabled,
+            isCreatingPayment && styles.primaryButtonBusy,
+          ]}
+          onPress={onCreatePayment}
+          disabled={isCreatingPayment || !activeOrder}
+        >
+          {isCreatingPayment ? (
+            <ActivityIndicator color="#ffffff" />
+          ) : (
+            <Text style={styles.primaryButtonText}>Proceed to Payment</Text>
+          )}
+        </Pressable>
+        <Pressable style={[styles.secondaryButton, styles.buttonFlex]} onPress={onGoBack}>
+          <Text style={styles.secondaryButtonText}>Back</Text>
+        </Pressable>
+      </View>
     </View>
   );
 }

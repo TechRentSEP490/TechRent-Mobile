@@ -1,10 +1,3 @@
-import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native';
-import { useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import Toast from 'react-native-toast-message';
 import DatePickerField from '@/components/date-picker-field';
 import SavedAddressesModal from '@/components/modals/SavedAddressesModal';
 import { useAuth } from '@/contexts/AuthContext';
@@ -12,6 +5,7 @@ import { useCart } from '@/contexts/CartContext';
 import { useDeviceModel } from '@/hooks/use-device-model';
 import { createRentalOrder } from '@/services/rental-orders';
 import { fetchShippingAddresses, type ShippingAddress } from '@/services/shipping-addresses';
+import styles from '@/style/cart.styles';
 import { addDays, clampToStartOfDay, formatDisplayDate, parseDateParam } from '@/utils/dates';
 import {
   determineCurrency,
@@ -20,7 +14,13 @@ import {
   getDepositRatio,
   getDeviceValue,
 } from '@/utils/product-pricing';
-import styles from '@/style/cart.styles';
+import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useMemo, useState } from 'react';
+import { ActivityIndicator, Alert, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import Toast from 'react-native-toast-message';
 const formatAddressTimestamp = (value?: string | null) => {
   if (!value) {
     return null;

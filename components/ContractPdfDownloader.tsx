@@ -118,8 +118,16 @@ const buildContractPdfHtml = (
     return formatted;
   };
 
-  const isCustomerSigned =
-    contract.customerSignedBy !== null && contract.customerSignedBy !== undefined;
+  // Check if customer has signed using signedAt field (or fallback to customerSignedBy)
+  const isCustomerSigned = (() => {
+    // First check signedAt - API uses this as primary indicator
+    const signedAt = contract.signedAt;
+    if (signedAt && signedAt !== 'null' && typeof signedAt === 'string' && signedAt.trim().length > 0) {
+      return true;
+    }
+    // Fallback to customerSignedBy for backwards compatibility
+    return contract.customerSignedBy !== null && contract.customerSignedBy !== undefined;
+  })();
   const isAdminSigned = contract.adminSignedBy !== null && contract.adminSignedBy !== undefined;
   const customerBaseName = resolveSignatureName(contract.customerSignedBy ?? null, 'Khách hàng');
   const adminBaseName = resolveSignatureName(contract.adminSignedBy ?? null, 'CÔNG TY TECHRENT');
@@ -127,7 +135,8 @@ const buildContractPdfHtml = (
   const adminSignedCaption = `${adminBaseName} đã ký`;
   const customerUnsignedCaption = '(Ký, ghi rõ họ tên)';
   const adminUnsignedCaption = adminBaseName;
-  const customerSignedAtLabel = normalizeSignatureDateLabel(contract.customerSignedAt ?? null);
+  // Use signedAt for customer signed date if customerSignedAt is not available
+  const customerSignedAtLabel = normalizeSignatureDateLabel(contract.customerSignedAt ?? contract.signedAt ?? null);
   const adminSignedAtLabel = normalizeSignatureDateLabel(contract.adminSignedAt ?? null);
 
   const sections: string[] = [];
@@ -153,32 +162,28 @@ const buildContractPdfHtml = (
           <div class="signature-box">
             ${isAdminSigned ? '<span class="signature-check">✔</span>' : ''}
           </div>
-          ${
-            isAdminSigned
-              ? `<p class="signature-caption">${escapeHtml(adminSignedCaption)}</p>`
-              : `<p class="signature-caption signature-placeholder">${escapeHtml(adminUnsignedCaption)}</p>`
-          }
-          ${
-            adminSignedAtLabel
-              ? `<p class="signature-date">Ký ngày: ${escapeHtml(adminSignedAtLabel)}</p>`
-              : ''
-          }
+          ${isAdminSigned
+      ? `<p class="signature-caption">${escapeHtml(adminSignedCaption)}</p>`
+      : `<p class="signature-caption signature-placeholder">${escapeHtml(adminUnsignedCaption)}</p>`
+    }
+          ${adminSignedAtLabel
+      ? `<p class="signature-date">Ký ngày: ${escapeHtml(adminSignedAtLabel)}</p>`
+      : ''
+    }
         </div>
         <div class="signature-card">
           <p class="signature-role">Đại diện bên B</p>
           <div class="signature-box">
             ${isCustomerSigned ? '<span class="signature-check">✔</span>' : ''}
           </div>
-          ${
-            isCustomerSigned
-              ? `<p class="signature-caption">${escapeHtml(customerSignedCaption)}</p>`
-              : `<p class="signature-caption signature-placeholder">${escapeHtml(customerUnsignedCaption)}</p>`
-          }
-          ${
-            customerSignedAtLabel
-              ? `<p class="signature-date">Ký ngày: ${escapeHtml(customerSignedAtLabel)}</p>`
-              : ''
-          }
+          ${isCustomerSigned
+      ? `<p class="signature-caption">${escapeHtml(customerSignedCaption)}</p>`
+      : `<p class="signature-caption signature-placeholder">${escapeHtml(customerUnsignedCaption)}</p>`
+    }
+          ${customerSignedAtLabel
+      ? `<p class="signature-date">Ký ngày: ${escapeHtml(customerSignedAtLabel)}</p>`
+      : ''
+    }
         </div>
       </div>
     </section>
@@ -425,8 +430,8 @@ export default function ContractPdfDownloader({
         let contractDetails: ContractResponse | null = contract ?? null;
         const hasExistingContent = Boolean(
           contractDetails &&
-            ((contractDetails.contractContent && contractDetails.contractContent.trim().length > 0) ||
-              (contractDetails.termsAndConditions && contractDetails.termsAndConditions.trim().length > 0)),
+          ((contractDetails.contractContent && contractDetails.contractContent.trim().length > 0) ||
+            (contractDetails.termsAndConditions && contractDetails.termsAndConditions.trim().length > 0)),
         );
 
         if (!hasExistingContent) {
@@ -435,8 +440,8 @@ export default function ContractPdfDownloader({
 
         const hasDownloadableContent = Boolean(
           contractDetails &&
-            ((contractDetails.contractContent && contractDetails.contractContent.trim().length > 0) ||
-              (contractDetails.termsAndConditions && contractDetails.termsAndConditions.trim().length > 0)),
+          ((contractDetails.contractContent && contractDetails.contractContent.trim().length > 0) ||
+            (contractDetails.termsAndConditions && contractDetails.termsAndConditions.trim().length > 0)),
         );
 
         if (!hasDownloadableContent || !contractDetails) {
