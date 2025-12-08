@@ -1,4 +1,6 @@
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import Constants from 'expo-constants';
+import * as ExpoLinking from 'expo-linking';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, {
   useCallback,
@@ -149,26 +151,58 @@ const STATUS_TEMPLATES: Record<OrderStatus, { defaultLabel: string; color: strin
 const resolvePaymentUrl = (value: string | undefined, fallback: string) =>
   value && value.trim().length > 0 ? value.trim() : fallback;
 
-// Deep link scheme for redirecting back to the app after payment
-// Format: techrentmobile://payment-result?status=...&orderId=...
+// Universal Links / App Links for VNPay redirect
+// VNPay only supports HTTPS URLs, so we use the website domain with /app prefix
+// The mobile app will intercept these URLs via Universal Links (iOS) / App Links (Android)
+const UNIVERSAL_LINK_BASE = 'https://www.techrent.website/app';
+
+// Generate Universal Link URL for payment result
+const getUniversalLinkPaymentUrl = (status?: string) => {
+  const params = new URLSearchParams();
+  if (status) {
+    params.set('status', status);
+  }
+  const queryString = params.toString();
+  return queryString ? `${UNIVERSAL_LINK_BASE}/payment-result?${queryString}` : `${UNIVERSAL_LINK_BASE}/payment-result`;
+};
+
+// Fallback to custom scheme for development/Expo Go
+const getPaymentResultUrl = (status?: string) => {
+  // In production (standalone app), use Universal Links
+  // In development (Expo Go), use custom scheme
+  const isExpoGo = !Constants.appOwnership || Constants.appOwnership === 'expo';
+
+  if (isExpoGo) {
+    // Expo Go: Use custom scheme (for testing)
+    const baseUrl = ExpoLinking.createURL('payment-result', {
+      queryParams: status ? { status } : undefined,
+    });
+    return baseUrl;
+  }
+
+  // Standalone/Dev Build: Use Universal Links
+  return getUniversalLinkPaymentUrl(status);
+};
+
+// These will be computed at runtime when needed
 const PAYMENT_RETURN_URL = resolvePaymentUrl(
   process.env.EXPO_PUBLIC_PAYMENT_RETURN_URL,
-  'techrentmobile://payment-result',
+  getPaymentResultUrl(),
 );
 
 const PAYMENT_CANCEL_URL = resolvePaymentUrl(
   process.env.EXPO_PUBLIC_PAYMENT_CANCEL_URL,
-  'techrentmobile://payment-result?status=cancel',
+  getPaymentResultUrl('cancel'),
 );
 
 const PAYMENT_SUCCESS_URL = resolvePaymentUrl(
   process.env.EXPO_PUBLIC_PAYMENT_SUCCESS_URL,
-  'techrentmobile://payment-result?status=success',
+  getPaymentResultUrl('success'),
 );
 
 const PAYMENT_FAILURE_URL = resolvePaymentUrl(
   process.env.EXPO_PUBLIC_PAYMENT_FAILURE_URL,
-  'techrentmobile://payment-result?status=failure',
+  getPaymentResultUrl('failure'),
 );
 
 const mapStatusToMeta = (status: string | null | undefined): StatusMeta => {
@@ -1370,6 +1404,11 @@ export default function OrdersScreen() {
         orderId: activeOrder.orderId,
         paymentMethod: payload.paymentMethod,
         amount: payload.amount,
+        // Debug: Log all URLs being sent to backend
+        returnUrl: payload.returnUrl,
+        cancelUrl: payload.cancelUrl,
+        frontendSuccessUrl: payload.frontendSuccessUrl,
+        frontendFailureUrl: payload.frontendFailureUrl,
       });
 
       const paymentSession = await createPayment(payload, activeSession);

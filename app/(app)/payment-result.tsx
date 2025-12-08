@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Pressable,
@@ -11,7 +11,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/contexts/AuthContext';
-import { fetchRentalOrderById } from '@/services/rental-orders';
+import { getInvoiceByRentalOrderId, type Invoice } from '@/services/payments';
 import { formatCurrency } from '@/utils/order-formatters';
 
 // VNPay response codes
@@ -25,13 +25,30 @@ const VNPAY_SUCCESS_CODE = '00';
 // CANCELLED = Cancelled
 const PAYOS_SUCCESS_CODE = '00';
 
-type PaymentStatus = 'loading' | 'success' | 'cancelled' | 'failed';
+// Retry configuration for waiting IPN callback
+// Mobile needs longer delay than web because deep link redirects faster than browser
+const RETRY_CONFIG = {
+    maxRetries: 10,
+    initialDelayMs: 3000,  // 3 seconds for mobile (vs 1.5s for web) - IPN takes time to reach backend
+    maxDelayMs: 3000,
+    backoffMultiplier: 1.2,
+};
+
+// Invoice statuses that indicate payment is complete (same as web)
+const PAID_INVOICE_STATUSES = ['SUCCEEDED', 'COMPLETED', 'PAID'];
+
+// Invoice statuses that indicate still processing
+const PENDING_INVOICE_STATUSES = ['PENDING', 'PROCESSING', 'AWAITING_PAYMENT'];
+
+type PaymentStatus = 'loading' | 'verifying' | 'success' | 'cancelled' | 'failed';
 
 type OrderInfo = {
     orderId: number;
     orderCode: string | null;
     totalAmount: number;
     deviceSummary: string | null;
+    invoiceStatus?: string;  // Changed from orderStatus to invoiceStatus
+    paymentConfirmed: boolean;
 };
 
 export default function PaymentResultScreen() {
@@ -57,9 +74,21 @@ export default function PaymentResultScreen() {
     const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>('loading');
     const [orderInfo, setOrderInfo] = useState<OrderInfo | null>(null);
     const [isLoadingOrder, setIsLoadingOrder] = useState(false);
+    const [retryCount, setRetryCount] = useState(0);
+    const [statusMessage, setStatusMessage] = useState('Đang xử lý kết quả thanh toán...');
+    const retryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    // Determine payment result from query params
-    const paymentResult = useMemo(() => {
+    // Cleanup timeout on unmount
+    useEffect(() => {
+        return () => {
+            if (retryTimeoutRef.current) {
+                clearTimeout(retryTimeoutRef.current);
+            }
+        };
+    }, []);
+
+    // Determine payment result from query params (VNPay/PayOS response)
+    const paymentGatewayResult = useMemo(() => {
         // Check VNPay response
         const vnpResponseCode = params.vnp_ResponseCode;
         if (vnpResponseCode !== undefined) {
@@ -126,72 +155,222 @@ export default function PaymentResultScreen() {
         return null;
     }, [params.vnp_Amount]);
 
-    // Set payment status after determining result
-    useEffect(() => {
-        const timer = setTimeout(() => {
-            setPaymentStatus(paymentResult as PaymentStatus);
-        }, 500); // Small delay for smooth transition
+    // Check if invoice status indicates payment is confirmed
+    const isPaymentConfirmedByStatus = useCallback((status: string | undefined): boolean => {
+        if (!status) return false;
+        const upperStatus = status.toUpperCase();
+        return PAID_INVOICE_STATUSES.some((s) => upperStatus.includes(s));
+    }, []);
 
-        return () => clearTimeout(timer);
-    }, [paymentResult]);
+    // Check if invoice status indicates still pending
+    const isPaymentPendingByStatus = useCallback((status: string | undefined): boolean => {
+        if (!status) return true; // Assume pending if no status
+        const upperStatus = status.toUpperCase();
+        return PENDING_INVOICE_STATUSES.some((s) => upperStatus.includes(s));
+    }, []);
 
-    // Load order details if we have orderId
-    useEffect(() => {
-        if (!extractedOrderId || paymentStatus === 'loading') {
-            return;
-        }
-
-        let isMounted = true;
-
-        const loadOrderDetails = async () => {
+    // Load invoice with retry logic to wait for IPN callback (same logic as web)
+    const loadInvoiceWithRetry = useCallback(
+        async (orderId: number, currentRetry: number = 0) => {
             try {
+                setRetryCount(currentRetry);
                 setIsLoadingOrder(true);
+
+                if (currentRetry === 0) {
+                    setStatusMessage('Đang xác nhận thanh toán với hệ thống...');
+                } else {
+                    setStatusMessage(`Đang đồng bộ với cổng thanh toán (${currentRetry}/${RETRY_CONFIG.maxRetries})...`);
+                }
+
                 const activeSession = session?.accessToken ? session : await ensureSession();
 
-                if (!isMounted || !activeSession?.accessToken) {
+                if (!activeSession?.accessToken) {
+                    console.warn('[PaymentResult] No active session');
+                    setPaymentStatus(paymentGatewayResult === 'success' ? 'success' : 'failed');
+                    setIsLoadingOrder(false);
                     return;
                 }
 
-                const order = await fetchRentalOrderById(activeSession, extractedOrderId);
+                // Fetch invoices for this order (same API as web)
+                const invoices = await getInvoiceByRentalOrderId(activeSession, orderId);
 
-                if (!isMounted) {
-                    return;
-                }
-
-                const totalDue = (order.depositAmount || 0) + (order.totalPrice || 0);
-                const deviceNames = order.orderDetails
-                    ?.map((d) => d.deviceModelName)
-                    .filter((name): name is string => Boolean(name))
-                    .slice(0, 2);
-
-                setOrderInfo({
-                    orderId: extractedOrderId,
-                    orderCode: extractedOrderCode,
-                    totalAmount: extractedAmount ?? totalDue,
-                    deviceSummary: deviceNames?.length ? deviceNames.join(', ') : null,
+                console.log('[PaymentResult] Invoice API response:', {
+                    orderId,
+                    invoicesCount: invoices.length,
+                    retryCount: currentRetry,
                 });
+
+                // Find RENT_PAYMENT invoice with SUCCEEDED status first, then any RENT_PAYMENT
+                let invoice: Invoice | null = null;
+                if (invoices.length > 0) {
+                    invoice =
+                        invoices.find(
+                            (inv) =>
+                                String(inv.invoiceType || '').toUpperCase() === 'RENT_PAYMENT' &&
+                                isPaymentConfirmedByStatus(inv.invoiceStatus)
+                        ) ||
+                        invoices.find(
+                            (inv) => String(inv.invoiceType || '').toUpperCase() === 'RENT_PAYMENT'
+                        ) ||
+                        invoices[0];
+                }
+
+                if (invoice) {
+                    const invoiceStatus = invoice.invoiceStatus;
+                    const isConfirmed = isPaymentConfirmedByStatus(invoiceStatus);
+                    const isPending = isPaymentPendingByStatus(invoiceStatus);
+
+                    console.log('[PaymentResult] Invoice status check:', {
+                        invoiceId: invoice.invoiceId,
+                        invoiceStatus,
+                        isConfirmed,
+                        isPending,
+                        retryCount: currentRetry,
+                    });
+
+                    const newOrderInfo: OrderInfo = {
+                        orderId,
+                        orderCode: extractedOrderCode,
+                        totalAmount: extractedAmount ?? invoice.totalAmount ?? 0,
+                        deviceSummary: null,
+                        invoiceStatus,
+                        paymentConfirmed: isConfirmed,
+                    };
+
+                    // If payment is confirmed, show success immediately
+                    if (isConfirmed) {
+                        console.log('[PaymentResult] ✅ Payment confirmed as SUCCEEDED');
+                        setOrderInfo(newOrderInfo);
+                        setPaymentStatus('success');
+                        setIsLoadingOrder(false);
+                        return;
+                    }
+
+                    // If still pending and we have retries left, wait and retry
+                    if (isPending && currentRetry < RETRY_CONFIG.maxRetries && paymentGatewayResult === 'success') {
+                        const delay = Math.min(
+                            RETRY_CONFIG.initialDelayMs * Math.pow(RETRY_CONFIG.backoffMultiplier, currentRetry),
+                            RETRY_CONFIG.maxDelayMs
+                        );
+
+                        console.log(`[PaymentResult] ⏳ Invoice still ${invoiceStatus}, retrying in ${delay}ms...`);
+
+                        retryTimeoutRef.current = setTimeout(() => {
+                            loadInvoiceWithRetry(orderId, currentRetry + 1);
+                        }, delay);
+                        return;
+                    }
+
+                    // Max retries reached - show success based on VNPay response
+                    console.log('[PaymentResult] Max retries reached. Showing success based on gateway response.');
+                    setOrderInfo(newOrderInfo);
+                    if (paymentGatewayResult === 'success') {
+                        setPaymentStatus('success');
+                    } else {
+                        setPaymentStatus(paymentGatewayResult as PaymentStatus);
+                    }
+                    setIsLoadingOrder(false);
+                } else {
+                    // No invoice found - retry if possible
+                    if (currentRetry < RETRY_CONFIG.maxRetries && paymentGatewayResult === 'success') {
+                        const delay = Math.min(
+                            RETRY_CONFIG.initialDelayMs * Math.pow(RETRY_CONFIG.backoffMultiplier, currentRetry),
+                            RETRY_CONFIG.maxDelayMs
+                        );
+
+                        console.log(`[PaymentResult] ⏳ No invoice found, retrying in ${delay}ms...`);
+
+                        retryTimeoutRef.current = setTimeout(() => {
+                            loadInvoiceWithRetry(orderId, currentRetry + 1);
+                        }, delay);
+                        return;
+                    }
+
+                    console.warn('[PaymentResult] ❌ No invoice found after max retries');
+                    setOrderInfo({
+                        orderId,
+                        orderCode: extractedOrderCode,
+                        totalAmount: extractedAmount ?? 0,
+                        deviceSummary: null,
+                        paymentConfirmed: false,
+                    });
+                    setPaymentStatus(paymentGatewayResult === 'success' ? 'success' : 'failed');
+                    setIsLoadingOrder(false);
+                }
             } catch (error) {
-                console.warn('[PaymentResult] Failed to load order details:', error);
-                // Still show result even if order loading fails
+                console.warn('[PaymentResult] Failed to load invoice:', error);
+
+                // Retry on error if we have retries left
+                if (currentRetry < RETRY_CONFIG.maxRetries && paymentGatewayResult === 'success') {
+                    const delay = Math.min(
+                        RETRY_CONFIG.initialDelayMs * Math.pow(RETRY_CONFIG.backoffMultiplier, currentRetry),
+                        RETRY_CONFIG.maxDelayMs
+                    );
+
+                    console.log(`[PaymentResult] ⏳ Error occurred, retrying in ${delay}ms...`);
+
+                    retryTimeoutRef.current = setTimeout(() => {
+                        loadInvoiceWithRetry(orderId, currentRetry + 1);
+                    }, delay);
+                    return;
+                }
+
+                // Fallback: show status based on gateway response
+                setOrderInfo({
+                    orderId,
+                    orderCode: extractedOrderCode,
+                    totalAmount: extractedAmount ?? 0,
+                    deviceSummary: null,
+                    paymentConfirmed: false,
+                });
+                setPaymentStatus(paymentGatewayResult === 'success' ? 'success' : 'failed');
+                setIsLoadingOrder(false);
+            }
+        },
+        [session, ensureSession, extractedOrderCode, extractedAmount, paymentGatewayResult, isPaymentConfirmedByStatus, isPaymentPendingByStatus]
+    );
+
+    // Main effect to process payment result
+    useEffect(() => {
+        // If payment gateway says failure/cancelled, show immediately
+        if (paymentGatewayResult !== 'success') {
+            setPaymentStatus(paymentGatewayResult as PaymentStatus);
+
+            // For failed payments, just set basic info without API call
+            if (extractedOrderId) {
                 setOrderInfo({
                     orderId: extractedOrderId,
                     orderCode: extractedOrderCode,
                     totalAmount: extractedAmount ?? 0,
                     deviceSummary: null,
+                    paymentConfirmed: false,
                 });
-            } finally {
-                if (isMounted) {
-                    setIsLoadingOrder(false);
-                }
             }
-        };
+            return;
+        }
 
-        loadOrderDetails();
+        // Payment gateway says success - verify with backend via invoice API
+        setPaymentStatus('verifying');
+
+        if (extractedOrderId) {
+            // Add initial delay to give IPN callback time to reach backend
+            const initialDelay = RETRY_CONFIG.initialDelayMs;
+            console.log(`[PaymentResult] Waiting ${initialDelay}ms for IPN callback...`);
+
+            retryTimeoutRef.current = setTimeout(() => {
+                loadInvoiceWithRetry(extractedOrderId, 0);
+            }, initialDelay);
+        } else {
+            // No order ID - just show success based on gateway response
+            setPaymentStatus('success');
+        }
 
         return () => {
-            isMounted = false;
+            if (retryTimeoutRef.current) {
+                clearTimeout(retryTimeoutRef.current);
+            }
         };
-    }, [extractedOrderId, extractedOrderCode, extractedAmount, paymentStatus, session, ensureSession]);
+    }, [paymentGatewayResult, extractedOrderId, extractedOrderCode, extractedAmount, loadInvoiceWithRetry]);
 
     const handleGoHome = () => {
         router.replace('/(app)/(tabs)/home');
@@ -219,12 +398,18 @@ export default function PaymentResultScreen() {
         }
     };
 
-    if (paymentStatus === 'loading') {
+    // Loading/Verifying state
+    if (paymentStatus === 'loading' || paymentStatus === 'verifying') {
         return (
             <SafeAreaView style={styles.container}>
                 <View style={styles.loadingContainer}>
                     <ActivityIndicator size="large" color="#111111" />
-                    <Text style={styles.loadingText}>Đang xử lý kết quả thanh toán...</Text>
+                    <Text style={styles.loadingText}>{statusMessage}</Text>
+                    {retryCount > 0 && (
+                        <Text style={styles.loadingSubtext}>
+                            Đang đồng bộ với cổng thanh toán...
+                        </Text>
+                    )}
                 </View>
             </SafeAreaView>
         );
@@ -232,6 +417,7 @@ export default function PaymentResultScreen() {
 
     const isSuccess = paymentStatus === 'success';
     const isCancelled = paymentStatus === 'cancelled';
+    const paymentConfirmedByBackend = orderInfo?.paymentConfirmed ?? false;
 
     return (
         <SafeAreaView style={styles.container}>
@@ -338,6 +524,11 @@ const styles = StyleSheet.create({
     loadingText: {
         fontSize: 16,
         color: '#6b7280',
+    },
+    loadingSubtext: {
+        fontSize: 13,
+        color: '#9ca3af',
+        marginTop: 4,
     },
     content: {
         flex: 1,
