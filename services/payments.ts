@@ -155,4 +155,75 @@ export async function createPayment(
   return normalizePaymentSession(json.data);
 }
 
+// Invoice types
+export type Invoice = {
+  invoiceId: number;
+  rentalOrderId: number;
+  invoiceType: string;
+  paymentMethod: string;
+  invoiceStatus: string;
+  subTotal: number;
+  taxAmount: number;
+  discountAmount: number;
+  totalAmount: number;
+  depositApplied: number;
+  paymentDate: string | null;
+  dueDate: string | null;
+  issueDate: string | null;
+  pdfUrl: string | null;
+};
+
+type InvoiceApiResponse = {
+  status: string;
+  message?: string;
+  details?: string;
+  code: number;
+  data: Invoice | Invoice[] | null;
+};
+
+/**
+ * Get invoice(s) by rental order ID
+ * Returns invoice details including invoiceStatus
+ */
+export async function getInvoiceByRentalOrderId(
+  session: SessionCredentials,
+  rentalOrderId: number,
+): Promise<Invoice[]> {
+  if (!session?.accessToken) {
+    throw new Error('An access token is required to get invoice.');
+  }
+
+  if (!Number.isFinite(rentalOrderId) || rentalOrderId <= 0) {
+    throw new Error('A valid rental order ID is required.');
+  }
+
+  const response = await fetch(buildApiUrl('v1', `payments/invoice/${rentalOrderId}`), {
+    method: 'GET',
+    headers: {
+      Accept: 'application/json',
+      Authorization: buildAuthHeader(session),
+    },
+  });
+
+  if (!response.ok) {
+    const apiMessage = await parseErrorMessage(response);
+    throw new Error(apiMessage ?? `Unable to get invoice for order ${rentalOrderId} (status ${response.status}).`);
+  }
+
+  const json = (await response.json()) as InvoiceApiResponse | null;
+
+  if (!json || json.status !== 'SUCCESS') {
+    throw new Error(json?.message ?? json?.details ?? 'Failed to get invoice.');
+  }
+
+  // API may return a single invoice or an array
+  if (Array.isArray(json.data)) {
+    return json.data;
+  } else if (json.data) {
+    return [json.data];
+  }
+
+  return [];
+}
+
 export default createPayment;
