@@ -1,8 +1,26 @@
 /**
- * Handover Report Types
- * Used for checkout (delivery) and checkin (return) handover reports
+ * Handover Report Types - Các kiểu dữ liệu cho Biên bản bàn giao & Thu hồi
+ * 
+ * Có 2 loại biên bản:
+ * 1. CHECKOUT (Bàn giao): Khi giao thiết bị cho khách thuê
+ * 2. CHECKIN (Thu hồi): Khi thu hồi thiết bị từ khách
+ * 
+ * Quy trình ký biên bản:
+ * 1. Nhân viên tạo biên bản (DRAFT)
+ * 2. Nhân viên ký trước (STAFF_SIGNED)
+ * 3. Khách hàng ký sau (BOTH_SIGNED hoặc COMPLETED)
+ * 
+ * Lưu ý: Khách CHỈ được ký khi nhân viên đã ký trước (staffSigned = true)
  */
 
+/**
+ * Trạng thái biên bản bàn giao
+ * - DRAFT: Mới tạo, chưa ai ký
+ * - STAFF_SIGNED: Nhân viên đã ký, CHỜ KHÁCH KÝ → Đây là lúc khách có thể ký
+ * - CUSTOMER_SIGNED: Khách đã ký (hiếm khi xảy ra trước nhân viên)
+ * - BOTH_SIGNED: Cả hai bên đã ký xong
+ * - COMPLETED: Biên bản hoàn tất, được lưu trữ
+ */
 export type HandoverReportStatus =
     | 'DRAFT'
     | 'STAFF_SIGNED'
@@ -10,48 +28,73 @@ export type HandoverReportStatus =
     | 'BOTH_SIGNED'
     | 'COMPLETED';
 
+/**
+ * Loại biên bản
+ * - CHECKOUT: Biên bản BÀN GIAO (giao thiết bị cho khách)
+ * - CHECKIN: Biên bản THU HỒI (thu lại thiết bị từ khách)
+ */
 export type HandoverReportType = 'CHECKOUT' | 'CHECKIN';
 
+/**
+ * Thông tin thiết bị trong biên bản
+ */
 export type HandoverReportItem = {
-    deviceId: number;
-    deviceSerialNumber?: string;
-    deviceModelName?: string;
-    evidenceUrls?: string[];
+    deviceId: number;              // ID thiết bị cụ thể (từng máy)
+    deviceSerialNumber?: string;   // Số serial thiết bị
+    deviceModelName?: string;      // Tên model thiết bị
+    evidenceUrls?: string[];       // Link ảnh chụp tình trạng thiết bị
 };
 
+/**
+ * Thông tin nhân viên giao/nhận
+ */
 export type HandoverReportStaff = {
     staffId: number;
     fullName: string;
     username: string;
     phoneNumber?: string;
     email?: string;
-    role?: string;
+    role?: string;                 // Vai trò: TECHNICIAN, DELIVERY, etc.
 };
 
+/**
+ * Cấu trúc dữ liệu Biên bản bàn giao/thu hồi
+ */
 export type HandoverReport = {
-    handoverReportId: number;
-    taskId?: number;
-    orderId: number;
-    customerInfo?: string;
-    technicianInfo?: string;
-    handoverType: HandoverReportType;
-    status: HandoverReportStatus;
-    handoverDateTime: string;
-    handoverLocation: string;
-    deliveryDateTime?: string;
+    handoverReportId: number;      // ID biên bản
+    taskId?: number;               // ID task liên quan (nếu có)
+    orderId: number;               // ID đơn hàng
+    customerInfo?: string;         // Thông tin khách hàng (tên, SĐT, CMND)
+    technicianInfo?: string;       // Thông tin nhân viên kỹ thuật
+    handoverType: HandoverReportType; // CHECKOUT hoặc CHECKIN
+    status: HandoverReportStatus;  // Trạng thái biên bản
+    handoverDateTime: string;      // Thời gian bàn giao thực tế
+    handoverLocation: string;      // Địa điểm bàn giao
+    deliveryDateTime?: string;     // Thời gian giao hàng dự kiến
+    /**
+     * Trạng thái ký tên - QUAN TRỌNG cho validation:
+     * - customerSigned: Khách đã ký chưa?
+     * - staffSigned: Nhân viên đã ký chưa?
+     * 
+     * Logic kiểm tra để hiển thị nút "Ký biên bản" cho khách:
+     * canSign = staffSigned === true && customerSigned === false
+     */
     customerSigned: boolean;
     staffSigned: boolean;
-    customerSignature?: string;
-    staffSignature?: string;
-    customerSignedAt?: string | null;
-    staffSignedAt?: string | null;
-    deliveryStaff?: HandoverReportStaff[];
-    items?: HandoverReportItem[];
-    deviceConditions?: unknown[];
-    discrepancies?: unknown[];
-    createdByStaff?: HandoverReportStaff;
+    customerSignature?: string;    // Chữ ký số của khách (base64 hoặc URL)
+    staffSignature?: string;       // Chữ ký số của nhân viên
+    customerSignedAt?: string | null; // Thời điểm khách ký
+    staffSignedAt?: string | null;    // Thời điểm nhân viên ký
+    deliveryStaff?: HandoverReportStaff[]; // Danh sách nhân viên giao hàng
+    items?: HandoverReportItem[];         // Danh sách thiết bị trong biên bản
+    deviceConditions?: unknown[];         // Tình trạng thiết bị
+    discrepancies?: unknown[];            // Các điểm không khớp/khác biệt
+    createdByStaff?: HandoverReportStaff; // Nhân viên tạo biên bản
 };
 
+/**
+ * Response wrapper từ API - Danh sách biên bản
+ */
 export type HandoverReportListResponse = {
     status: string;
     message?: string;
@@ -59,6 +102,9 @@ export type HandoverReportListResponse = {
     data: HandoverReport[] | null;
 };
 
+/**
+ * Response wrapper từ API - Chi tiết biên bản
+ */
 export type HandoverReportDetailResponse = {
     status: string;
     message?: string;
@@ -66,25 +112,40 @@ export type HandoverReportDetailResponse = {
     data: HandoverReport | null;
 };
 
+/**
+ * Payload gửi mã PIN xác thực qua email
+ * Dùng để xác minh danh tính trước khi ký
+ */
 export type SendHandoverPinPayload = {
-    email: string;
+    email: string;  // Email nhận mã PIN (6 số)
 };
 
+/**
+ * Payload ký biên bản
+ * Cần cả mã PIN (xác thực) và chữ ký số
+ */
 export type SignHandoverPayload = {
-    pinCode: string;
-    customerSignature: string;
+    pinCode: string;           // Mã PIN 6 số đã gửi qua email
+    customerSignature: string; // Chữ ký số (thường là base64 của ảnh ký)
 };
 
-// Helper to translate status to Vietnamese
+/**
+ * Mapping trạng thái biên bản sang nhãn hiển thị và màu sắc
+ * - label: Nhãn tiếng Việt cho người dùng
+ * - color: Mã màu HEX dùng cho badge/tag
+ */
 export const HANDOVER_STATUS_MAP: Record<HandoverReportStatus, { label: string; color: string }> = {
-    DRAFT: { label: 'Bản nháp', color: '#6b7280' },
-    STAFF_SIGNED: { label: 'Chờ khách ký', color: '#f59e0b' },
-    CUSTOMER_SIGNED: { label: 'Khách đã ký', color: '#3b82f6' },
-    BOTH_SIGNED: { label: 'Đã ký đầy đủ', color: '#10b981' },
-    COMPLETED: { label: 'Hoàn thành', color: '#10b981' },
+    DRAFT: { label: 'Bản nháp', color: '#6b7280' },           // Xám - chưa ai ký
+    STAFF_SIGNED: { label: 'Chờ khách ký', color: '#f59e0b' }, // Vàng - KHÁCH CẦN KÝ!
+    CUSTOMER_SIGNED: { label: 'Khách đã ký', color: '#3b82f6' }, // Xanh dương
+    BOTH_SIGNED: { label: 'Đã ký đầy đủ', color: '#10b981' },    // Xanh lá - hoàn thành
+    COMPLETED: { label: 'Hoàn thành', color: '#10b981' },        // Xanh lá - lưu trữ
 };
 
+/**
+ * Mapping loại biên bản sang tên tiếng Việt
+ */
 export const HANDOVER_TYPE_MAP: Record<HandoverReportType, string> = {
-    CHECKOUT: 'Biên bản bàn giao',
-    CHECKIN: 'Biên bản thu hồi',
+    CHECKOUT: 'Biên bản bàn giao',  // Khi GIAO thiết bị cho khách
+    CHECKIN: 'Biên bản thu hồi',    // Khi THU LẠI thiết bị từ khách
 };
