@@ -13,8 +13,11 @@ export type CreatePaymentPayload = {
   paymentMethod: PaymentMethod;
   amount: number;
   description: string;
-  returnUrl: string;
-  cancelUrl: string;
+  // DO NOT USE returnUrl for Mobile Deep Links. Leave this NULL/undefined.
+  // VNPay needs to redirect to Backend first for status updates.
+  // Put your deep links in frontendSuccessUrl/frontendFailureUrl instead.
+  returnUrl?: string | null;
+  cancelUrl?: string | null;
   frontendSuccessUrl: string;
   frontendFailureUrl: string;
 };

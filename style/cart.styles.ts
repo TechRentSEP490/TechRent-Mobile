@@ -91,6 +91,12 @@ const styles = StyleSheet.create({
   summaryValueHighlight: {
     color: '#d32f2f',
   },
+  summaryDescription: {
+    fontSize: 11,
+    color: '#6f6f6f',
+    marginTop: 2,
+    fontStyle: 'italic',
+  },
   orderCard: {
     borderRadius: 20,
     borderWidth: 1,
@@ -157,6 +163,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#f4f4f4',
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  productImage: {
+    width: 48,
+    height: 48,
+    borderRadius: 16,
   },
   productDetails: {
     flex: 1,

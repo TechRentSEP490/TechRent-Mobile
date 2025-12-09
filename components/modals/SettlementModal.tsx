@@ -40,11 +40,20 @@ export default function SettlementModal({
     onReject,
     onRefresh,
 }: SettlementModalProps) {
+    // ========== STATE MANAGEMENT ==========
+    // Trạng thái xử lý: đang gọi API hay không
     const [isProcessing, setIsProcessing] = useState(false);
+    // Lỗi khi thực hiện action (chấp nhận/từ chối)
     const [actionError, setActionError] = useState<string | null>(null);
+    // Hiển thị form nhập lý do từ chối hay không
     const [showRejectForm, setShowRejectForm] = useState(false);
+    // Lý do từ chối do người dùng nhập
     const [rejectReason, setRejectReason] = useState('');
 
+    /**
+     * Format số tiền sang định dạng VND
+     * Sử dụng Intl.NumberFormat với locale 'vi-VN'
+     */
     const formatCurrency = (amount: number) => {
         return new Intl.NumberFormat('vi-VN', {
             style: 'currency',
@@ -52,13 +61,21 @@ export default function SettlementModal({
         }).format(amount);
     };
 
+    /**
+     * Xử lý chấp nhận quyết toán
+     * 1. Set trạng thái đang xử lý (hiển thị loading)
+     * 2. Gọi API qua callback onAccept()
+     * 3. Nếu thành công: đóng modal
+     * 4. Nếu lỗi: hiển thị thông báo lỗi
+     */
     const handleAccept = async () => {
         setIsProcessing(true);
         setActionError(null);
         try {
             await onAccept();
-            onClose();
+            onClose(); // Đóng modal sau khi thành công
         } catch (err) {
+            // Lấy message từ Error object hoặc dùng message mặc định
             const message = err instanceof Error ? err.message : 'Không thể chấp nhận quyết toán';
             setActionError(message);
         } finally {
@@ -66,16 +83,23 @@ export default function SettlementModal({
         }
     };
 
+    /**
+     * Xử lý từ chối quyết toán
+     * 
+     * VALIDATION: Bắt buộc phải nhập lý do từ chối
+     * - Nếu rỗng hoặc chỉ có khoảng trắng → báo lỗi, không gọi API
+     */
     const handleReject = async () => {
+        // Validation: Kiểm tra lý do từ chối không được rỗng
         if (!rejectReason.trim()) {
             setActionError('Vui lòng nhập lý do từ chối');
-            return;
+            return; // Dừng, không gọi API
         }
 
         setIsProcessing(true);
         setActionError(null);
         try {
-            await onReject(rejectReason);
+            await onReject(rejectReason); // Gửi lý do kèm theo
             onClose();
         } catch (err) {
             const message = err instanceof Error ? err.message : 'Không thể từ chối quyết toán';
@@ -85,9 +109,21 @@ export default function SettlementModal({
         }
     };
 
+    /**
+     * ĐIỀU KIỆN LOGIC: Kiểm tra khách có thể phản hồi quyết toán không
+     * 
+     * Chỉ cho phép phản hồi khi:
+     * - settlement tồn tại (không null)
+     * - Trạng thái đang là AWAITING_RESPONSE (chờ phản hồi)
+     * 
+     * Các trạng thái khác (PENDING, ISSUED, REJECTED, CLOSED) không cho phép phản hồi
+     */
     const canRespond = settlement?.state === 'AWAITING_RESPONSE';
 
     const renderContent = () => {
+        // ========== CÁC TRẠNG THÁI HIỂN THỊ ==========
+
+        // Trạng thái: Đang tải
         if (loading) {
             return (
                 <View style={styles.loadingState}>
@@ -97,6 +133,7 @@ export default function SettlementModal({
             );
         }
 
+        // Trạng thái: Lỗi khi tải
         if (error) {
             return (
                 <View style={styles.errorState}>
@@ -111,6 +148,8 @@ export default function SettlementModal({
             );
         }
 
+        // Trạng thái: Chưa có quyết toán
+        // Xảy ra khi đơn hàng chưa hoàn tất quy trình thu hồi
         if (!settlement) {
             return (
                 <View style={styles.emptyState}>
@@ -123,15 +162,36 @@ export default function SettlementModal({
             );
         }
 
+        // ========== LOGIC XỬ LÝ DỮ LIỆU QUYẾT TOÁN ==========
+
+        /**
+         * Lấy thông tin hiển thị cho trạng thái
+         * - label: Nhãn tiếng Việt
+         * - color: Màu sắc badge
+         * Fallback về giá trị mặc định nếu trạng thái không có trong map
+         */
         const statusMeta = SETTLEMENT_STATUS_MAP[settlement.state] || {
             label: settlement.state,
             color: '#6b7280',
         };
 
+        /**
+         * PHÉP TÍNH QUAN TRỌNG: Tách số tiền quyết toán
+         * 
+         * Input: settlement.finalReturnAmount (có thể âm hoặc dương)
+         * Output:
+         * - refundAmount: Số tiền khách được HOÀN (khi finalAmount > 0)
+         * - customerDueAmount: Số tiền khách phải TRẢ THÊM (khi finalAmount < 0)
+         * - netAmount: Giá trị gốc, dùng để xác định hiển thị "được hoàn" hay "phải trả"
+         */
         const { refundAmount, customerDueAmount, netAmount } = splitSettlementAmounts(
             settlement.finalReturnAmount
         );
 
+        /**
+         * Kiểm tra có phí phát sinh không
+         * Nếu có bất kỳ phí nào > 0, hiển thị section "Các khoản phí"
+         */
         const hasFees = settlement.damageFee > 0 || settlement.lateFee > 0 || settlement.accessoryFee > 0;
 
         return (
@@ -139,6 +199,10 @@ export default function SettlementModal({
                 {/* Status Badge */}
                 <View style={styles.statusSection}>
                     <View style={[styles.statusBadge, { backgroundColor: statusMeta.color + '20' }]}>
+                        {/* Icon thay đổi theo trạng thái:
+                            - ISSUED/CLOSED: checkmark (thành công)
+                            - REJECTED: close (thất bại)  
+                            - Còn lại: time (đang chờ) */}
                         <Ionicons
                             name={
                                 settlement.state === 'ISSUED' || settlement.state === 'CLOSED'

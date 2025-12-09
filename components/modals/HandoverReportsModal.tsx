@@ -29,6 +29,17 @@ type HandoverReportsModalProps = {
     onRefresh: () => void;
 };
 
+/**
+ * HandoverReportsModal - Modal hiển thị danh sách biên bản bàn giao/thu hồi
+ * 
+ * Có 2 tab:
+ * - CHECKOUT (Bàn giao): Biên bản khi giao thiết bị cho khách
+ * - CHECKIN (Thu hồi): Biên bản khi thu lại thiết bị từ khách
+ * 
+ * Khách có thể:
+ * 1. Xem PDF biên bản
+ * 2. Ký biên bản (nếu nhân viên đã ký trước)
+ */
 export default function HandoverReportsModal({
     visible,
     reports,
@@ -39,12 +50,24 @@ export default function HandoverReportsModal({
     onSignReport,
     onRefresh,
 }: HandoverReportsModalProps) {
+    // Trạng thái tab đang active: CHECKOUT hoặc CHECKIN
     const [activeTab, setActiveTab] = useState<'CHECKOUT' | 'CHECKIN'>('CHECKOUT');
 
+    /**
+     * LOGIC FILTER: Tách biên bản theo loại
+     * 
+     * - checkoutReports: Chỉ lấy biên bản BÀN GIAO (handoverType = 'CHECKOUT')
+     * - checkinReports: Chỉ lấy biên bản THU HỒI (handoverType = 'CHECKIN')
+     * - currentReports: Danh sách hiển thị dựa trên tab đang chọn
+     */
     const checkoutReports = reports.filter((r) => r.handoverType === 'CHECKOUT');
     const checkinReports = reports.filter((r) => r.handoverType === 'CHECKIN');
     const currentReports = activeTab === 'CHECKOUT' ? checkoutReports : checkinReports;
 
+    /**
+     * Format ngày giờ sang định dạng Việt Nam
+     * Ví dụ: "15/01/2024, 10:30"
+     */
     const formatDateTime = (dateString: string) => {
         try {
             const date = new Date(dateString);
@@ -60,16 +83,30 @@ export default function HandoverReportsModal({
         }
     };
 
+    /**
+     * VALIDATION QUAN TRỌNG: Kiểm tra khách có thể ký biên bản không
+     * 
+     * Điều kiện để nút "Ký biên bản" xuất hiện:
+     * 1. Trạng thái biên bản là STAFF_SIGNED (nhân viên đã ký)
+     * 2. staffSigned = true (xác nhận nhân viên đã ký)
+     * 3. customerSigned = false (khách chưa ký)
+     * 
+     * Quy tắc nghiệp vụ: Nhân viên PHẢI ký trước, sau đó khách mới được ký
+     */
     const canSign = (report: HandoverReport) => {
-        // Customer can sign only when status is STAFF_SIGNED (staff signed but customer hasn't)
         return report.status === 'STAFF_SIGNED' && report.staffSigned && !report.customerSigned;
     };
 
+    /**
+     * Render từng biên bản trong danh sách
+     */
     const renderReport = ({ item }: { item: HandoverReport }) => {
+        // Lấy thông tin hiển thị trạng thái (label + màu)
         const statusMeta = HANDOVER_STATUS_MAP[item.status] || {
             label: item.status,
             color: '#6b7280',
         };
+        // Kiểm tra có cần hiển thị nút ký không
         const needsSign = canSign(item);
 
         return (
@@ -79,6 +116,9 @@ export default function HandoverReportsModal({
             >
                 <View style={styles.reportHeader}>
                     <View style={styles.reportTitleRow}>
+                        {/* Icon thay đổi theo loại biên bản:
+                            - CHECKOUT: cube (giao hàng)
+                            - CHECKIN: return (thu hồi) */}
                         <Ionicons
                             name={item.handoverType === 'CHECKOUT' ? 'cube-outline' : 'return-down-back-outline'}
                             size={20}
@@ -88,6 +128,7 @@ export default function HandoverReportsModal({
                             {HANDOVER_TYPE_MAP[item.handoverType]}
                         </Text>
                     </View>
+                    {/* Status Badge với màu động */}
                     <View style={[styles.statusBadge, { backgroundColor: statusMeta.color + '20' }]}>
                         <Text style={[styles.statusText, { color: statusMeta.color }]}>
                             {statusMeta.label}
@@ -96,10 +137,12 @@ export default function HandoverReportsModal({
                 </View>
 
                 <View style={styles.reportContent}>
+                    {/* Thời gian bàn giao */}
                     <View style={styles.infoRow}>
                         <Ionicons name="calendar-outline" size={16} color="#9ca3af" />
                         <Text style={styles.infoText}>{formatDateTime(item.handoverDateTime)}</Text>
                     </View>
+                    {/* Địa điểm bàn giao (hiển thị nếu có) */}
                     {item.handoverLocation && (
                         <View style={styles.infoRow}>
                             <Ionicons name="location-outline" size={16} color="#9ca3af" />
@@ -110,7 +153,9 @@ export default function HandoverReportsModal({
                     )}
                 </View>
 
+                {/* Các nút hành động */}
                 <View style={styles.reportActions}>
+                    {/* Nút xem PDF - luôn hiển thị */}
                     <Pressable
                         style={styles.viewButton}
                         onPress={() => onViewReport(item)}
@@ -119,6 +164,8 @@ export default function HandoverReportsModal({
                         <Text style={styles.viewButtonText}>Xem PDF</Text>
                     </Pressable>
 
+                    {/* Nút ký biên bản - CHỈ hiển thị khi canSign = true
+                        (nhân viên đã ký, khách chưa ký) */}
                     {needsSign && (
                         <Pressable
                             style={styles.signButton}

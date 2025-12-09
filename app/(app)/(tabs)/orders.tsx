@@ -50,6 +50,7 @@ import {
   sendHandoverReportPin,
   signHandoverReport,
 } from '@/services/handover-reports';
+import { fetchInvoicesByOrderId, type Invoice } from '@/services/invoices';
 import {
   createPayment,
   type PaymentMethod,
@@ -65,6 +66,10 @@ import {
   fetchSettlementByOrderId,
   respondSettlement,
 } from '@/services/settlements';
+import {
+  getConfirmedReturnOrders,
+  saveConfirmedReturnOrder,
+} from '@/storage/confirmed-returns';
 import styles from '@/style/orders.styles';
 import type { HandoverReport } from '@/types/handover-reports';
 import type {
@@ -84,9 +89,9 @@ const ORDER_FILTERS: OrderStatusFilter[] = [
   'PENDING_KYC',
   'PENDING',
   'PROCESSING',
-  'DELIVERING',
-  'RESCHEDULED',
   'DELIVERY_CONFIRMED',
+  'RESCHEDULED',
+  'DELIVERING',
   'IN_USE',
   'CANCELLED',
   'REJECTED',
@@ -99,9 +104,9 @@ const FILTER_LABELS: Record<OrderStatusFilter, string> = {
   'PENDING_KYC': 'Pending KYC',
   'PENDING': 'Pending',
   'PROCESSING': 'Processing',
-  'DELIVERING': 'Delivering',
+  'DELIVERY_CONFIRMED': 'Confirmed Delivering',
   'RESCHEDULED': 'Rescheduled',
-  'DELIVERY_CONFIRMED': 'Delivered',
+  'DELIVERING': 'Delivering',
   'IN_USE': 'In Use',
   'CANCELLED': 'Cancelled',
   'REJECTED': 'Rejected',
@@ -207,6 +212,8 @@ const PAYMENT_FAILURE_URL = resolvePaymentUrl(
 
 const mapStatusToMeta = (status: string | null | undefined): StatusMeta => {
   const normalized = (status ?? '').toUpperCase();
+  // Note: 'filter' is used for styling (color/background) via STATUS_TEMPLATES,
+  // NOT for tab filtering (ORDER_STATUSES uses exact status codes for filtering)
   let filter: OrderStatus = 'Pending';
   let includeAction = true;
   let overrideLabel: string | null = null;
@@ -231,6 +238,11 @@ const mapStatusToMeta = (status: string | null | undefined): StatusMeta => {
       break;
 
     // === DELIVERY STATUSES (after payment confirmed) ===
+    case 'DELIVERY_CONFIRMED':
+      filter = 'Pending'; // Confirmed for delivery, waiting to be delivered
+      overrideLabel = 'Ready to Deliver';
+      includeAction = false; // Waiting for staff to deliver
+      break;
     case 'DELIVERING':
       filter = 'Delivered';
       overrideLabel = 'Delivering';
@@ -240,11 +252,6 @@ const mapStatusToMeta = (status: string | null | undefined): StatusMeta => {
       filter = 'Delivered';
       overrideLabel = 'Rescheduled';
       includeAction = false; // Delivery rescheduled, no customer action
-      break;
-    case 'DELIVERY_CONFIRMED':
-      filter = 'Delivered';
-      overrideLabel = 'Delivery Confirmed';
-      includeAction = false; // Customer confirmed delivery, no action needed
       break;
 
     // === IN USE STATUS (customer has the device) ===
@@ -481,6 +488,13 @@ export default function OrdersScreen() {
   const orderDetailsTargetIdRef = useRef<number | null>(null);
   const orderDetailsActiveRequestRef = useRef<{ orderId: number; cancelled: boolean } | null>(null);
 
+  // Invoice states for payment history
+  const [orderInvoices, setOrderInvoices] = useState<Invoice[]>([]);
+  const [invoicesLoading, setInvoicesLoading] = useState(false);
+
+  // Frontend lazy loading - show limited items initially for faster UI response
+  const ITEMS_PER_PAGE = 20;
+  const [displayLimit, setDisplayLimit] = useState(ITEMS_PER_PAGE);
   // Handover PDF Downloader ref
   const handoverPdfDownloaderRef = useRef<((report: HandoverReport) => Promise<void>) | null>(null);
 
@@ -501,6 +515,25 @@ export default function OrdersScreen() {
   // End Contract / Rental Expiry State
   const [isRentalExpiryModalVisible, setRentalExpiryModalVisible] = useState(false);
   const [expiringOrder, setExpiringOrder] = useState<OrderCard | null>(null);
+  const [confirmedReturnOrders, setConfirmedReturnOrders] = useState<Set<number>>(new Set());
+
+  // Load confirmed return orders from AsyncStorage on mount
+  useEffect(() => {
+    const loadConfirmedReturns = async () => {
+      try {
+        const confirmed = await getConfirmedReturnOrders();
+        setConfirmedReturnOrders(confirmed);
+      } catch (error) {
+        console.error('[Orders] Failed to load confirmed returns:', error);
+      }
+    };
+    loadConfirmedReturns();
+  }, []);
+
+  // Helper to check if order is confirmed for return
+  const isReturnConfirmed = useCallback((orderId: number) => {
+    return confirmedReturnOrders.has(orderId);
+  }, [confirmedReturnOrders]);
 
   const progressWidth = useMemo<DimensionValue>(() => `${(currentStep / 3) * 100}%`, [currentStep]);
   const isContractAlreadySigned = useMemo(
@@ -676,29 +709,79 @@ export default function OrdersScreen() {
 
   // End Contract handlers
   const handleOpenEndContract = useCallback(() => {
+    console.log('[EndContract] 🔍 handleOpenEndContract called', {
+      orderDetailsData: !!orderDetailsData,
+      orderDetailsTargetId,
+      ordersCount: orders.length,
+    });
+
     if (orderDetailsData && orderDetailsTargetId) {
       // Find the order card for this order
       const orderCard = orders.find(o => o.orderId === orderDetailsTargetId);
+      console.log('[EndContract] 🔍 Found orderCard:', orderCard ? {
+        orderId: orderCard.orderId,
+        rawStatus: orderCard.rawStatus,
+        statusFilter: orderCard.statusFilter,
+      } : 'NOT FOUND');
+
       if (orderCard) {
         setExpiringOrder(orderCard);
         setRentalExpiryModalVisible(true);
+        console.log('[EndContract] ✅ Modal should open now');
       }
     }
   }, [orderDetailsData, orderDetailsTargetId, orders]);
 
   const handleCloseEndContract = useCallback(() => {
+    console.log('[EndContract] 🔍 handleCloseEndContract called');
     setRentalExpiryModalVisible(false);
     setExpiringOrder(null);
   }, []);
 
   const handleConfirmReturn = useCallback(async () => {
-    if (!session?.accessToken || !expiringOrder) return;
-    await confirmReturnRentalOrder(session, expiringOrder.orderId);
-    // Close modal and refresh will happen via useEffect when modal closes
-    handleCloseEndContract();
-    // Trigger refresh by setting refreshing state
-    setIsRefreshing(true);
-  }, [session, expiringOrder, handleCloseEndContract]);
+    console.log('[EndContract] 🔍 handleConfirmReturn called', {
+      hasSession: !!session?.accessToken,
+      expiringOrder: expiringOrder ? {
+        orderId: expiringOrder.orderId,
+        rawStatus: expiringOrder.rawStatus,
+      } : null,
+    });
+
+    if (!session?.accessToken || !expiringOrder) {
+      console.log('[EndContract] ❌ Missing session or expiringOrder, aborting');
+      return;
+    }
+
+    try {
+      console.log('[EndContract] 📤 Calling confirmReturnRentalOrder API...');
+      // Call API to confirm return
+      await confirmReturnRentalOrder(session, expiringOrder.orderId);
+      console.log('[EndContract] ✅ API call successful');
+
+      console.log('[EndContract] 💾 Saving to SecureStore...');
+      // Save to AsyncStorage for persistence
+      await saveConfirmedReturnOrder(expiringOrder.orderId);
+      console.log('[EndContract] ✅ Saved to SecureStore');
+
+      // Update local state
+      setConfirmedReturnOrders(prev => {
+        const newSet = new Set(prev);
+        newSet.add(expiringOrder.orderId);
+        console.log('[EndContract] ✅ Updated confirmedReturnOrders state:', Array.from(newSet));
+        return newSet;
+      });
+
+      // Show success message by keeping modal open (RentalExpiryModal handles showing success view)
+      // Don't close modal - let user see the success/thank you view
+
+      // Refresh orders in background
+      console.log('[EndContract] 🔄 Refreshing orders in background...');
+      setIsRefreshing(true);
+    } catch (error) {
+      console.error('[EndContract] ❌ Error confirming return:', error);
+      throw error; // Re-throw so RentalExpiryModal can handle the error
+    }
+  }, [session, expiringOrder]);
 
   const loadOrders = useCallback(
     async (mode: 'initial' | 'refresh' = 'initial') => {
@@ -871,6 +954,22 @@ export default function OrdersScreen() {
     // Filter by category (statusFilter)
     return orders.filter((order) => order.statusFilter === selectedFilter);
   }, [orders, selectedFilter]);
+
+  // Lazy loading: only display limited items for faster UI
+  const displayedOrders = useMemo(() => {
+    return filteredOrders.slice(0, displayLimit);
+  }, [filteredOrders, displayLimit]);
+
+  const hasMoreToShow = filteredOrders.length > displayLimit;
+
+  // Reset display limit when filter changes
+  useEffect(() => {
+    setDisplayLimit(ITEMS_PER_PAGE);
+  }, [selectedFilter]);
+
+  const handleLoadMore = useCallback(() => {
+    setDisplayLimit((prev) => prev + ITEMS_PER_PAGE);
+  }, []);
 
   const openFlow = useCallback(
     (order: OrderCard, initialPaymentMethod?: PaymentMethod) => {
@@ -1388,14 +1487,18 @@ export default function OrdersScreen() {
         return `${baseUrl}${separator}${params}`;
       };
 
+      // IMPORTANT: DO NOT send returnUrl with app deep links!
+      // If returnUrl is set, VNPay redirects DIRECTLY to the app, bypassing backend logic.
+      // Backend needs to handle the VNPay callback first to update payment status.
+      // Put deep links in frontendSuccessUrl/frontendFailureUrl - backend will redirect there after processing.
       const payload = {
         orderId: activeOrder.orderId,
         invoiceType: 'RENT_PAYMENT' as const,
         paymentMethod: selectedPayment,
         amount,
         description: `Rent payment for order #${activeOrder.orderId}`,
-        returnUrl: buildPaymentUrl(PAYMENT_RETURN_URL),
-        cancelUrl: buildPaymentUrl(PAYMENT_CANCEL_URL),
+        // returnUrl: null - Let backend use its default callback URL
+        // cancelUrl: null - Let backend handle cancellations
         frontendSuccessUrl: buildPaymentUrl(PAYMENT_SUCCESS_URL),
         frontendFailureUrl: buildPaymentUrl(PAYMENT_FAILURE_URL),
       };
@@ -1404,9 +1507,7 @@ export default function OrdersScreen() {
         orderId: activeOrder.orderId,
         paymentMethod: payload.paymentMethod,
         amount: payload.amount,
-        // Debug: Log all URLs being sent to backend
-        returnUrl: payload.returnUrl,
-        cancelUrl: payload.cancelUrl,
+        // Backend will redirect to these after updating payment status
         frontendSuccessUrl: payload.frontendSuccessUrl,
         frontendFailureUrl: payload.frontendFailureUrl,
       });
@@ -1684,6 +1785,37 @@ export default function OrdersScreen() {
         orderDetailsCacheRef.current[orderId] = details;
         setOrderDetailsData(details);
         setOrderDetailsError(null);
+
+        // Fetch invoices for this order (in parallel, non-blocking)
+        setInvoicesLoading(true);
+        fetchInvoicesByOrderId(activeSession, orderId)
+          .then((invoices) => {
+            if (orderDetailsTargetIdRef.current === orderId) {
+              setOrderInvoices(invoices);
+            }
+          })
+          .catch((err) => {
+            console.warn('[Orders] Failed to load invoices', { orderId, err });
+            // Non-blocking, don't show error
+          })
+          .finally(() => {
+            if (orderDetailsTargetIdRef.current === orderId) {
+              setInvoicesLoading(false);
+            }
+          });
+
+        // Fetch settlement for this order (in parallel, non-blocking)
+        // This provides accurate deposit info (totalDeposit, fees, refund)
+        fetchSettlementByOrderId(activeSession, orderId)
+          .then((settlementData) => {
+            if (orderDetailsTargetIdRef.current === orderId) {
+              setSettlement(settlementData);
+            }
+          })
+          .catch((err) => {
+            console.warn('[Orders] Failed to load settlement', { orderId, err });
+            // Non-blocking, order may not have settlement yet
+          });
       } catch (error) {
         if (requestMarker.cancelled || orderDetailsTargetIdRef.current !== orderId) {
           return;
@@ -1728,7 +1860,8 @@ export default function OrdersScreen() {
       setOrderDetailsTargetId(parsedId);
       setOrderDetailsModalVisible(true);
       orderDetailsTargetIdRef.current = parsedId;
-      void loadOrderDetails(parsedId);
+      // Always force refresh to get latest status from server
+      void loadOrderDetails(parsedId, true);
     },
     [loadOrderDetails],
   );
@@ -1744,6 +1877,8 @@ export default function OrdersScreen() {
     setOrderDetailsError(null);
     setOrderDetailsTargetId(null);
     setOrderDetailsLoading(false);
+    setOrderInvoices([]);
+    setInvoicesLoading(false);
     orderDetailsTargetIdRef.current = null;
   }, []);
 
@@ -1772,7 +1907,7 @@ export default function OrdersScreen() {
           <SafeAreaView style={styles.safeArea} edges={['top']}>
             <FlatList
               ref={listRef}
-              data={filteredOrders}
+              data={displayedOrders}
               keyExtractor={(item) => item.id}
               contentContainerStyle={styles.listContent}
               showsVerticalScrollIndicator={false}
@@ -1789,6 +1924,30 @@ export default function OrdersScreen() {
                 offset: 200 * index,
                 index,
               })}
+              ListFooterComponent={
+                hasMoreToShow ? (
+                  <Pressable
+                    onPress={handleLoadMore}
+                    style={{
+                      paddingVertical: 16,
+                      paddingHorizontal: 24,
+                      marginHorizontal: 16,
+                      marginBottom: 16,
+                      backgroundColor: '#f3f4f6',
+                      borderRadius: 12,
+                      alignItems: 'center',
+                    }}
+                  >
+                    <Text style={{ color: '#111', fontSize: 14, fontWeight: '600' }}>
+                      Load More ({filteredOrders.length - displayLimit} remaining)
+                    </Text>
+                  </Pressable>
+                ) : filteredOrders.length > ITEMS_PER_PAGE ? (
+                  <View style={{ paddingVertical: 16, alignItems: 'center' }}>
+                    <Text style={{ color: '#9ca3af', fontSize: 13 }}>All orders loaded</Text>
+                  </View>
+                ) : null
+              }
               renderItem={({ item }) => {
                 const isHighlighted = highlightedOrderId === item.id;
                 const thumbnailImages = item.deviceImageUrls?.filter((uri) => uri && uri.length > 0) ?? [];
@@ -2077,6 +2236,9 @@ export default function OrdersScreen() {
               canEndContract={canEndContract}
               daysUntilExpiry={daysUntilExpiry}
               shouldShowHandoverButton={shouldShowHandoverButton}
+              invoices={orderInvoices}
+              invoicesLoading={invoicesLoading}
+              settlement={settlement}
             />
             <HandoverPdfDownloader>
               {({ downloadHandoverReport }) => {
@@ -2118,8 +2280,10 @@ export default function OrdersScreen() {
               visible={isRentalExpiryModalVisible}
               orderId={expiringOrder?.orderId ?? 0}
               orderDisplayId={String(expiringOrder?.orderId ?? '')}
+              startDate={orderDetailsData?.startDate ?? ''}
               endDate={orderDetailsData?.endDate ?? ''}
               daysRemaining={daysUntilExpiry ?? 0}
+              isConfirmed={expiringOrder ? isReturnConfirmed(expiringOrder.orderId) : false}
               onConfirmReturn={handleConfirmReturn}
               onClose={handleCloseEndContract}
             />

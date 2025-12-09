@@ -71,6 +71,12 @@ export default function PaymentResultScreen() {
         id?: string;
     }>();
 
+    // DEBUG: Log all received params to understand what backend is sending
+    useEffect(() => {
+        console.log('[PaymentResult] 🔍 ALL RECEIVED PARAMS:', JSON.stringify(params, null, 2));
+        console.log('[PaymentResult] 🔍 Raw params keys:', Object.keys(params));
+    }, [params]);
+
     const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>('loading');
     const [orderInfo, setOrderInfo] = useState<OrderInfo | null>(null);
     const [isLoadingOrder, setIsLoadingOrder] = useState(false);
@@ -89,9 +95,12 @@ export default function PaymentResultScreen() {
 
     // Determine payment result from query params (VNPay/PayOS response)
     const paymentGatewayResult = useMemo(() => {
-        // Check VNPay response
+        console.log('[PaymentResult] 🔍 Determining payment result from params...');
+
+        // Check VNPay response code (direct from VNPay or passed through backend)
         const vnpResponseCode = params.vnp_ResponseCode;
         if (vnpResponseCode !== undefined) {
+            console.log('[PaymentResult] Found vnp_ResponseCode:', vnpResponseCode);
             if (vnpResponseCode === VNPAY_SUCCESS_CODE) {
                 return 'success';
             }
@@ -117,13 +126,43 @@ export default function PaymentResultScreen() {
             return 'failed';
         }
 
-        // Check explicit status param
-        const statusParam = params.status;
-        if (statusParam === 'success') return 'success';
-        if (statusParam === 'cancel' || statusParam === 'cancelled') return 'cancelled';
-        if (statusParam === 'failure' || statusParam === 'failed') return 'failed';
+        // Check explicit status param (from backend redirect)
+        // Note: expo-router returns an array if param appears multiple times in URL
+        const statusParamRaw = params.status;
+        const statusParam = Array.isArray(statusParamRaw) ? statusParamRaw[0] : statusParamRaw;
+        console.log('[PaymentResult] Checking status param:', statusParam);
+
+        if (statusParam && typeof statusParam === 'string') {
+            const lowerStatus = statusParam.toLowerCase();
+            if (lowerStatus === 'success' || lowerStatus === 'succeeded' || lowerStatus === '00') {
+                return 'success';
+            }
+            if (lowerStatus === 'cancel' || lowerStatus === 'cancelled') {
+                return 'cancelled';
+            }
+            if (lowerStatus === 'failure' || lowerStatus === 'failed') {
+                return 'failed';
+            }
+        }
+
+        // Check VNPay transaction status (alternative param)
+        const vnpTransactionStatus = params.vnp_TransactionStatus;
+        if (vnpTransactionStatus === '00') {
+            console.log('[PaymentResult] Found vnp_TransactionStatus=00, treating as success');
+            return 'success';
+        }
+
+        // If we have orderId but no explicit failure indicators, 
+        // treat as "verifying" - we'll check invoice status to confirm
+        // This handles the case where backend redirects to frontendSuccessUrl
+        // without explicit status params
+        if (params.orderId) {
+            console.log('[PaymentResult] Has orderId but no status params - will verify with invoice API');
+            return 'success';  // Assume success since backend redirected to success URL
+        }
 
         // Default to failed if we can't determine
+        console.log('[PaymentResult] ⚠️ Could not determine status, defaulting to failed');
         return 'failed';
     }, [params]);
 
