@@ -227,3 +227,87 @@ export async function fetchDeviceModelById(
   const fallbackMatch = fallbackProducts.find((item) => item.id === id);
   return fallbackMatch ?? null;
 }
+
+// === Search API ===
+
+export type SearchDeviceModelsParams = {
+  deviceName?: string;
+  brandId?: number;
+  deviceCategoryId?: number;
+  isActive?: boolean;
+  page?: number;
+  size?: number;
+};
+
+export type PaginatedSearchResult = {
+  content: ProductDetail[];
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
+  last: boolean;
+};
+
+type SearchApiResponse = {
+  status: string;
+  message: string;
+  details: string;
+  code: number;
+  data: {
+    content: DeviceModelPayload[];
+    page: number;
+    size: number;
+    totalElements: number;
+    totalPages: number;
+    numberOfElements: number;
+    last: boolean;
+  };
+};
+
+export async function searchDeviceModels(
+  params: SearchDeviceModelsParams
+): Promise<PaginatedSearchResult> {
+  const queryParams = new URLSearchParams();
+
+  if (params.deviceName?.trim()) {
+    queryParams.append('deviceName', params.deviceName.trim());
+  }
+  if (typeof params.brandId === 'number') {
+    queryParams.append('brandId', String(params.brandId));
+  }
+  if (typeof params.deviceCategoryId === 'number') {
+    queryParams.append('deviceCategoryId', String(params.deviceCategoryId));
+  }
+  if (typeof params.isActive === 'boolean') {
+    queryParams.append('isActive', String(params.isActive));
+  }
+  queryParams.append('page', String(params.page ?? 0));
+  queryParams.append('size', String(params.size ?? 20));
+
+  const url = `${buildApiUrl('device-models/search')}?${queryParams.toString()}`;
+  const response = await fetch(url);
+
+  if (!response.ok) {
+    throw new Error(`Search failed (status ${response.status}).`);
+  }
+
+  const json = (await response.json()) as SearchApiResponse;
+
+  if (!json || !json.data || !Array.isArray(json.data.content)) {
+    throw new Error('Unexpected response format when searching device models.');
+  }
+
+  const brandMap = await fetchBrandMap();
+  const content = json.data.content.map((payload) =>
+    mapDeviceModelToProductDetail(payload, brandMap)
+  );
+
+  return {
+    content,
+    page: json.data.page,
+    size: json.data.size,
+    totalElements: json.data.totalElements,
+    totalPages: json.data.totalPages,
+    last: json.data.last,
+  };
+}
