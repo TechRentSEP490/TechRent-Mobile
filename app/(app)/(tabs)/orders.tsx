@@ -16,6 +16,7 @@ import {
   Image,
   Linking,
   NativeSyntheticEvent,
+  Platform,
   Pressable,
   ScrollView,
   Text,
@@ -1768,6 +1769,9 @@ export default function OrdersScreen() {
           break;
         case 'rentAgain':
           Alert.alert('Rent Again', 'We\'ll move this device to your cart so you can rent it again.');
+          break;
+        case 'downloadContract':
+          handleDownloadContract(order.contract ?? null, order.title);
           break;
         default:
           break;
