@@ -1,23 +1,19 @@
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  FlatList,
-  Image,
-  Modal,
-  NativeScrollEvent,
-  NativeSyntheticEvent,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import { products, type ProductDetail } from '../../constants/products';
+import AccessoriesModal from '@/components/modals/AccessoriesModal';
+import AuthPromptModal from '@/components/modals/AuthPromptModal';
+import DeviceSpecsModal from '@/components/modals/DeviceSpecsModal';
+import RentDeviceModal from '@/components/modals/RentDeviceModal';
 import { useAuth } from '@/contexts/AuthContext';
+import { useCart } from '@/contexts/CartContext';
 import { useDeviceModel } from '@/hooks/use-device-model';
+import { fetchPolicies, getActivePolicy, type Policy } from '@/services/policies';
+import styles from '@/style/product-details.styles';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, FlatList, Image, Linking, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import Toast from 'react-native-toast-message';
+import { products, type ProductDetail } from '../../constants/products';
 
 type NormalizedSpecEntry = {
   label: string;
@@ -189,12 +185,23 @@ const normalizeSpecsData = (data: ProductDetail['specs']): NormalizedSpecEntry[]
 
   return fallbackValue
     ? [
-        {
-          label: 'Details',
-          value: fallbackValue,
-        },
-      ]
+      {
+        label: 'Details',
+        value: fallbackValue,
+      },
+    ]
     : [];
+};
+
+const resolveDailyRate = (product: ProductDetail) => {
+  if (typeof product.pricePerDay === 'number' && product.pricePerDay > 0) {
+    return product.pricePerDay;
+  }
+
+  const sanitized = product.price.replace(/[^0-9.,]/g, '').replace(/,/g, '');
+  const parsed = Number.parseFloat(sanitized);
+
+  return Number.isNaN(parsed) ? null : parsed;
 };
 
 const VND_FORMATTER = new Intl.NumberFormat('vi-VN', {
@@ -213,8 +220,31 @@ export default function ProductDetailsScreen() {
   const [quantity, setQuantity] = useState(1);
   const [isAuthPromptOpen, setIsAuthPromptOpen] = useState(false);
   const [authPromptMode, setAuthPromptMode] = useState<'rent' | 'cart' | null>(null);
+  const [activePolicy, setActivePolicy] = useState<Policy | null>(null);
+  const [isPolicyLoading, setIsPolicyLoading] = useState(false);
+
+  // Fetch policy on mount
+  useEffect(() => {
+    let isMounted = true;
+    setIsPolicyLoading(true);
+    fetchPolicies()
+      .then((policies) => {
+        if (isMounted) {
+          const active = getActivePolicy(policies);
+          setActivePolicy(active);
+        }
+      })
+      .catch((err) => {
+        console.warn('Failed to load policies:', err);
+      })
+      .finally(() => {
+        if (isMounted) setIsPolicyLoading(false);
+      });
+    return () => { isMounted = false; };
+  }, []);
   const router = useRouter();
   const { isSignedIn, isHydrating, session } = useAuth();
+  const { addItem } = useCart();
   const { productId: productIdParam, deviceModelId } = useLocalSearchParams<{
     productId?: string;
     deviceModelId?: string;
@@ -346,22 +376,39 @@ export default function ProductDetailsScreen() {
     typeof deviceValue === 'number' && Number.isFinite(deviceValue)
       ? formatCurrencyValue(deviceValue)
       : null;
+  const dailyRate = resolveDailyRate(product);
+  const totalRentalPrice = dailyRate !== null ? dailyRate * quantity : null;
+  const totalDepositAmount = depositAmount !== null ? depositAmount * quantity : null;
+  const totalCost =
+    totalRentalPrice !== null && totalDepositAmount !== null
+      ? totalRentalPrice + totalDepositAmount
+      : null;
+  const shouldShowTotalCost = quantity > 1 && totalCost !== null;
+  const totalCostLabel = totalCost !== null ? formatCurrencyValue(totalCost) : '—';
 
   const handlePrimaryAction = () => {
     if (isPrimaryDisabled || rentMode === null) {
       return;
     }
 
-    const destinationProductId = product.id;
+    if (rentMode === 'cart') {
+      addItem(product, quantity);
+      closeRentModal();
+      const isMultiple = quantity > 1;
+      Toast.show({
+        type: 'success',
+        text1: 'Added to cart',
+        text2: isMultiple
+          ? `${quantity} units of ${product.name} are now in your cart.`
+          : `${product.name} is now in your cart.`,
+      });
+      return;
+    }
 
+    addItem(product, quantity, { replace: true });
     closeRentModal();
     router.push({
       pathname: '/(app)/cart',
-      params: {
-        productId: destinationProductId,
-        quantity: String(quantity),
-        mode: rentMode,
-      },
     });
   };
 
@@ -438,6 +485,63 @@ export default function ProductDetailsScreen() {
           ) : null}
         </View>
 
+        {/* Rental Requirements Card - Minh bạch điều kiện thuê */}
+        <View style={styles.pricingCard}>
+          <Text style={styles.pricingTitle}>Rental Requirements</Text>
+          <View style={styles.pricingRow}>
+            <Text style={styles.pricingLabel}>KYC Verification</Text>
+            <Text style={[styles.pricingValue, { color: '#b45309' }]}>Required</Text>
+          </View>
+          <View style={styles.pricingRow}>
+            <Text style={styles.pricingLabel}>Deposit required</Text>
+            <Text style={styles.pricingValue}>
+              {depositPercentageLabel ?? 'Yes'} of device value
+            </Text>
+          </View>
+          <View style={styles.pricingRow}>
+            <Text style={styles.pricingLabel}>Availability</Text>
+            <Text style={[styles.pricingValue, { color: stock > 0 ? '#15803d' : '#dc2626' }]}>
+              {stockLabel}
+            </Text>
+          </View>
+          <Text style={{ fontSize: 12, color: '#6f6f6f', marginTop: 8, fontStyle: 'italic' }}>
+            Deposit will be refunded when device is returned in good condition
+          </Text>
+        </View>
+
+        {/* Policy Card - Link đến chính sách thuê */}
+        {isPolicyLoading ? (
+          <View style={[styles.pricingCard, { alignItems: 'center', paddingVertical: 20 }]}>
+            <ActivityIndicator size="small" color="#111" />
+            <Text style={{ color: '#6f6f6f', marginTop: 8 }}>Loading policy...</Text>
+          </View>
+        ) : activePolicy ? (
+          <View style={styles.pricingCard}>
+            <Text style={styles.pricingTitle}>Rental Policy</Text>
+            <Text style={{ fontSize: 14, color: '#111', fontWeight: '600' }}>{activePolicy.title}</Text>
+            <Text style={{ fontSize: 13, color: '#6f6f6f', marginTop: 4 }}>{activePolicy.description}</Text>
+            <Text style={{ fontSize: 12, color: '#6f6f6f', marginTop: 8 }}>
+              Effective: {new Date(activePolicy.effectiveFrom).toLocaleDateString('vi-VN')} - {new Date(activePolicy.effectiveTo).toLocaleDateString('vi-VN')}
+            </Text>
+            <TouchableOpacity
+              style={{
+                marginTop: 12,
+                flexDirection: 'row',
+                alignItems: 'center',
+                backgroundColor: '#f3f4f6',
+                paddingHorizontal: 16,
+                paddingVertical: 10,
+                borderRadius: 8,
+                alignSelf: 'flex-start',
+              }}
+              onPress={() => Linking.openURL(activePolicy.fileUrl)}
+            >
+              <Ionicons name="document-text-outline" size={18} color="#111" />
+              <Text style={{ marginLeft: 8, fontWeight: '600', color: '#111' }}>View Full Policy (PDF)</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
         <View style={styles.quickActions}>
           <TouchableOpacity style={[styles.quickAction, styles.quickActionActive]}>
             <Ionicons name="information-circle-outline" size={24} color="#111" />
@@ -507,6 +611,48 @@ export default function ProductDetailsScreen() {
         </View>
       </ScrollView>
 
+<<<<<<< codex/search-screen-v2
+      <RentDeviceModal
+        visible={isRentOpen}
+        name={name}
+        model={model}
+        brand={brand}
+        price={price}
+        quantity={quantity}
+        maxQuantity={maxQuantity}
+        stockLabel={stockLabel}
+        shouldShowTotalCost={shouldShowTotalCost}
+        totalCostLabel={totalCostLabel}
+        rentMode={rentMode}
+        isPrimaryDisabled={isPrimaryDisabled}
+        onClose={closeRentModal}
+        onDecreaseQuantity={decreaseQuantity}
+        onIncreaseQuantity={increaseQuantity}
+        onPrimaryAction={handlePrimaryAction}
+      />
+
+      <AuthPromptModal
+        visible={isAuthPromptOpen}
+        mode={authPromptMode}
+        onClose={closeAuthPrompt}
+        onNavigate={handleAuthNavigation}
+      />
+
+      <DeviceSpecsModal
+        visible={isSpecsOpen}
+        items={normalizedSpecs}
+        onClose={() => setIsSpecsOpen(false)}
+      />
+
+      <AccessoriesModal
+        visible={isAccessoriesOpen}
+        items={accessories}
+        onClose={() => setIsAccessoriesOpen(false)}
+      />
+    </SafeAreaView>
+  );
+}
+=======
       <Modal visible={isRentOpen} transparent animationType="fade" onRequestClose={closeRentModal}>
         <View style={styles.modalBackdrop}>
           <View style={styles.rentModalContent}>
@@ -1174,3 +1320,4 @@ const styles = StyleSheet.create({
     color: '#cccccc',
   },
 });
+>>>>>>> main

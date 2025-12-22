@@ -5,7 +5,6 @@ import {
   Image,
   RefreshControl,
   ScrollView,
-  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
@@ -19,6 +18,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useDeviceCategories } from '@/hooks/use-device-categories';
 import { useDeviceModels } from '@/hooks/use-device-models';
 import { fetchDeviceCategoryById, type DeviceCategory } from '@/services/device-categories';
+import styles from '@/style/home.styles';
 
 const reviews = [
   {
@@ -74,6 +74,22 @@ export default function HomeScreen() {
         key: 'notifications',
         icon: 'notifications-outline',
         onPress: () => router.push('/(app)/notifications'),
+      },
+      {
+        key: 'chat',
+        icon: 'chatbubble-ellipses-outline',
+        onPress: () => {
+          if (isHydrating) {
+            return;
+          }
+
+          if (!isSignedIn) {
+            router.push('/(auth)/sign-in');
+            return;
+          }
+
+          router.push('/(app)/chat');
+        },
       },
       {
         key: 'cart',

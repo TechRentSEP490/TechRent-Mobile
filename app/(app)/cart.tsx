@@ -1,67 +1,38 @@
-import { Ionicons } from '@expo/vector-icons';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  NativeScrollEvent,
-  NativeSyntheticEvent,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import type { ProductDetail } from '@/constants/products';
+import DatePickerField from '@/components/date-picker-field';
+import SavedAddressesModal from '@/components/modals/SavedAddressesModal';
 import { useAuth } from '@/contexts/AuthContext';
+import { useCart } from '@/contexts/CartContext';
 import { useDeviceModel } from '@/hooks/use-device-model';
 import { createRentalOrder } from '@/services/rental-orders';
-
-const clampToStartOfDay = (date: Date) => {
-  const normalized = new Date(date);
-  normalized.setHours(0, 0, 0, 0);
-  return normalized;
-};
-
-const addDays = (date: Date, days: number) => {
-  const base = clampToStartOfDay(date);
-  const nextDate = new Date(base);
-  nextDate.setDate(base.getDate() + days);
-  return clampToStartOfDay(nextDate);
-};
-
-const formatDisplayDate = (date: Date) =>
-  clampToStartOfDay(date).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
-
-const formatCurrencyValue = (value: number, currency: 'USD' | 'VND') =>
-  new Intl.NumberFormat(currency === 'USD' ? 'en-US' : 'vi-VN', {
-    style: 'currency',
-    currency,
-    maximumFractionDigits: currency === 'USD' ? 2 : 0,
-  }).format(value);
-
-const determineCurrency = (product: ProductDetail): 'USD' | 'VND' => {
-  if (product.currency) {
-    return product.currency;
+import { fetchShippingAddresses, type ShippingAddress } from '@/services/shipping-addresses';
+import styles from '@/style/cart.styles';
+import { addDays, clampToStartOfDay, formatDisplayDate, parseDateParam } from '@/utils/dates';
+import {
+  determineCurrency,
+  formatCurrencyValue,
+  getDailyRate,
+  getDepositRatio,
+  getDeviceValue,
+} from '@/utils/product-pricing';
+import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useMemo, useState } from 'react';
+import { ActivityIndicator, Alert, Image, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import Toast from 'react-native-toast-message';
+const formatAddressTimestamp = (value?: string | null) => {
+  if (!value) {
+    return null;
   }
 
-  return product.price.includes('$') ? 'USD' : 'VND';
-};
+  const date = new Date(value);
 
-const getDailyRate = (product: ProductDetail) => {
-  if (typeof product.pricePerDay === 'number' && product.pricePerDay > 0) {
-    return product.pricePerDay;
+  if (Number.isNaN(date.getTime())) {
+    return null;
   }
 
-  const sanitized = product.price.replace(/[^0-9.,]/g, '').replace(/,/g, '');
-  const parsed = Number.parseFloat(sanitized);
-  return Number.isNaN(parsed) ? 0 : parsed;
+  return date.toLocaleString();
 };
 
 const DATE_SCROLL_ITEM_HEIGHT = 48;
@@ -185,7 +156,7 @@ function DateScrollPicker({ value, minimumDate, onChange, rangeInDays = DATE_SCR
 
 export default function CartScreen() {
   const router = useRouter();
-  const { session } = useAuth();
+  const { session, user, ensureSession } = useAuth();
   const { productId, quantity: quantityParam, startDate: startParam, endDate: endParam } =
     useLocalSearchParams<{
       productId?: string;
@@ -194,14 +165,22 @@ export default function CartScreen() {
       endDate?: string;
     }>();
   const { data: product, loading, error } = useDeviceModel(productId);
+  const { items: cartItems, updateQuantity, removeItem, clear } = useCart();
 
   const quantity = useMemo(() => {
     const parsed = Number.parseInt(typeof quantityParam === 'string' ? quantityParam : '1', 10);
     return Number.isNaN(parsed) || parsed <= 0 ? 1 : parsed;
   }, [quantityParam]);
 
+  // Chỉ dùng items từ CartContext, không có fallback mock data
+  const items = cartItems;
+  const hasItems = items.length > 0;
+  const isContextBacked = cartItems.length > 0;
+
+  // Default: Start date = ngày mai (today + 1), End date = Start + 1 ngày
   const today = clampToStartOfDay(new Date());
-  const initialStartDate = parseDateParam(startParam, today);
+  const tomorrow = addDays(today, 1);
+  const initialStartDate = parseDateParam(startParam, tomorrow);
   const initialEndFallback = addDays(initialStartDate, 1);
   const initialEndDate = parseDateParam(endParam, initialEndFallback);
 
@@ -210,34 +189,310 @@ export default function CartScreen() {
     initialEndDate.getTime() <= initialStartDate.getTime() ? initialEndFallback : initialEndDate
   );
   const [shippingAddress, setShippingAddress] = useState('');
+  const [savedAddresses, setSavedAddresses] = useState<ShippingAddress[]>([]);
+  const [isLoadingAddresses, setIsLoadingAddresses] = useState(false);
+  const [isRefreshingAddresses, setIsRefreshingAddresses] = useState(false);
+  const [addressError, setAddressError] = useState<string | null>(null);
+  const [isAddressPickerVisible, setIsAddressPickerVisible] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const minimumStartDate = today;
+  // Ngày bắt đầu tối thiểu = ngày mai (không cho phép thuê trong ngày hôm nay)
+  const minimumStartDate = tomorrow;
   const minimumEndDate = useMemo(() => addDays(startDate, 1), [startDate]);
   const isRangeInvalid = endDate.getTime() <= startDate.getTime();
+  const rentalDurationInDays = useMemo(() => {
+    const millisecondsPerDay = 24 * 60 * 60 * 1000;
+    const rawDuration = Math.round((endDate.getTime() - startDate.getTime()) / millisecondsPerDay);
 
-  if (!product) {
+    return Math.max(1, rawDuration);
+  }, [endDate, startDate]);
+
+  const fetchSavedAddresses = useCallback(async () => {
+    const activeSession = session?.accessToken ? session : await ensureSession();
+
+    if (!activeSession?.accessToken) {
+      return [];
+    }
+
+    const addresses = await fetchShippingAddresses({
+      accessToken: activeSession.accessToken,
+      tokenType: activeSession.tokenType,
+    });
+
+    return addresses;
+  }, [ensureSession, session]);
+
+  useFocusEffect(
+    useCallback(() => {
+      let isActive = true;
+      setIsLoadingAddresses(true);
+      setAddressError(null);
+
+      fetchSavedAddresses()
+        .then((results) => {
+          if (!isActive) {
+            return;
+          }
+
+          setSavedAddresses(results);
+        })
+        .catch((error) => {
+          if (!isActive) {
+            return;
+          }
+
+          const message =
+            error instanceof Error
+              ? error.message
+              : 'Failed to load your shipping addresses. Please try again later.';
+          setAddressError(message);
+          setSavedAddresses([]);
+        })
+        .finally(() => {
+          if (isActive) {
+            setIsLoadingAddresses(false);
+          }
+        });
+
+      return () => {
+        isActive = false;
+      };
+    }, [fetchSavedAddresses]),
+  );
+
+  const handleRefreshSavedAddresses = useCallback(async () => {
+    setIsRefreshingAddresses(true);
+
+    try {
+      const results = await fetchSavedAddresses();
+      setSavedAddresses(results);
+      setAddressError(null);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Failed to refresh your shipping addresses. Please try again later.';
+      setAddressError(message);
+      Toast.show({ type: 'error', text1: 'Unable to refresh addresses', text2: message });
+    } finally {
+      setIsRefreshingAddresses(false);
+    }
+  }, [fetchSavedAddresses]);
+
+  const handleOpenAddressPicker = useCallback(() => {
+    setIsAddressPickerVisible(true);
+  }, []);
+
+  const handleCloseAddressPicker = useCallback(() => {
+    setIsAddressPickerVisible(false);
+  }, []);
+
+  const handleSelectSavedAddress = useCallback((address: ShippingAddress) => {
+    setShippingAddress(address.address.trim());
+    setIsAddressPickerVisible(false);
+    Toast.show({
+      type: 'success',
+      text1: 'Shipping address selected',
+      text2: 'We will deliver your rental order to this location.',
+    });
+  }, []);
+
+  const handleManageAddressesFromPicker = useCallback(() => {
+    handleCloseAddressPicker();
+    router.push('/(app)/shipping-addresses');
+  }, [handleCloseAddressPicker, router]);
+
+  const getAddressTimestampLabel = useCallback((address: ShippingAddress) => {
+    const timestamp = formatAddressTimestamp(address.updatedAt ?? address.createdAt);
+    return timestamp ? `Updated ${timestamp}` : null;
+  }, []);
+
+  const summaryCurrency = useMemo(() => {
+    if (!hasItems) {
+      return null;
+    }
+
+    const uniqueCurrencies = new Set<ReturnType<typeof determineCurrency>>(
+      items.map((item) => determineCurrency(item.product))
+    );
+
+    if (uniqueCurrencies.size !== 1) {
+      return null;
+    }
+
+    return uniqueCurrencies.values().next().value ?? null;
+  }, [hasItems, items]);
+
+  const totalAmount = useMemo(() => {
+    if (summaryCurrency === null) {
+      return null;
+    }
+
+    return items.reduce((sum, item) => sum + getDailyRate(item.product) * item.quantity, 0);
+  }, [items, summaryCurrency]);
+  const totalOrderAmount = useMemo(() => {
+    if (summaryCurrency === null) {
+      return null;
+    }
+
+    return items.reduce(
+      (sum, item) => sum + getDailyRate(item.product) * item.quantity * rentalDurationInDays,
+      0
+    );
+  }, [items, rentalDurationInDays, summaryCurrency]);
+  const formattedTotal = useMemo(() => {
+    if (!hasItems || totalAmount === null || !summaryCurrency) {
+      return '—';
+    }
+
+    return formatCurrencyValue(totalAmount, summaryCurrency);
+  }, [hasItems, summaryCurrency, totalAmount]);
+
+  const { depositTotalLabel, deviceValueTotalLabel, depositTotalValue } = useMemo(() => {
+    if (!hasItems || summaryCurrency === null) {
+      return {
+        depositTotalLabel: '—',
+        deviceValueTotalLabel: '—',
+        depositTotalValue: null,
+      };
+    }
+
+    let depositSum = 0;
+    let hasDepositAmount = false;
+    let deviceValueSum = 0;
+    let hasDeviceValue = false;
+
+    items.forEach((item) => {
+      const depositRatio = getDepositRatio(item.product);
+      const deviceValue = getDeviceValue(item.product);
+
+      if (depositRatio !== null && deviceValue !== null) {
+        depositSum += depositRatio * deviceValue * item.quantity;
+        hasDepositAmount = true;
+      }
+
+      if (deviceValue !== null) {
+        deviceValueSum += deviceValue * item.quantity;
+        hasDeviceValue = true;
+      }
+    });
+
+    return {
+      depositTotalLabel:
+        hasDepositAmount && summaryCurrency
+          ? formatCurrencyValue(depositSum, summaryCurrency)
+          : '—',
+      deviceValueTotalLabel:
+        hasDeviceValue && summaryCurrency
+          ? formatCurrencyValue(deviceValueSum, summaryCurrency)
+          : '—',
+      depositTotalValue: hasDepositAmount ? depositSum : null,
+    };
+  }, [hasItems, items, summaryCurrency]);
+
+  const totalQuantity = useMemo(
+    () => items.reduce((sum, item) => sum + item.quantity, 0),
+    [items]
+  );
+  const deviceLabel = useMemo(() => {
+    if (!hasItems) {
+      return '0 devices';
+    }
+
+    return `${totalQuantity} ${totalQuantity === 1 ? 'device' : 'devices'}`;
+  }, [hasItems, totalQuantity]);
+  const totalCostLabel = useMemo(() => {
+    if (!hasItems) {
+      return '—';
+    }
+
+    if (summaryCurrency === null || totalOrderAmount === null) {
+      return '—';
+    }
+
+    const depositValue = depositTotalValue ?? 0;
+
+    return formatCurrencyValue(totalOrderAmount + depositValue, summaryCurrency);
+  }, [depositTotalValue, hasItems, summaryCurrency, totalOrderAmount]);
+  // Label hiển thị số ngày thuê
+  const rentalDurationLabel = useMemo(() => {
+    if (!hasItems) {
+      return '—';
+    }
+    return `${rentalDurationInDays} ${rentalDurationInDays === 1 ? 'day' : 'days'}`;
+  }, [hasItems, rentalDurationInDays]);
+
+  // Tổng tiền thuê = Daily Rate × Số ngày × Số lượng (không bao gồm đặt cọc)
+  const rentalCostLabel = useMemo(() => {
+    if (!hasItems || summaryCurrency === null || totalOrderAmount === null) {
+      return '—';
+    }
+    return formatCurrencyValue(totalOrderAmount, summaryCurrency);
+  }, [hasItems, summaryCurrency, totalOrderAmount]);
+
+  // Type cho các metrics hiển thị trong summary
+  type SummaryMetric = {
+    label: string;
+    value: string;
+    description?: string;
+    highlight?: boolean;
+  };
+
+  const summaryMetrics = useMemo(
+    (): SummaryMetric[] => {
+      const metrics: SummaryMetric[] = [
+        { label: 'Total Items', value: deviceLabel },
+        { label: 'Rental Duration', value: rentalDurationLabel },
+        { label: 'Daily Rate Total', value: formattedTotal },
+        { label: 'Rental Cost', value: rentalCostLabel, description: `(${rentalDurationLabel} × Daily Rate)` },
+        { label: 'Deposit (Refundable)', value: depositTotalLabel, description: 'Hoàn lại khi trả thiết bị' },
+        { label: 'Device Value', value: deviceValueTotalLabel },
+      ];
+
+      metrics.push({ label: 'Total Payment', value: totalCostLabel, highlight: true, description: 'Rental Cost + Deposit' });
+
+      return metrics;
+    },
+    [
+      depositTotalLabel,
+      deviceLabel,
+      deviceValueTotalLabel,
+      formattedTotal,
+      rentalCostLabel,
+      rentalDurationLabel,
+      totalCostLabel,
+    ]
+  );
+
+  // Hiển thị empty state khi cart trống
+  if (!hasItems) {
     return (
       <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
+        <View style={styles.header}>
+          <TouchableOpacity style={styles.headerButton} onPress={() => router.back()}>
+            <Ionicons name="chevron-back" size={22} color="#111111" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Cart</Text>
+          <View style={styles.headerPlaceholder} />
+        </View>
         <View style={styles.loadingState}>
-          {loading ? (
-            <ActivityIndicator size="large" color="#111111" />
-          ) : (
-            <Text style={styles.loadingStateText}>Device not found.</Text>
-          )}
+          <Ionicons name="cart-outline" size={64} color="#d0d0d0" />
+          <Text style={styles.loadingStateText}>Your cart is empty</Text>
+          <Text style={[styles.loadingStateText, { marginTop: 8, fontSize: 14 }]}>
+            Add devices from the catalog to start renting
+          </Text>
+          <TouchableOpacity
+            style={{ marginTop: 20, backgroundColor: '#111', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 12 }}
+            onPress={() => router.push('/(app)/(tabs)/home')}
+          >
+            <Text style={{ color: '#fff', fontWeight: '600' }}>Browse Devices</Text>
+          </TouchableOpacity>
         </View>
       </SafeAreaView>
     );
   }
 
-  const currency = determineCurrency(product);
-  const dailyRate = getDailyRate(product);
-  const totalAmount = dailyRate * quantity;
-  const formattedTotal = formatCurrencyValue(totalAmount, currency);
-
-  const productLabel = product.model || product.name;
-  const deviceLabel = `${quantity} ${quantity === 1 ? 'device' : 'devices'}`;
   const rentalRangeLabel =
     endDate.getTime() === startDate.getTime()
       ? formatDisplayDate(startDate)
@@ -259,11 +514,12 @@ export default function CartScreen() {
     setEndDate(normalized);
   };
 
+  const hasInvalidItemId = items.some(
+    (item) => !Number.isFinite(Number.parseInt(item.product.id, 10))
+  );
+
   const isCheckoutDisabled =
-    !shippingAddress.trim() ||
-    isRangeInvalid ||
-    isSubmitting ||
-    !Number.isFinite(Number.parseInt(product.id, 10));
+    !hasItems || !shippingAddress.trim() || isRangeInvalid || isSubmitting || hasInvalidItemId;
 
   const handleCheckout = async () => {
     if (isCheckoutDisabled) {
@@ -275,10 +531,16 @@ export default function CartScreen() {
       return;
     }
 
-    const deviceModelId = Number.parseInt(product.id, 10);
+    const orderDetails = items.map((item) => {
+      const deviceModelId = Number.parseInt(item.product.id, 10);
+      return {
+        quantity: item.quantity,
+        deviceModelId,
+      };
+    });
 
-    if (!Number.isFinite(deviceModelId)) {
-      setSubmitError('Unable to determine the selected device. Please try again.');
+    if (orderDetails.some((detail) => !Number.isFinite(detail.deviceModelId))) {
+      setSubmitError('Unable to determine one or more selected devices. Please try again.');
       return;
     }
 
@@ -286,23 +548,52 @@ export default function CartScreen() {
     setSubmitError(null);
 
     try {
-      await createRentalOrder(
+      const createdOrder = await createRentalOrder(
         {
           startDate: startDate.toISOString(),
           endDate: endDate.toISOString(),
           shippingAddress: shippingAddress.trim(),
-          orderDetails: [
-            {
-              quantity,
-              deviceModelId,
-            },
-          ],
+          orderDetails,
         },
         {
           accessToken: session.accessToken,
           tokenType: session.tokenType,
         }
       );
+
+      clear();
+
+      const normalizedKycStatus = (user?.kycStatus ?? '').toUpperCase();
+
+      if (normalizedKycStatus === 'NOT_STARTED') {
+        const goToOrders = () =>
+          router.replace({
+            pathname: '/(app)/(tabs)/orders',
+            params: { flow: 'continue', orderId: String(createdOrder.orderId) },
+          });
+
+        Alert.alert(
+          'Complete your KYC',
+          'Your rental order is pending identity verification. Would you like to finish your KYC now?',
+          [
+            {
+              text: 'Later',
+              style: 'cancel',
+              onPress: goToOrders,
+            },
+            {
+              text: 'Start KYC',
+              onPress: () => router.replace('/(app)/kyc-documents'),
+            },
+          ],
+          {
+            cancelable: true,
+            onDismiss: goToOrders,
+          }
+        );
+
+        return;
+      }
 
       Alert.alert(
         'Rental order created',
@@ -350,14 +641,17 @@ export default function CartScreen() {
         )}
 
         <View style={styles.summaryRow}>
-          <View>
-            <Text style={styles.summaryLabel}>Total Items</Text>
-            <Text style={styles.summaryValue}>{deviceLabel}</Text>
-          </View>
-          <View style={styles.summaryRight}>
-            <Text style={styles.summaryLabel}>Daily Total</Text>
-            <Text style={styles.summaryAmount}>{formattedTotal}</Text>
-          </View>
+          {summaryMetrics.map((metric) => (
+            <View key={metric.label} style={styles.summaryMetric}>
+              <Text style={styles.summaryLabel}>{metric.label}</Text>
+              <Text style={[styles.summaryValue, metric.highlight && styles.summaryValueHighlight]}>
+                {metric.value}
+              </Text>
+              {metric.description ? (
+                <Text style={styles.summaryDescription}>{metric.description}</Text>
+              ) : null}
+            </View>
+          ))}
         </View>
 
         <View style={styles.orderCard}>
@@ -366,18 +660,165 @@ export default function CartScreen() {
               <Text style={styles.orderTitle}>Rental Summary</Text>
               <Text style={styles.orderSubtitle}>{rentalRangeLabel}</Text>
             </View>
-            <Ionicons name="trash-outline" size={20} color="#9c9c9c" />
+            <TouchableOpacity
+              style={[styles.clearButton, (!hasItems || !isContextBacked) && styles.clearButtonDisabled]}
+              onPress={clear}
+              disabled={!hasItems || !isContextBacked}
+              accessibilityRole="button"
+              accessibilityLabel="Clear cart"
+            >
+              <Ionicons
+                name="trash-outline"
+                size={20}
+                color={!hasItems || !isContextBacked ? '#d0d0d0' : '#9c9c9c'}
+              />
+            </TouchableOpacity>
           </View>
 
           <View style={styles.orderBody}>
-            <View style={styles.productBadge}>
-              <Ionicons name="phone-portrait-outline" size={24} color="#6f6f6f" />
-            </View>
-            <View style={styles.productDetails}>
-              <Text style={styles.productName}>{productLabel}</Text>
-              <Text style={styles.productMeta}>{`Quantity: ${quantity}`}</Text>
-            </View>
-            <Text style={styles.productPrice}>{formattedTotal}</Text>
+            {hasItems ? (
+              items.map((item, index) => {
+                const itemCurrency = determineCurrency(item.product);
+                const itemDailyRate = getDailyRate(item.product);
+                const itemLineTotal = formatCurrencyValue(itemDailyRate * item.quantity, itemCurrency);
+                const itemLabel = item.product.model || item.product.name;
+                const itemDailyRateLabel = `${formatCurrencyValue(itemDailyRate, itemCurrency)} / day`;
+                const depositRatio = getDepositRatio(item.product);
+                const deviceValue = getDeviceValue(item.product);
+                const depositPercentageLabel =
+                  depositRatio !== null ? `${Math.round(depositRatio * 100)}%` : null;
+                const depositAmountPerUnit =
+                  depositRatio !== null && deviceValue !== null ? depositRatio * deviceValue : null;
+                const depositSummary = depositPercentageLabel
+                  ? depositAmountPerUnit !== null
+                    ? `${depositPercentageLabel} (~${formatCurrencyValue(depositAmountPerUnit, itemCurrency)})`
+                    : depositPercentageLabel
+                  : null;
+                const itemDepositTotalLabel =
+                  depositAmountPerUnit !== null && item.quantity > 1
+                    ? formatCurrencyValue(depositAmountPerUnit * item.quantity, itemCurrency)
+                    : null;
+                const deviceValueLabel =
+                  deviceValue !== null ? formatCurrencyValue(deviceValue, itemCurrency) : null;
+                const itemDeviceValueTotalLabel =
+                  deviceValue !== null && item.quantity > 1
+                    ? formatCurrencyValue(deviceValue * item.quantity, itemCurrency)
+                    : null;
+                const singleItemTotalPaymentLabel =
+                  index === 0
+                    ? formatCurrencyValue(
+                      itemDailyRate * item.quantity + (depositAmountPerUnit ?? 0) * item.quantity,
+                      itemCurrency
+                    )
+                    : null;
+                const availableStock = Number.isFinite(item.product.stock)
+                  ? Math.max(0, Math.floor(item.product.stock))
+                  : Number.POSITIVE_INFINITY;
+                const isAdjustable = isContextBacked;
+                const canDecrease = isAdjustable && item.quantity > 1;
+                const canIncrease =
+                  isAdjustable &&
+                  (availableStock === Number.POSITIVE_INFINITY ? true : item.quantity < availableStock);
+
+                return (
+                  <View key={item.product.id} style={styles.orderItem}>
+                    <View style={styles.orderItemHeader}>
+                      <View style={styles.orderItemTitle}>
+                        <View style={styles.productBadge}>
+                          {item.product.imageURL ? (
+                            <Image
+                              source={{ uri: item.product.imageURL }}
+                              style={styles.productImage}
+                              resizeMode="cover"
+                            />
+                          ) : (
+                            <Ionicons name="phone-portrait-outline" size={24} color="#6f6f6f" />
+                          )}
+                        </View>
+                        <View style={styles.productDetails}>
+                          <Text style={styles.productName}>{itemLabel}</Text>
+                          <View style={styles.quantityRow}>
+                            <TouchableOpacity
+                              style={[styles.quantityButton, !canDecrease && styles.quantityButtonDisabled]}
+                              onPress={() => updateQuantity(item.product.id, item.quantity - 1)}
+                              disabled={!canDecrease}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Decrease quantity for ${itemLabel}`}
+                            >
+                              <Ionicons name="remove" size={16} color="#111111" />
+                            </TouchableOpacity>
+                            <Text style={styles.quantityValue}>{item.quantity}</Text>
+                            <TouchableOpacity
+                              style={[styles.quantityButton, !canIncrease && styles.quantityButtonDisabled]}
+                              onPress={() => updateQuantity(item.product.id, item.quantity + 1)}
+                              disabled={!canIncrease}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Increase quantity for ${itemLabel}`}
+                            >
+                              <Ionicons name="add" size={16} color="#111111" />
+                            </TouchableOpacity>
+                          </View>
+                          {Number.isFinite(availableStock) ? (
+                            <Text style={styles.productMeta}>{`Stock available: ${availableStock}`}</Text>
+                          ) : null}
+                        </View>
+                      </View>
+                      <View style={styles.orderItemHeaderRight}>
+                        <View style={styles.lineTotalGroup}>
+                          <Text style={styles.lineTotalLabel}>Line total</Text>
+                          <Text style={styles.productPrice}>{itemLineTotal}</Text>
+                        </View>
+                        {isContextBacked ? (
+                          <TouchableOpacity
+                            style={styles.removeItemButton}
+                            onPress={() => removeItem(item.product.id)}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Remove ${itemLabel}`}
+                          >
+                            <Ionicons name="close" size={16} color="#6f6f6f" />
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
+                    </View>
+
+                    <View style={styles.orderItemDetails}>
+                      <View style={styles.orderItemMetric}>
+                        <Text style={styles.orderItemMetricLabel}>Daily rate</Text>
+                        <Text style={styles.orderItemMetricValue}>{itemDailyRateLabel}</Text>
+                      </View>
+                      {singleItemTotalPaymentLabel ? (
+                        <View style={styles.orderItemMetric}>
+                          <Text style={styles.orderItemMetricLabel}>Single total payment</Text>
+                          <Text style={styles.orderItemMetricValue}>{singleItemTotalPaymentLabel}</Text>
+                        </View>
+                      ) : null}
+                      {depositSummary ? (
+                        <View style={styles.orderItemMetric}>
+                          <Text style={styles.orderItemMetricLabel}>Deposit</Text>
+                          <Text style={styles.orderItemMetricValue}>{depositSummary}</Text>
+                          {itemDepositTotalLabel ? (
+                            <Text style={styles.orderItemMetricSubValue}>{`Total: ${itemDepositTotalLabel}`}</Text>
+                          ) : null}
+                        </View>
+                      ) : null}
+                      {deviceValueLabel ? (
+                        <View style={styles.orderItemMetric}>
+                          <Text style={styles.orderItemMetricLabel}>Device value</Text>
+                          <Text style={styles.orderItemMetricValue}>{deviceValueLabel}</Text>
+                          {itemDeviceValueTotalLabel ? (
+                            <Text style={styles.orderItemMetricSubValue}>{`Total: ${itemDeviceValueTotalLabel}`}</Text>
+                          ) : null}
+                        </View>
+                      ) : null}
+                    </View>
+                  </View>
+                );
+              })
+            ) : (
+              <View style={styles.emptyOrderBody}>
+                <Text style={styles.emptyOrderText}>Add devices to your cart to create a rental.</Text>
+              </View>
+            )}
           </View>
         </View>
 
@@ -391,6 +832,50 @@ export default function CartScreen() {
             onChangeText={setShippingAddress}
             multiline
           />
+          <View style={styles.addressActions}>
+            <TouchableOpacity
+              style={styles.addressActionButton}
+              onPress={handleOpenAddressPicker}
+              accessibilityRole="button"
+              accessibilityLabel="Choose a saved shipping address"
+            >
+              <Ionicons
+                name="location-outline"
+                size={16}
+                color="#111111"
+                style={styles.addressActionIcon}
+              />
+              <Text style={styles.addressActionText}>
+                {isLoadingAddresses ? 'Loading saved addresses…' : 'Choose saved address'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.addressActionButton}
+              onPress={() => router.push('/(app)/shipping-addresses')}
+              accessibilityRole="button"
+              accessibilityLabel="Manage shipping addresses"
+            >
+              <Ionicons
+                name="settings-outline"
+                size={16}
+                color="#111111"
+                style={styles.addressActionIcon}
+              />
+              <Text style={styles.addressActionText}>Manage addresses</Text>
+            </TouchableOpacity>
+          </View>
+          {addressError ? (
+            <Text style={styles.addressHelperError}>{addressError}</Text>
+          ) : (
+            <Text style={styles.addressHelperText}>
+              {isLoadingAddresses
+                ? 'Loading your saved addresses…'
+                : savedAddresses.length > 0
+                  ? `You have ${savedAddresses.length} saved ${savedAddresses.length === 1 ? 'address' : 'addresses'
+                  }.`
+                  : 'Add a shipping address so you can reuse it for future rentals.'}
+            </Text>
+          )}
         </View>
 
         <View style={styles.formCard}>
@@ -398,11 +883,15 @@ export default function CartScreen() {
           <View style={styles.dateRow}>
             <View style={styles.dateColumn}>
               <Text style={styles.dateLabel}>Start Date</Text>
-              <DateScrollPicker value={startDate} minimumDate={minimumStartDate} onChange={handleStartDateChange} />
+              <DatePickerField
+                value={startDate}
+                minimumDate={minimumStartDate}
+                onChange={handleStartDateChange}
+              />
             </View>
             <View style={styles.dateColumn}>
               <Text style={styles.dateLabel}>End Date</Text>
-              <DateScrollPicker value={endDate} minimumDate={minimumEndDate} onChange={handleEndDateChange} />
+              <DatePickerField value={endDate} minimumDate={minimumEndDate} onChange={handleEndDateChange} />
             </View>
           </View>
           {isRangeInvalid && (
@@ -416,6 +905,18 @@ export default function CartScreen() {
           </View>
         )}
       </ScrollView>
+
+      <SavedAddressesModal
+        visible={isAddressPickerVisible}
+        addresses={savedAddresses}
+        isLoading={isLoadingAddresses}
+        isRefreshing={isRefreshingAddresses}
+        onRefresh={() => void handleRefreshSavedAddresses()}
+        onManage={handleManageAddressesFromPicker}
+        onSelect={handleSelectSavedAddress}
+        onClose={handleCloseAddressPicker}
+        getTimestampLabel={getAddressTimestampLabel}
+      />
 
       <View style={styles.footerActions}>
         <TouchableOpacity style={styles.cancelButton} onPress={() => router.back()}>
@@ -436,278 +937,3 @@ export default function CartScreen() {
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: '#ffffff',
-  },
-  loadingState: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 24,
-    backgroundColor: '#ffffff',
-  },
-  loadingStateText: {
-    color: '#6f6f6f',
-    fontSize: 16,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 4,
-  },
-  headerButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#f4f4f4',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#111111',
-  },
-  headerPlaceholder: {
-    width: 40,
-    height: 40,
-  },
-  content: {
-    paddingHorizontal: 20,
-    paddingBottom: 32,
-    paddingTop: 8,
-    gap: 20,
-  },
-  errorBanner: {
-    borderRadius: 12,
-    backgroundColor: '#fff5f5',
-    borderWidth: 1,
-    borderColor: '#f5c2c2',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  errorBannerText: {
-    color: '#c53030',
-    fontSize: 14,
-  },
-  loaderRow: {
-    paddingVertical: 4,
-    alignItems: 'flex-start',
-  },
-  summaryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    backgroundColor: '#f8f8f8',
-    padding: 16,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#ededed',
-  },
-  summaryLabel: {
-    color: '#6f6f6f',
-    fontSize: 13,
-  },
-  summaryValue: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#111111',
-    marginTop: 4,
-  },
-  summaryRight: {
-    alignItems: 'flex-end',
-  },
-  summaryAmount: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#111111',
-    marginTop: 4,
-  },
-  orderCard: {
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#ededed',
-    padding: 18,
-    backgroundColor: '#ffffff',
-    gap: 20,
-  },
-  orderHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  orderTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#111111',
-  },
-  orderSubtitle: {
-    marginTop: 4,
-    color: '#6f6f6f',
-    fontSize: 13,
-  },
-  orderBody: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  productBadge: {
-    width: 48,
-    height: 48,
-    borderRadius: 16,
-    backgroundColor: '#f4f4f4',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  productDetails: {
-    flex: 1,
-  },
-  productName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111111',
-  },
-  productMeta: {
-    color: '#6f6f6f',
-    marginTop: 2,
-  },
-  productPrice: {
-    fontWeight: '600',
-    color: '#111111',
-  },
-  formCard: {
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#ededed',
-    padding: 18,
-    backgroundColor: '#ffffff',
-    gap: 16,
-  },
-  formLabel: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#111111',
-  },
-  formInput: {
-    borderWidth: 1,
-    borderColor: '#d9d9d9',
-    borderRadius: 14,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 15,
-    color: '#111111',
-    backgroundColor: '#ffffff',
-    minHeight: 72,
-    textAlignVertical: 'top',
-  },
-  dateRow: {
-    flexDirection: 'row',
-    gap: 16,
-  },
-  dateColumn: {
-    flex: 1,
-    gap: 8,
-  },
-  dateLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#111111',
-  },
-  dateErrorText: {
-    color: '#c53030',
-    fontSize: 13,
-  },
-  dateScrollPickerContainer: {
-    width: '100%',
-    height: DATE_SCROLL_ITEM_HEIGHT * DATE_SCROLL_VISIBLE_ROWS,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#e5e5e5',
-    backgroundColor: '#fafafa',
-  },
-  dateScrollContent: {
-    paddingVertical: (DATE_SCROLL_ITEM_HEIGHT * DATE_SCROLL_VISIBLE_ROWS - DATE_SCROLL_ITEM_HEIGHT) / 2,
-  },
-  dateScrollItem: {
-    height: DATE_SCROLL_ITEM_HEIGHT,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dateScrollItemSelected: {
-    backgroundColor: '#ffffff',
-  },
-  dateScrollText: {
-    fontSize: 15,
-    color: '#6f6f6f',
-  },
-  dateScrollTextSelected: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111111',
-  },
-  dateScrollHighlight: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: (DATE_SCROLL_ITEM_HEIGHT * DATE_SCROLL_VISIBLE_ROWS - DATE_SCROLL_ITEM_HEIGHT) / 2,
-    height: DATE_SCROLL_ITEM_HEIGHT,
-    borderTopWidth: 1,
-    borderBottomWidth: 1,
-    borderColor: '#d4d4d4',
-  },
-  submitErrorBanner: {
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#f5c2c2',
-    backgroundColor: '#fff5f5',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  submitErrorText: {
-    color: '#c53030',
-    fontSize: 14,
-  },
-  footerActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    gap: 12,
-  },
-  cancelButton: {
-    flex: 1,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#d9d9d9',
-    paddingVertical: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  cancelText: {
-    color: '#111111',
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  checkoutButton: {
-    flex: 2,
-    borderRadius: 14,
-    backgroundColor: '#111111',
-    paddingVertical: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  checkoutButtonDisabled: {
-    opacity: 0.5,
-  },
-  checkoutText: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-});

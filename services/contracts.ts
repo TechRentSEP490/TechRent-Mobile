@@ -23,6 +23,10 @@ export type ContractResponse = {
   startDate: string | null;
   endDate: string | null;
   signedAt: string | null;
+  customerSignedBy?: number | string | null;
+  customerSignedAt?: string | null;
+  adminSignedBy?: number | string | null;
+  adminSignedAt?: string | null;
   expiresAt: string | null;
   createdAt: string | null;
   updatedAt: string | null;
@@ -316,6 +320,21 @@ export async function signContract(
   }
 
   const endpointUrl = buildApiUrl('contracts', payload.contractId, 'sign');
+
+  const maskedToken =
+    typeof session.accessToken === 'string' && session.accessToken.length > 8
+      ? `${session.accessToken.slice(0, 4)}…${session.accessToken.slice(-4)}`
+      : '***';
+
+  console.log('[Contracts] signContract request', {
+    endpointUrl,
+    payload,
+    headers: {
+      Authorization: `${
+        session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'
+      } ${maskedToken}`,
+    },
+  });
   let response: Response;
 
   try {

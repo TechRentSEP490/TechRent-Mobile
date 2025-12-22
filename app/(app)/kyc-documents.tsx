@@ -1,158 +1,427 @@
 import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
+import * as ImagePicker from 'expo-image-picker';
+import type { MediaType } from 'expo-image-picker';
 import { useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useCallback, useMemo, useState } from 'react';
+import { ActivityIndicator, Alert, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 
-const steps = [
-  {
-    id: 'front',
+import { extractTextFromImage } from '@/services/ocr';
+import { parseKycText, type ParsedKycFields } from '@/utils/kyc-parser';
+import styles from '@/style/kyc-documents.styles';
+
+type DocumentType = 'front' | 'back' | 'selfie';
+
+type DocumentAsset = {
+  uri: string;
+  type: string;
+  name: string;
+};
+
+type DocumentState = Record<DocumentType, DocumentAsset | null>;
+
+type DocumentOcrState = {
+  isProcessing: boolean;
+  error: string | null;
+  text: string;
+};
+
+type OcrStateMap = Record<'front' | 'back', DocumentOcrState>;
+
+const initialDocumentState: DocumentState = {
+  front: null,
+  back: null,
+  selfie: null,
+};
+
+const initialOcrState: OcrStateMap = {
+  front: { isProcessing: false, error: null, text: '' },
+  back: { isProcessing: false, error: null, text: '' },
+};
+
+const IMAGE_MEDIA_TYPE: MediaType = 'images';
+
+const documentCopy: Record<DocumentType, { title: string; description: string }> = {
+  front: {
     title: 'Front Side',
-    subtitle: 'Take a picture',
+    description: 'Take or upload a clear photo of the front side of your ID.',
   },
-  {
-    id: 'back',
+  back: {
     title: 'Back Side',
-    subtitle: 'Take a picture',
+    description: 'Capture the back side of your ID for verification.',
   },
-  {
-    id: 'selfie',
-    title: 'Selfie with the ID card',
-    subtitle: 'Take a picture',
+  selfie: {
+    title: 'Selfie with ID',
+    description: 'Take a selfie while holding your ID next to your face.',
   },
-];
+};
+
+const buildFileName = (type: DocumentType, extension?: string) =>
+  `kyc-${type}-${Date.now()}${extension ? `.${extension}` : ''}`;
+
+const toDocumentAsset = (asset: ImagePicker.ImagePickerAsset, type: DocumentType): DocumentAsset => {
+  const mimeType = asset.mimeType ?? 'image/jpeg';
+  const extension = asset.fileName?.split('.').pop() ?? mimeType.split('/').pop() ?? 'jpg';
+
+  return {
+    uri: asset.uri,
+    type: mimeType,
+    name: asset.fileName ?? buildFileName(type, extension),
+  };
+};
+
+const DocumentCard = ({
+  type,
+  asset,
+  isProcessing,
+  error,
+  onPress,
+}: {
+  type: DocumentType;
+  asset: DocumentAsset | null;
+  isProcessing: boolean;
+  error: string | null;
+  onPress: () => void;
+}) => {
+  const copy = documentCopy[type];
+
+  return (
+    <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.85}>
+      <View style={styles.cardHeader}>
+        <View style={styles.cardIconWrapper}>
+          <Ionicons name="cloud-upload-outline" size={22} color="#111" />
+        </View>
+        <View style={styles.cardHeaderText}>
+          <Text style={styles.cardTitle}>{copy.title}</Text>
+          <Text style={styles.cardSubtitle}>{copy.description}</Text>
+        </View>
+        <Ionicons name="chevron-forward" size={18} color="#c1c1c1" />
+      </View>
+
+      <View style={styles.previewWrapper}>
+        {asset ? (
+          <Image source={{ uri: asset.uri }} style={styles.previewImage} contentFit="cover" />
+        ) : (
+          <View style={styles.previewPlaceholder}>
+            <Ionicons name="image-outline" size={28} color="#9c9c9c" />
+            <Text style={styles.previewPlaceholderText}>Tap to add photo</Text>
+          </View>
+        )}
+      </View>
+
+      <View style={styles.cardFooter}>
+        {isProcessing ? (
+          <View style={styles.statusRow}>
+            <ActivityIndicator size="small" color="#111" />
+            <Text style={styles.statusText}>Processing text…</Text>
+          </View>
+        ) : error ? (
+          <View style={styles.statusRow}>
+            <Ionicons name="alert-circle-outline" size={18} color="#d64545" />
+            <Text style={[styles.statusText, styles.errorText]}>{error}</Text>
+          </View>
+        ) : asset ? (
+          <View style={styles.statusRow}>
+            <Ionicons name="checkmark-circle" size={18} color="#1c8c4d" />
+            <Text style={[styles.statusText, styles.successText]}>Photo ready</Text>
+          </View>
+        ) : (
+          <Text style={styles.statusText}>Tap to capture or upload</Text>
+        )}
+      </View>
+    </TouchableOpacity>
+  );
+};
 
 export default function KycDocumentsScreen() {
   const router = useRouter();
+  const [documents, setDocuments] = useState<DocumentState>(initialDocumentState);
+  const [ocrState, setOcrState] = useState<OcrStateMap>(initialOcrState);
+  const [detectedFields, setDetectedFields] = useState<ParsedKycFields>({
+    typeOfIdentification: 'CCCD',
+  });
+  const [isRequestingPermission, setIsRequestingPermission] = useState(false);
 
-  return (
-    <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
-      <View style={styles.container}>
-        <View>
-          <Text style={styles.title}>KYC Verification</Text>
-          <Text style={styles.subtitle}>Please align your ID card within the borders.</Text>
-        </View>
+  const isNextEnabled = useMemo(
+    () =>
+      Boolean(
+        documents.front &&
+          documents.back &&
+          documents.selfie &&
+          !ocrState.front.isProcessing &&
+          !ocrState.back.isProcessing,
+      ),
+    [documents.back, documents.front, documents.selfie, ocrState.back.isProcessing, ocrState.front.isProcessing],
+  );
 
-        <View style={styles.stepList}>
-          {steps.map((step) => (
-            <View key={step.id} style={styles.stepCard}>
-              <View style={styles.iconWrapper}>
-                <Ionicons name="cloud-upload-outline" size={22} color="#111" />
-              </View>
-              <View style={styles.stepContent}>
-                <Text style={styles.stepTitle}>{step.title}</Text>
-                <Text style={styles.stepSubtitle}>{step.subtitle}</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={18} color="#c1c1c1" />
+  const ensurePermission = useCallback(async (type: 'camera' | 'library') => {
+    setIsRequestingPermission(true);
+    try {
+      const permissionResult =
+        type === 'camera'
+          ? await ImagePicker.requestCameraPermissionsAsync()
+          : await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+      if (permissionResult.status !== 'granted') {
+        Alert.alert(
+          type === 'camera' ? 'Camera permission required' : 'Photo library permission required',
+          'Please enable permissions in your device settings to continue.',
+        );
+        return false;
+      }
+
+      return true;
+    } finally {
+      setIsRequestingPermission(false);
+    }
+  }, []);
+
+  const processOcr = useCallback(
+    async (type: 'front' | 'back', asset: DocumentAsset) => {
+      setOcrState((prev) => ({
+        ...prev,
+        [type]: {
+          ...prev[type],
+          isProcessing: true,
+          error: null,
+        },
+      }));
+
+      try {
+        const detectedText = await extractTextFromImage({ uri: asset.uri, mimeType: asset.type });
+
+        setOcrState((prev) => {
+          const nextState: OcrStateMap = {
+            ...prev,
+            [type]: {
+              ...prev[type],
+              isProcessing: false,
+              text: detectedText,
+              error: null,
+            },
+          };
+
+          const parsed = parseKycText({
+            frontText: type === 'front' ? detectedText : nextState.front.text,
+            backText: type === 'back' ? detectedText : nextState.back.text,
+          });
+
+          setDetectedFields((prevFields) => {
+            const nextFields: ParsedKycFields = { ...prevFields };
+            const parsedEntries = Object.entries(parsed) as [
+              keyof ParsedKycFields,
+              string | undefined,
+            ][];
+
+            parsedEntries.forEach(([field, value]) => {
+              if (typeof value === 'undefined') {
+                return;
+              }
+
+              if (typeof value === 'string' && value.trim().length === 0) {
+                return;
+              }
+
+              nextFields[field] = value;
+            });
+
+            return nextFields;
+          });
+
+          return nextState;
+        });
+      } catch (error) {
+        console.warn('OCR failed for document', type, error);
+        const fallbackMessage = 'Could not extract text. You can fill details manually later.';
+        const errorMessage = error instanceof Error && error.message.length > 0 ? error.message : fallbackMessage;
+
+        setOcrState((prev) => ({
+          ...prev,
+          [type]: {
+            ...prev[type],
+            isProcessing: false,
+            error: errorMessage,
+          },
+        }));
+      }
+    },
+    [],
+  );
+
+  const handleImageSelection = useCallback(
+    async (documentType: DocumentType, source: 'camera' | 'library') => {
+      const hasPermission = await ensurePermission(source);
+      if (!hasPermission) {
+        return;
+      }
+
+      const pickerResult =
+        source === 'camera'
+          ? await ImagePicker.launchCameraAsync({
+              mediaTypes: IMAGE_MEDIA_TYPE,
+              allowsEditing: false,
+              quality: 1,
+              preferredAssetRepresentationMode:
+                ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible,
+            })
+          : await ImagePicker.launchImageLibraryAsync({
+              mediaTypes: IMAGE_MEDIA_TYPE,
+              allowsEditing: false,
+              quality: 1,
+            });
+
+      if (pickerResult.canceled || !pickerResult.assets?.length) {
+        return;
+      }
+
+      const asset = toDocumentAsset(pickerResult.assets[0], documentType);
+
+      setDocuments((prev) => ({
+        ...prev,
+        [documentType]: asset,
+      }));
+
+      if (documentType === 'front' || documentType === 'back') {
+        await processOcr(documentType, asset);
+      }
+    },
+    [ensurePermission, processOcr],
+  );
+
+  const presentPickerOptions = useCallback(
+    (documentType: DocumentType) => {
+      Alert.alert(
+        'Upload document',
+        'Choose how you would like to add this photo.',
+        [
+          {
+            text: 'Take Photo',
+            onPress: () => {
+              void handleImageSelection(documentType, 'camera');
+            },
+          },
+          {
+            text: 'Choose from Library',
+            onPress: () => {
+              void handleImageSelection(documentType, 'library');
+            },
+          },
+          { text: 'Cancel', style: 'cancel' },
+        ],
+        { cancelable: true },
+      );
+    },
+    [handleImageSelection],
+  );
+
+  const handleNext = useCallback(() => {
+    if (!documents.front || !documents.back || !documents.selfie) {
+      Alert.alert('Missing documents', 'Please provide all three required photos to continue.');
+      return;
+    }
+
+    router.push({
+      pathname: '/(app)/kyc-details',
+      params: {
+        frontUri: documents.front.uri,
+        frontType: documents.front.type,
+        frontName: documents.front.name,
+        backUri: documents.back.uri,
+        backType: documents.back.type,
+        backName: documents.back.name,
+        selfieUri: documents.selfie.uri,
+        selfieType: documents.selfie.type,
+        selfieName: documents.selfie.name,
+        initialFullName: detectedFields.fullName ?? '',
+        initialIdentificationCode: detectedFields.identificationCode ?? '',
+        initialBirthday: detectedFields.birthday ?? '',
+        initialExpirationDate: detectedFields.expirationDate ?? '',
+        initialPermanentAddress: detectedFields.permanentAddress ?? '',
+        initialTypeOfIdentification: detectedFields.typeOfIdentification ?? '',
+      },
+    });
+  }, [detectedFields, documents, router]);
+
+  const autoFilledSummary = useMemo(() => {
+    const entries: { label: string; value?: string }[] = [
+      { label: 'Full name', value: detectedFields.fullName },
+      { label: 'ID number', value: detectedFields.identificationCode },
+      { label: 'Birthday', value: detectedFields.birthday },
+      { label: 'Expiration date', value: detectedFields.expirationDate },
+      { label: 'Address', value: detectedFields.permanentAddress },
+      { label: 'ID type', value: detectedFields.typeOfIdentification },
+      { label: 'Verified at', value: detectedFields.verifiedAt },
+    ];
+
+    const hasData = entries.some((entry) => entry.value && entry.value.length > 0);
+
+    if (!hasData) {
+      return null;
+    }
+
+    return (
+      <View style={styles.summaryCard}>
+        <Text style={styles.summaryTitle}>Auto-filled details</Text>
+        <Text style={styles.summarySubtitle}>
+          We used OCR to pre-fill these fields. You can review and edit them on the next step.
+        </Text>
+
+        <View style={styles.summaryList}>
+          {entries.map((entry) => (
+            <View key={entry.label} style={styles.summaryItem}>
+              <Text style={styles.summaryLabel}>{entry.label}</Text>
+              <Text style={styles.summaryValue}>
+                {entry.value && entry.value.length > 0 ? entry.value : 'Not detected'}
+              </Text>
             </View>
           ))}
         </View>
-
-        <View style={styles.footer}>
-          <TouchableOpacity
-            style={[styles.actionButton, styles.secondaryButton]}
-            onPress={() => router.back()}
-          >
-            <Text style={[styles.buttonText, styles.secondaryText]}>Cancel</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.actionButton, styles.primaryButton]}
-            onPress={() => router.push('/(app)/kyc-details')}
-          >
-            <Text style={[styles.buttonText, styles.primaryText]}>Next</Text>
-          </TouchableOpacity>
-        </View>
       </View>
-    </SafeAreaView>
+    );
+  }, [detectedFields]);
+
+  return (
+    <View style={styles.safeArea}>
+      <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
+        <View style={styles.header}>
+          <Text style={styles.title}>KYC Verification</Text>
+          <Text style={styles.subtitle}>
+            Upload the required documents. You can take photos with your camera or choose them from your gallery.
+          </Text>
+        </View>
+
+        <View style={styles.cardList}>
+          {(Object.keys(documentCopy) as DocumentType[]).map((documentType) => (
+            <DocumentCard
+              key={documentType}
+              type={documentType}
+              asset={documents[documentType]}
+              isProcessing={
+                documentType !== 'selfie' && ocrState[documentType as 'front' | 'back'].isProcessing
+              }
+              error={documentType !== 'selfie' ? ocrState[documentType as 'front' | 'back'].error : null}
+              onPress={() => presentPickerOptions(documentType)}
+            />
+          ))}
+        </View>
+
+        {autoFilledSummary}
+      </ScrollView>
+
+      <View style={styles.footer}>
+        <TouchableOpacity style={[styles.actionButton, styles.secondaryButton]} onPress={() => router.back()}>
+          <Text style={[styles.buttonText, styles.secondaryText]}>Cancel</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.actionButton, styles.primaryButton, !isNextEnabled && styles.disabledButton]}
+          onPress={handleNext}
+          disabled={!isNextEnabled || isRequestingPermission}
+        >
+          <Text style={[styles.buttonText, styles.primaryText]}>Next</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
   );
 }
 
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: '#ffffff',
-  },
-  container: {
-    flex: 1,
-    paddingHorizontal: 20,
-    paddingTop: 24,
-    paddingBottom: 24,
-    justifyContent: 'space-between',
-    gap: 24,
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#111111',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: '#6f6f6f',
-  },
-  stepList: {
-    gap: 16,
-  },
-  stepCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 18,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#e4e4e4',
-    backgroundColor: '#ffffff',
-    gap: 16,
-  },
-  iconWrapper: {
-    width: 44,
-    height: 44,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#eeeeee',
-    backgroundColor: '#fafafa',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  stepContent: {
-    flex: 1,
-  },
-  stepTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111111',
-  },
-  stepSubtitle: {
-    fontSize: 13,
-    color: '#7a7a7a',
-    marginTop: 4,
-  },
-  footer: {
-    flexDirection: 'row',
-    gap: 16,
-  },
-  actionButton: {
-    flex: 1,
-    borderRadius: 12,
-    minHeight: 56,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  secondaryButton: {
-    borderWidth: 1,
-    borderColor: '#111111',
-    backgroundColor: '#ffffff',
-  },
-  primaryButton: {
-    backgroundColor: '#111111',
-  },
-  buttonText: {
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  secondaryText: {
-    color: '#111111',
-  },
-  primaryText: {
-    color: '#ffffff',
-  },
-});
+

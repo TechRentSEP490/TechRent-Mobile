@@ -1,0 +1,1006 @@
+﻿
+> techrent-mobile@1.0.0 test
+> jest
+
+node.exe : PASS __tes
+ts__/unit/stores/cart
+-store.test.ts
+At C:\Program Files\n
+odejs\npm.ps1:29 
+char:3
++   & $NODE_EXE 
+$NPM_CLI_JS $args
++   ~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~
+    + CategoryInfo   
+           : NotSpe  
+  cified: (PASS __   
+ tests__/...t-sto    
+re.test.ts:Strin    
+g) [], RemoteExc    
+eption
+    + FullyQualified 
+   ErrorId : Native  
+  CommandError
+ 
+PASS __tests__/unit/s
+ervices/api.test.ts
+PASS __tests__/unit/u
+tils/dates.test.ts
+PASS __tests__/integr
+ation/api-contract.te
+st.ts
+FAIL __tests__/compon
+ents/example-componen
+t.test.tsx
+  ΓùÅ Component 
+Testing Examples ΓÇ║ 
+Render Tests ΓÇ║ 
+should render button 
+with correct title
+
+    Invariant 
+Violation: __fbBatche
+dBridgeConfig is not 
+set, cannot invoke 
+native modules
+
+    [0m [90m 16 
+|[39m     disabled[
+33m?[39m[33m:[39m 
+boolean[33m;[39m
+     [90m 17 |[39m 
+}) [33m=>[39m (
+    [31m[1m>[22m[
+39m[90m 18 |[39m   
+  [33m<[39m[33mPre
+ssable[39m
+     [90m    |[39m 
+     
+[31m[1m^[22m[39m
+     [90m 19 |[39m 
+        onPress[33m=
+[39m{onPress}
+     [90m 20 |[39m 
+        disabled[33m
+=[39m{disabled}
+     [90m 21 |[39m 
+        testID[33m=
+[39m[32m"sample-butt
+on"[39m[0m
+
+      at invariant (n
+ode_modules/invariant
+/invariant.js:40:15)
+      at 
+Object.invariant (nod
+e_modules/react-nativ
+e/Libraries/BatchedBr
+idge/NativeModules.js
+:187:3)
+      at 
+Object.require (node_
+modules/react-native/
+Libraries/TurboModule
+/TurboModuleRegistry.
+js:15:23)
+      at 
+Object.require (node_
+modules/react-native/
+src/private/featurefl
+ags/specs/NativeReact
+NativeFeatureFlags.js
+:24:1)
+      at 
+Object.require (node_
+modules/react-native/
+src/private/featurefl
+ags/ReactNativeFeatur
+eFlagsBase.js:16:1)
+      at 
+Object.require (node_
+modules/react-native/
+src/private/featurefl
+ags/ReactNativeFeatur
+eFlags.js:22:1)
+      at 
+Object.require (node_
+modules/react-native/
+Libraries/Components/
+View/View.js:13:1)
+      at 
+Object.require (node_
+modules/react-native/
+Libraries/Pressabilit
+y/PressabilityDebug.j
+s:13:1)
+      at 
+Object.require (node_
+modules/react-native/
+Libraries/Components/
+Pressable/Pressable.j
+s:19:1)
+      at 
+Object.require [as 
+Pressable] (node_modu
+les/react-native/inde
+x.js:70:12)
+      at Pressable (_
+_tests__/components/e
+xample-component.test
+.tsx:18:6)
+      at Object.react
+-stack-bottom-frame (
+node_modules/react-te
+st-renderer/cjs/react
+-test-renderer.develo
+pment.js:13976:20)
+      at 
+renderWithHooks (node
+_modules/react-test-r
+enderer/cjs/react-tes
+t-renderer.developmen
+t.js:2866:22)
+      at updateFuncti
+onComponent (node_mod
+ules/react-test-rende
+rer/cjs/react-test-re
+nderer.development.js
+:6006:19)
+      at beginWork (n
+ode_modules/react-tes
+t-renderer/cjs/react-
+test-renderer.develop
+ment.js:7474:18)
+      at 
+runWithFiberInDEV (no
+de_modules/react-test
+-renderer/cjs/react-t
+est-renderer.developm
+ent.js:1574:13)
+      at 
+performUnitOfWork (no
+de_modules/react-test
+-renderer/cjs/react-t
+est-renderer.developm
+ent.js:10980:22)
+      at 
+workLoopSync (node_mo
+dules/react-test-rend
+erer/cjs/react-test-r
+enderer.development.j
+s:10816:41)
+      at 
+renderRootSync (node_
+modules/react-test-re
+nderer/cjs/react-test
+-renderer.development
+.js:10797:11)
+      at 
+performWorkOnRoot (no
+de_modules/react-test
+-renderer/cjs/react-t
+est-renderer.developm
+ent.js:10384:39)
+      at performWorkO
+nRootViaSchedulerTask
+ (node_modules/react-
+test-renderer/cjs/rea
+ct-test-renderer.deve
+lopment.js:2094:7)
+      at 
+flushActQueue (node_m
+odules/react/cjs/reac
+t.development.js:566:
+34)
+      at process.env.
+NODE_ENV.exports.act 
+(node_modules/react/c
+js/react.development.
+js:859:10)
+      at 
+actImplementation (no
+de_modules/@testing-l
+ibrary/react-native/s
+rc/act.ts:30:25)
+      at 
+renderWithAct (node_m
+odules/@testing-libra
+ry/react-native/src/r
+ender-act.ts:13:11)
+      at 
+renderInternal (node_
+modules/@testing-libr
+ary/react-native/src/
+render.tsx:69:33)
+      at 
+renderInternal (node_
+modules/@testing-libr
+ary/react-native/src/
+render.tsx:44:10)
+      at 
+Object.<anonymous> (_
+_tests__/components/e
+xample-component.test
+.tsx:39:19)
+
+  ΓùÅ Component 
+Testing Examples ΓÇ║ 
+Render Tests ΓÇ║ 
+should render 
+conditionally based 
+on props
+
+    Invariant 
+Violation: __fbBatche
+dBridgeConfig is not 
+set, cannot invoke 
+native modules
+
+    [0m [90m 28 
+|[39m
+     [90m 29 |[39m 
+[36mconst[39m [33m
+ConditionalRenderer[
+39m [33m=[39m ({ 
+show[33m,[39m 
+message }[33m:[39m 
+{ show[33m:[39m 
+boolean[33m;[39m 
+message[33m:[39m 
+string }) 
+[33m=>[39m (
+    [31m[1m>[22m[
+39m[90m 30 |[39m   
+  [33m<[39m[33mVie
+w[39m[33m>[39m{sho
+w [33m&&[39m [33m<
+[39m[33mText[39m t
+estID[33m=[39m[32m
+"conditional-text"[3
+9m[33m>[39m{message
+}[33m<[39m[33m/[3
+9m[33mText[39m[33m
+>[39m}[33m<[39m[3
+3m/[39m[33mView[39
+m[33m>[39m
+     [90m    |[39m 
+     
+[31m[1m^[22m[39m
+     [90m 31 |[39m 
+)[33m;[39m
+     [90m 32 |[39m
+     [90m 33 |[39m 
+describe([32m'Compon
+ent Testing Examples'
+[39m[33m,[39m () 
+[33m=>[39m {[0m
+
+      at invariant (n
+ode_modules/invariant
+/invariant.js:40:15)
+      at 
+Object.invariant (nod
+e_modules/react-nativ
+e/Libraries/BatchedBr
+idge/NativeModules.js
+:187:3)
+      at 
+Object.require (node_
+modules/react-native/
+Libraries/TurboModule
+/TurboModuleRegistry.
+js:15:23)
+      at 
+Object.require (node_
+modules/react-native/
+src/private/featurefl
+ags/specs/NativeReact
+NativeFeatureFlags.js
+:24:1)
+      at 
+Object.require (node_
+modules/react-native/
+src/private/featurefl
+ags/ReactNativeFeatur
+eFlagsBase.js:16:1)
+      at 
+Object.require (node_
+modules/react-native/
+src/private/featurefl
+ags/ReactNativeFeatur
+eFlags.js:22:1)
+      at 
+Object.require (node_
+modules/react-native/
+Libraries/Components/
+View/View.js:13:1)
+      at 
+Object.require [as 
+View] (node_modules/r
+eact-native/index.js:
+140:12)
+      at View (__test
+s__/components/exampl
+e-component.test.tsx:
+30:6)
+      at Object.react
+-stack-bottom-frame (
+node_modules/react-te
+st-renderer/cjs/react
+-test-renderer.develo
+pment.js:13976:20)
+      at 
+renderWithHooks (node
+_modules/react-test-r
+enderer/cjs/react-tes
+t-renderer.developmen
+t.js:2866:22)
+      at updateFuncti
+onComponent (node_mod
+ules/react-test-rende
+rer/cjs/react-test-re
+nderer.development.js
+:6006:19)
+      at beginWork (n
+ode_modules/react-tes
+t-renderer/cjs/react-
+test-renderer.develop
+ment.js:7474:18)
+      at 
+runWithFiberInDEV (no
+de_modules/react-test
+-renderer/cjs/react-t
+est-renderer.developm
+ent.js:1574:13)
+      at 
+performUnitOfWork (no
+de_modules/react-test
+-renderer/cjs/react-t
+est-renderer.developm
+ent.js:10980:22)
+      at 
+workLoopSync (node_mo
+dules/react-test-rend
+erer/cjs/react-test-r
+enderer.development.j
+s:10816:41)
+      at 
+renderRootSync (node_
+modules/react-test-re
+nderer/cjs/react-test
+-renderer.development
+.js:10797:11)
+      at 
+performWorkOnRoot (no
+de_modules/react-test
+-renderer/cjs/react-t
+est-renderer.developm
+ent.js:10384:39)
+      at performWorkO
+nRootViaSchedulerTask
+ (node_modules/react-
+test-renderer/cjs/rea
+ct-test-renderer.deve
+lopment.js:2094:7)
+      at 
+flushActQueue (node_m
+odules/react/cjs/reac
+t.development.js:566:
+34)
+      at process.env.
+NODE_ENV.exports.act 
+(node_modules/react/c
+js/react.development.
+js:859:10)
+      at 
+actImplementation (no
+de_modules/@testing-l
+ibrary/react-native/s
+rc/act.ts:30:25)
+      at 
+renderWithAct (node_m
+odules/@testing-libra
+ry/react-native/src/r
+ender-act.ts:13:11)
+      at 
+renderInternal (node_
+modules/@testing-libr
+ary/react-native/src/
+render.tsx:69:33)
+      at 
+renderInternal (node_
+modules/@testing-libr
+ary/react-native/src/
+render.tsx:44:10)
+      at 
+Object.<anonymous> (_
+_tests__/components/e
+xample-component.test
+.tsx:45:40)
+
+  ΓùÅ Component 
+Testing Examples ΓÇ║ 
+User Interaction 
+Tests ΓÇ║ should 
+call onPress when 
+button is pressed
+
+    Invariant 
+Violation: __fbBatche
+dBridgeConfig is not 
+set, cannot invoke 
+native modules
+
+    [0m [90m 16 
+|[39m     disabled[
+33m?[39m[33m:[39m 
+boolean[33m;[39m
+     [90m 17 |[39m 
+}) [33m=>[39m (
+    [31m[1m>[22m[
+39m[90m 18 |[39m   
+  [33m<[39m[33mPre
+ssable[39m
+     [90m    |[39m 
+     
+[31m[1m^[22m[39m
+     [90m 19 |[39m 
+        onPress[33m=
+[39m{onPress}
+     [90m 20 |[39m 
+        disabled[33m
+=[39m{disabled}
+     [90m 21 |[39m 
+        testID[33m=
+[39m[32m"sample-butt
+on"[39m[0m
+
+      at invariant (n
+ode_modules/invariant
+/invariant.js:40:15)
+      at 
+Object.invariant (nod
+e_modules/react-nativ
+e/Libraries/BatchedBr
+idge/NativeModules.js
+:187:3)
+      at 
+Object.require (node_
+modules/react-native/
+Libraries/TurboModule
+/TurboModuleRegistry.
+js:15:23)
+      at 
+Object.require (node_
+modules/react-native/
+src/private/featurefl
+ags/specs/NativeReact
+NativeFeatureFlags.js
+:24:1)
+      at 
+Object.require (node_
+modules/react-native/
+src/private/featurefl
+ags/ReactNativeFeatur
+eFlagsBase.js:16:1)
+      at 
+Object.require (node_
+modules/react-native/
+src/private/featurefl
+ags/ReactNativeFeatur
+eFlags.js:22:1)
+      at 
+Object.require (node_
+modules/react-native/
+Libraries/Components/
+View/View.js:13:1)
+      at 
+Object.require (node_
+modules/react-native/
+Libraries/Pressabilit
+y/PressabilityDebug.j
+s:13:1)
+      at 
+Object.require (node_
+modules/react-native/
+Libraries/Components/
+Pressable/Pressable.j
+s:19:1)
+      at 
+Object.require [as 
+Pressable] (node_modu
+les/react-native/inde
+x.js:70:12)
+      at Pressable (_
+_tests__/components/e
+xample-component.test
+.tsx:18:6)
+      at Object.react
+-stack-bottom-frame (
+node_modules/react-te
+st-renderer/cjs/react
+-test-renderer.develo
+pment.js:13976:20)
+      at 
+renderWithHooks (node
+_modules/react-test-r
+enderer/cjs/react-tes
+t-renderer.developmen
+t.js:2866:22)
+      at updateFuncti
+onComponent (node_mod
+ules/react-test-rende
+rer/cjs/react-test-re
+nderer.development.js
+:6006:19)
+      at beginWork (n
+ode_modules/react-tes
+t-renderer/cjs/react-
+test-renderer.develop
+ment.js:7474:18)
+      at 
+runWithFiberInDEV (no
+de_modules/react-test
+-renderer/cjs/react-t
+est-renderer.developm
+ent.js:1574:13)
+      at 
+performUnitOfWork (no
+de_modules/react-test
+-renderer/cjs/react-t
+est-renderer.developm
+ent.js:10980:22)
+      at 
+workLoopSync (node_mo
+dules/react-test-rend
+erer/cjs/react-test-r
+enderer.development.j
+s:10816:41)
+      at 
+renderRootSync (node_
+modules/react-test-re
+nderer/cjs/react-test
+-renderer.development
+.js:10797:11)
+      at 
+performWorkOnRoot (no
+de_modules/react-test
+-renderer/cjs/react-t
+est-renderer.developm
+ent.js:10384:39)
+      at performWorkO
+nRootViaSchedulerTask
+ (node_modules/react-
+test-renderer/cjs/rea
+ct-test-renderer.deve
+lopment.js:2094:7)
+      at 
+flushActQueue (node_m
+odules/react/cjs/reac
+t.development.js:566:
+34)
+      at process.env.
+NODE_ENV.exports.act 
+(node_modules/react/c
+js/react.development.
+js:859:10)
+      at 
+actImplementation (no
+de_modules/@testing-l
+ibrary/react-native/s
+rc/act.ts:30:25)
+      at 
+renderWithAct (node_m
+odules/@testing-libra
+ry/react-native/src/r
+ender-act.ts:13:11)
+      at 
+renderInternal (node_
+modules/@testing-libr
+ary/react-native/src/
+render.tsx:69:33)
+      at 
+renderInternal (node_
+modules/@testing-libr
+ary/react-native/src/
+render.tsx:44:10)
+      at 
+Object.<anonymous> (_
+_tests__/components/e
+xample-component.test
+.tsx:64:19)
+
+  ΓùÅ Component 
+Testing Examples ΓÇ║ 
+User Interaction 
+Tests ΓÇ║ should not 
+call onPress when 
+button is disabled
+
+    Invariant 
+Violation: __fbBatche
+dBridgeConfig is not 
+set, cannot invoke 
+native modules
+
+    [0m [90m 16 
+|[39m     disabled[
+33m?[39m[33m:[39m 
+boolean[33m;[39m
+     [90m 17 |[39m 
+}) [33m=>[39m (
+    [31m[1m>[22m[
+39m[90m 18 |[39m   
+  [33m<[39m[33mPre
+ssable[39m
+     [90m    |[39m 
+     
+[31m[1m^[22m[39m
+     [90m 19 |[39m 
+        onPress[33m=
+[39m{onPress}
+     [90m 20 |[39m 
+        disabled[33m
+=[39m{disabled}
+     [90m 21 |[39m 
+        testID[33m=
+[39m[32m"sample-butt
+on"[39m[0m
+
+      at invariant (n
+ode_modules/invariant
+/invariant.js:40:15)
+      at 
+Object.invariant (nod
+e_modules/react-nativ
+e/Libraries/BatchedBr
+idge/NativeModules.js
+:187:3)
+      at 
+Object.require (node_
+modules/react-native/
+Libraries/TurboModule
+/TurboModuleRegistry.
+js:15:23)
+      at 
+Object.require (node_
+modules/react-native/
+src/private/featurefl
+ags/specs/NativeReact
+NativeFeatureFlags.js
+:24:1)
+      at 
+Object.require (node_
+modules/react-native/
+src/private/featurefl
+ags/ReactNativeFeatur
+eFlagsBase.js:16:1)
+      at 
+Object.require (node_
+modules/react-native/
+src/private/featurefl
+ags/ReactNativeFeatur
+eFlags.js:22:1)
+      at 
+Object.require (node_
+modules/react-native/
+Libraries/Components/
+View/View.js:13:1)
+      at 
+Object.require (node_
+modules/react-native/
+Libraries/Pressabilit
+y/PressabilityDebug.j
+s:13:1)
+      at 
+Object.require (node_
+modules/react-native/
+Libraries/Components/
+Pressable/Pressable.j
+s:19:1)
+      at 
+Object.require [as 
+Pressable] (node_modu
+les/react-native/inde
+x.js:70:12)
+      at Pressable (_
+_tests__/components/e
+xample-component.test
+.tsx:18:6)
+      at Object.react
+-stack-bottom-frame (
+node_modules/react-te
+st-renderer/cjs/react
+-test-renderer.develo
+pment.js:13976:20)
+      at 
+renderWithHooks (node
+_modules/react-test-r
+enderer/cjs/react-tes
+t-renderer.developmen
+t.js:2866:22)
+      at updateFuncti
+onComponent (node_mod
+ules/react-test-rende
+rer/cjs/react-test-re
+nderer.development.js
+:6006:19)
+      at beginWork (n
+ode_modules/react-tes
+t-renderer/cjs/react-
+test-renderer.develop
+ment.js:7474:18)
+      at 
+runWithFiberInDEV (no
+de_modules/react-test
+-renderer/cjs/react-t
+est-renderer.developm
+ent.js:1574:13)
+      at 
+performUnitOfWork (no
+de_modules/react-test
+-renderer/cjs/react-t
+est-renderer.developm
+ent.js:10980:22)
+      at 
+workLoopSync (node_mo
+dules/react-test-rend
+erer/cjs/react-test-r
+enderer.development.j
+s:10816:41)
+      at 
+renderRootSync (node_
+modules/react-test-re
+nderer/cjs/react-test
+-renderer.development
+.js:10797:11)
+      at 
+performWorkOnRoot (no
+de_modules/react-test
+-renderer/cjs/react-t
+est-renderer.developm
+ent.js:10384:39)
+      at performWorkO
+nRootViaSchedulerTask
+ (node_modules/react-
+test-renderer/cjs/rea
+ct-test-renderer.deve
+lopment.js:2094:7)
+      at 
+flushActQueue (node_m
+odules/react/cjs/reac
+t.development.js:566:
+34)
+      at process.env.
+NODE_ENV.exports.act 
+(node_modules/react/c
+js/react.development.
+js:859:10)
+      at 
+actImplementation (no
+de_modules/@testing-l
+ibrary/react-native/s
+rc/act.ts:30:25)
+      at 
+renderWithAct (node_m
+odules/@testing-libra
+ry/react-native/src/r
+ender-act.ts:13:11)
+      at 
+renderInternal (node_
+modules/@testing-libr
+ary/react-native/src/
+render.tsx:69:33)
+      at 
+renderInternal (node_
+modules/@testing-libr
+ary/react-native/src/
+render.tsx:44:10)
+      at 
+Object.<anonymous> (_
+_tests__/components/e
+xample-component.test
+.tsx:73:19)
+
+  ΓùÅ Component 
+Testing Examples ΓÇ║ 
+Props Tests ΓÇ║ 
+should display 
+different text based 
+on props
+
+    Invariant 
+Violation: __fbBatche
+dBridgeConfig is not 
+set, cannot invoke 
+native modules
+
+    [0m [90m 16 
+|[39m     disabled[
+33m?[39m[33m:[39m 
+boolean[33m;[39m
+     [90m 17 |[39m 
+}) [33m=>[39m (
+    [31m[1m>[22m[
+39m[90m 18 |[39m   
+  [33m<[39m[33mPre
+ssable[39m
+     [90m    |[39m 
+     
+[31m[1m^[22m[39m
+     [90m 19 |[39m 
+        onPress[33m=
+[39m{onPress}
+     [90m 20 |[39m 
+        disabled[33m
+=[39m{disabled}
+     [90m 21 |[39m 
+        testID[33m=
+[39m[32m"sample-butt
+on"[39m[0m
+
+      at invariant (n
+ode_modules/invariant
+/invariant.js:40:15)
+      at 
+Object.invariant (nod
+e_modules/react-nativ
+e/Libraries/BatchedBr
+idge/NativeModules.js
+:187:3)
+      at 
+Object.require (node_
+modules/react-native/
+Libraries/TurboModule
+/TurboModuleRegistry.
+js:15:23)
+      at 
+Object.require (node_
+modules/react-native/
+src/private/featurefl
+ags/specs/NativeReact
+NativeFeatureFlags.js
+:24:1)
+      at 
+Object.require (node_
+modules/react-native/
+src/private/featurefl
+ags/ReactNativeFeatur
+eFlagsBase.js:16:1)
+      at 
+Object.require (node_
+modules/react-native/
+src/private/featurefl
+ags/ReactNativeFeatur
+eFlags.js:22:1)
+      at 
+Object.require (node_
+modules/react-native/
+Libraries/Components/
+View/View.js:13:1)
+      at 
+Object.require (node_
+modules/react-native/
+Libraries/Pressabilit
+y/PressabilityDebug.j
+s:13:1)
+      at 
+Object.require (node_
+modules/react-native/
+Libraries/Components/
+Pressable/Pressable.j
+s:19:1)
+      at 
+Object.require [as 
+Pressable] (node_modu
+les/react-native/inde
+x.js:70:12)
+      at Pressable (_
+_tests__/components/e
+xample-component.test
+.tsx:18:6)
+      at Object.react
+-stack-bottom-frame (
+node_modules/react-te
+st-renderer/cjs/react
+-test-renderer.develo
+pment.js:13976:20)
+      at 
+renderWithHooks (node
+_modules/react-test-r
+enderer/cjs/react-tes
+t-renderer.developmen
+t.js:2866:22)
+      at updateFuncti
+onComponent (node_mod
+ules/react-test-rende
+rer/cjs/react-test-re
+nderer.development.js
+:6006:19)
+      at beginWork (n
+ode_modules/react-tes
+t-renderer/cjs/react-
+test-renderer.develop
+ment.js:7474:18)
+      at 
+runWithFiberInDEV (no
+de_modules/react-test
+-renderer/cjs/react-t
+est-renderer.developm
+ent.js:1574:13)
+      at 
+performUnitOfWork (no
+de_modules/react-test
+-renderer/cjs/react-t
+est-renderer.developm
+ent.js:10980:22)
+      at 
+workLoopSync (node_mo
+dules/react-test-rend
+erer/cjs/react-test-r
+enderer.development.j
+s:10816:41)
+      at 
+renderRootSync (node_
+modules/react-test-re
+nderer/cjs/react-test
+-renderer.development
+.js:10797:11)
+      at 
+performWorkOnRoot (no
+de_modules/react-test
+-renderer/cjs/react-t
+est-renderer.developm
+ent.js:10384:39)
+      at performWorkO
+nRootViaSchedulerTask
+ (node_modules/react-
+test-renderer/cjs/rea
+ct-test-renderer.deve
+lopment.js:2094:7)
+      at 
+flushActQueue (node_m
+odules/react/cjs/reac
+t.development.js:566:
+34)
+      at process.env.
+NODE_ENV.exports.act 
+(node_modules/react/c
+js/react.development.
+js:859:10)
+      at 
+actImplementation (no
+de_modules/@testing-l
+ibrary/react-native/s
+rc/act.ts:30:25)
+      at 
+renderWithAct (node_m
+odules/@testing-libra
+ry/react-native/src/r
+ender-act.ts:13:11)
+      at 
+renderInternal (node_
+modules/@testing-libr
+ary/react-native/src/
+render.tsx:69:33)
+      at 
+renderInternal (node_
+modules/@testing-libr
+ary/react-native/src/
+render.tsx:44:10)
+      at 
+Object.<anonymous> (_
+_tests__/components/e
+xample-component.test
+.tsx:86:40)
+
+Test Suites: 1 
+failed, 4 passed, 5 
+total
+Tests:       5 
+failed, 67 passed, 
+72 total
+Snapshots:   0 total
+Time:        3.726 s
+Ran all test suites.

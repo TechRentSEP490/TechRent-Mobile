@@ -9,7 +9,12 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.genchio.TechRentMobile",
+      "associatedDomains": [
+        "applinks:www.techrent.website",
+        "applinks:techrent.website"
+      ]
     },
     "android": {
       "adaptiveIcon": {
@@ -20,7 +25,29 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.genchio.TechRentMobile"
+      "package": "com.genchio.TechRentMobile",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "www.techrent.website",
+              "pathPrefix": "/app"
+            },
+            {
+              "scheme": "https",
+              "host": "techrent.website",
+              "pathPrefix": "/app"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
+      ]
     },
     "web": {
       "output": "static",
@@ -39,11 +66,19 @@
             "backgroundColor": "#000000"
           }
         }
-      ]
+      ],
+      "expo-secure-store",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "e1ea1983-6b19-40c7-a408-b39445e770d7"
+      }
     }
   }
 }
