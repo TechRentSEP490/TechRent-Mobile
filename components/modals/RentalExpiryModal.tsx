@@ -25,7 +25,11 @@ type RentalExpiryModalProps = {
     startDate?: string;
     daysRemaining: number;
     isConfirmed?: boolean; // Whether this order was already confirmed for return
+    hasPendingExtension?: boolean; // Has a pending extension request
+    hasAnyAnnex?: boolean; // Has annex that needs signing
+    canExtend?: boolean; // Whether extend action is allowed
     onConfirmReturn: () => Promise<void>;
+    onRequestExtend?: () => void; // Opens extend modal
     onClose: () => void;
 };
 
@@ -45,7 +49,11 @@ export default function RentalExpiryModal({
     startDate,
     daysRemaining,
     isConfirmed = false, // Đã xác nhận trước đó chưa (lưu trong AsyncStorage)
+    hasPendingExtension = false,
+    hasAnyAnnex = false,
+    canExtend = true,
     onConfirmReturn,
+    onRequestExtend,
     onClose,
 }: RentalExpiryModalProps) {
     // ========== STATE MANAGEMENT ==========
@@ -338,12 +346,33 @@ export default function RentalExpiryModal({
                             </View>
                         </View>
 
-                        <View style={styles.infoBox}>
-                            <Ionicons name="information-circle-outline" size={20} color="#3b82f6" />
-                            <Text style={styles.infoText}>
-                                Khi bạn xác nhận kết thúc hợp đồng, nhân viên sẽ liên hệ để thu hồi thiết bị và tiến hành quyết toán hoàn cọc.
-                            </Text>
-                        </View>
+                        {/* Status Cards */}
+                        {hasPendingExtension && (
+                            <View style={styles.pendingBox}>
+                                <Ionicons name="hourglass-outline" size={20} color="#f59e0b" />
+                                <Text style={styles.pendingText}>
+                                    Đang có yêu cầu gia hạn đang xử lý. Vui lòng đợi phản hồi từ hệ thống.
+                                </Text>
+                            </View>
+                        )}
+
+                        {hasAnyAnnex && !hasPendingExtension && (
+                            <View style={styles.annexBox}>
+                                <Ionicons name="document-text-outline" size={20} color="#8b5cf6" />
+                                <Text style={styles.annexText}>
+                                    Bạn có phụ lục gia hạn cần ký. Vui lòng ký phụ lục trước khi thực hiện thao tác khác.
+                                </Text>
+                            </View>
+                        )}
+
+                        {!hasPendingExtension && !hasAnyAnnex && (
+                            <View style={styles.infoBox}>
+                                <Ionicons name="information-circle-outline" size={20} color="#3b82f6" />
+                                <Text style={styles.infoText}>
+                                    Khi bạn xác nhận kết thúc hợp đồng, nhân viên sẽ liên hệ để thu hồi thiết bị và tiến hành quyết toán hoàn cọc.
+                                </Text>
+                            </View>
+                        )}
 
                         {error && (
                             <View style={styles.errorBox}>
@@ -354,18 +383,26 @@ export default function RentalExpiryModal({
                     </View>
 
                     {/* Actions */}
-                    <View style={styles.actions}>
+                    <View style={styles.actionsVertical}>
+                        {/* Extend Button - Only show if extend is allowed and callback provided */}
+                        {canExtend && onRequestExtend && !hasPendingExtension && !hasAnyAnnex && (
+                            <Pressable
+                                style={styles.extendButton}
+                                onPress={onRequestExtend}
+                                disabled={isProcessing}
+                            >
+                                <Ionicons name="calendar-outline" size={20} color="#3b82f6" />
+                                <Text style={styles.extendButtonText}>Yêu cầu gia hạn</Text>
+                            </Pressable>
+                        )}
+
                         <Pressable
-                            style={styles.secondaryButton}
-                            onPress={onClose}
-                            disabled={isProcessing}
-                        >
-                            <Text style={styles.secondaryButtonText}>Để sau</Text>
-                        </Pressable>
-                        <Pressable
-                            style={[styles.primaryButton, isProcessing && styles.primaryButtonDisabled]}
+                            style={[
+                                styles.primaryButtonFull,
+                                (isProcessing || hasPendingExtension || hasAnyAnnex) && styles.primaryButtonDisabled
+                            ]}
                             onPress={handleConfirmReturn}
-                            disabled={isProcessing}
+                            disabled={isProcessing || hasPendingExtension || hasAnyAnnex}
                         >
                             {isProcessing ? (
                                 <ActivityIndicator color="#ffffff" size="small" />
@@ -375,6 +412,14 @@ export default function RentalExpiryModal({
                                     <Text style={styles.primaryButtonText}>Kết thúc hợp đồng</Text>
                                 </>
                             )}
+                        </Pressable>
+
+                        <Pressable
+                            style={styles.secondaryButtonFull}
+                            onPress={onClose}
+                            disabled={isProcessing}
+                        >
+                            <Text style={styles.secondaryButtonText}>Để sau</Text>
                         </Pressable>
                     </View>
                 </View>
@@ -521,6 +566,14 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
     },
+    secondaryButtonFull: {
+        paddingVertical: 14,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: '#e5e7eb',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
     secondaryButtonText: {
         fontSize: 15,
         fontWeight: '600',
@@ -528,6 +581,16 @@ const styles = StyleSheet.create({
     },
     primaryButton: {
         flex: 1,
+        flexDirection: 'row',
+        gap: 6,
+        paddingVertical: 14,
+        paddingHorizontal: 12,
+        borderRadius: 12,
+        backgroundColor: '#111827',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    primaryButtonFull: {
         flexDirection: 'row',
         gap: 8,
         paddingVertical: 14,
@@ -632,5 +695,58 @@ const styles = StyleSheet.create({
         fontSize: 14,
         color: '#1e40af',
         lineHeight: 20,
+    },
+    // Pending extension status styles
+    pendingBox: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        gap: 10,
+        backgroundColor: '#fef3c7',
+        borderRadius: 12,
+        padding: 14,
+    },
+    pendingText: {
+        flex: 1,
+        fontSize: 14,
+        color: '#b45309',
+        lineHeight: 20,
+    },
+    // Annex status styles
+    annexBox: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        gap: 10,
+        backgroundColor: '#f3e8ff',
+        borderRadius: 12,
+        padding: 14,
+    },
+    annexText: {
+        flex: 1,
+        fontSize: 14,
+        color: '#7c3aed',
+        lineHeight: 20,
+    },
+    // Vertical actions container
+    actionsVertical: {
+        padding: 24,
+        paddingTop: 0,
+        gap: 12,
+    },
+    // Extend button
+    extendButton: {
+        flexDirection: 'row',
+        gap: 8,
+        paddingVertical: 14,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: '#3b82f6',
+        backgroundColor: '#eff6ff',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    extendButtonText: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: '#3b82f6',
     },
 });

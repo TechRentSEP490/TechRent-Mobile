@@ -34,6 +34,7 @@ import type {
 import ContractPdfDownloader from '@/components/ContractPdfDownloader';
 import HandoverPdfDownloader from '@/components/HandoverPdfDownloader';
 import EmailEditorModal from '@/components/modals/EmailEditorModal';
+import ExtendRentalModal from '@/components/modals/ExtendRentalModal';
 import HandoverReportsModal from '@/components/modals/HandoverReportsModal';
 import HandoverSignModal from '@/components/modals/HandoverSignModal';
 import OrderDetailsModal from '@/components/modals/OrderDetailsModal';
@@ -58,9 +59,10 @@ import {
 } from '@/services/payments';
 import {
   confirmReturnRentalOrder,
+  extendRentalOrder,
   fetchRentalOrderById,
   fetchRentalOrders,
-  type RentalOrderResponse,
+  type RentalOrderResponse
 } from '@/services/rental-orders';
 import {
   fetchSettlementByOrderId,
@@ -517,6 +519,10 @@ export default function OrdersScreen() {
   const [expiringOrder, setExpiringOrder] = useState<OrderCard | null>(null);
   const [confirmedReturnOrders, setConfirmedReturnOrders] = useState<Set<number>>(new Set());
 
+  // Extend Rental State
+  const [isExtendModalVisible, setExtendModalVisible] = useState(false);
+  const [processingExtend, setProcessingExtend] = useState(false);
+
   // Load confirmed return orders from AsyncStorage on mount
   useEffect(() => {
     const loadConfirmedReturns = async () => {
@@ -780,6 +786,53 @@ export default function OrdersScreen() {
     } catch (error) {
       console.error('[EndContract] ❌ Error confirming return:', error);
       throw error; // Re-throw so RentalExpiryModal can handle the error
+    }
+  }, [session, expiringOrder]);
+
+  // Extend Rental handlers
+  const handleOpenExtendModal = useCallback(() => {
+    console.log('[ExtendRental] 🔍 handleOpenExtendModal called');
+    // Close the RentalExpiryModal first, then open ExtendModal
+    setRentalExpiryModalVisible(false);
+    setExtendModalVisible(true);
+  }, []);
+
+  const handleCloseExtendModal = useCallback(() => {
+    console.log('[ExtendRental] 🔍 handleCloseExtendModal called');
+    setExtendModalVisible(false);
+  }, []);
+
+  const handleExtendRequest = useCallback(async (newEndDate: string) => {
+    console.log('[ExtendRental] 🔍 handleExtendRequest called', {
+      hasSession: !!session?.accessToken,
+      expiringOrder: expiringOrder ? { orderId: expiringOrder.orderId } : null,
+      newEndDate,
+    });
+
+    if (!session?.accessToken || !expiringOrder) {
+      console.log('[ExtendRental] ❌ Missing session or expiringOrder');
+      throw new Error('Không có thông tin đơn hàng để gia hạn.');
+    }
+
+    try {
+      setProcessingExtend(true);
+      console.log('[ExtendRental] 📤 Calling extendRentalOrder API...');
+
+      await extendRentalOrder(session, expiringOrder.orderId, newEndDate);
+      console.log('[ExtendRental] ✅ API call successful');
+
+      // Close modal first (success alert is shown by ExtendRentalModal)
+      setExtendModalVisible(false);
+      setExpiringOrder(null);
+
+      // Trigger refresh - the refresh will happen on next render cycle
+      console.log('[ExtendRental] 🔄 Setting refresh state...');
+      setIsRefreshing(true);
+    } catch (error) {
+      console.error('[ExtendRental] ❌ Error extending rental:', error);
+      throw error; // Re-throw so ExtendRentalModal can handle the error
+    } finally {
+      setProcessingExtend(false);
     }
   }, [session, expiringOrder]);
 
@@ -2284,8 +2337,19 @@ export default function OrdersScreen() {
               endDate={orderDetailsData?.endDate ?? ''}
               daysRemaining={daysUntilExpiry ?? 0}
               isConfirmed={expiringOrder ? isReturnConfirmed(expiringOrder.orderId) : false}
+              canExtend={true}
               onConfirmReturn={handleConfirmReturn}
+              onRequestExtend={handleOpenExtendModal}
               onClose={handleCloseEndContract}
+            />
+            <ExtendRentalModal
+              visible={isExtendModalVisible}
+              orderId={expiringOrder?.orderId ?? 0}
+              orderDisplayId={String(expiringOrder?.orderId ?? '')}
+              currentEndDate={orderDetailsData?.endDate ?? ''}
+              startDate={orderDetailsData?.startDate ?? ''}
+              onExtend={handleExtendRequest}
+              onClose={handleCloseExtendModal}
             />
             <PaymentModal
               visible={isPaymentModalVisible}

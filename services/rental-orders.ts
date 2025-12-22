@@ -251,6 +251,80 @@ export const confirmReturnRentalOrder = async (
 };
 
 // ============================================================
+// EXTEND RENTAL ORDER API
+// ============================================================
+
+export type ExtendRentalOrderPayload = {
+  rentalOrderId: number;
+  extendedEndTime: string; // Format: YYYY-MM-DDTHH:mm:ss (no timezone)
+};
+
+/**
+ * Extend rental order
+ * Creates extension request from existing rental order
+ * POST /api/rental-orders/extend
+ */
+export const extendRentalOrder = async (
+  session: SessionCredentials,
+  rentalOrderId: number,
+  extendedEndTime: string
+): Promise<RentalOrderResponse> => {
+  if (!session?.accessToken) {
+    throw new Error('An access token is required to extend rental order.');
+  }
+
+  if (!Number.isFinite(rentalOrderId) || rentalOrderId <= 0) {
+    throw new Error('A valid rental order identifier is required.');
+  }
+
+  if (!extendedEndTime) {
+    throw new Error('Extended end time is required.');
+  }
+
+  // Backend expects LocalDateTime format: YYYY-MM-DDTHH:mm:ss (no timezone)
+  // Remove timezone suffix (Z or +07:00 etc.)
+  const formattedEndTime = extendedEndTime.replace(/[Z+].*$/, '');
+
+  const payload: ExtendRentalOrderPayload = {
+    rentalOrderId: Number(rentalOrderId),
+    extendedEndTime: formattedEndTime,
+  };
+
+  const url = buildApiUrl('rental-orders/extend');
+  console.log('[API] extendRentalOrder - URL:', url, 'Payload:', payload);
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      ...jsonHeaders,
+      Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${session.accessToken}`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  console.log('[API] extendRentalOrder - Response status:', response.status);
+
+  if (!response.ok) {
+    const apiMessage = await parseErrorMessage(response);
+    console.error('[API] extendRentalOrder - Error:', apiMessage);
+    throw new Error(
+      apiMessage ?? `Unable to extend rental order ${rentalOrderId} (status ${response.status}).`,
+    );
+  }
+
+  const json = (await response.json()) as RentalOrderDetailsResult | null;
+  console.log('[API] extendRentalOrder - Response:', json?.status, json?.message);
+
+  if (!json || json.status !== 'SUCCESS' || !json.data) {
+    throw new Error(
+      json?.message ?? json?.details ?? 'Failed to extend rental order. Please try again.',
+    );
+  }
+
+  return json.data;
+};
+
+// ============================================================
 // SEARCH API - Pagination và Filtering
 // ============================================================
 
@@ -335,6 +409,7 @@ export const rentalOrdersApi = {
   fetchRentalOrders,
   fetchRentalOrderById,
   confirmReturnRentalOrder,
+  extendRentalOrder,
   searchRentalOrders,
 };
 
