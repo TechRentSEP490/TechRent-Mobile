@@ -16,7 +16,6 @@ import {
   Image,
   Linking,
   NativeSyntheticEvent,
-  Platform,
   Pressable,
   ScrollView,
   Text,
@@ -45,6 +44,7 @@ import RentalExpiryModal from '@/components/modals/RentalExpiryModal';
 import RentalOrderStepsContent from '@/components/modals/RentalOrderStepsContent';
 import SettlementModal from '@/components/modals/SettlementModal';
 import { useAuth } from '@/contexts/AuthContext';
+import { getConditionDefinitions, type ConditionDefinitionResponse } from '@/services/conditions';
 import { fetchContracts, sendContractPin, signContract, type ContractResponse } from '@/services/contracts';
 import { fetchDeviceModelById } from '@/services/device-models';
 import {
@@ -506,6 +506,9 @@ export default function OrdersScreen() {
   const [handoverReports, setHandoverReports] = useState<HandoverReport[]>([]);
   const [handoverLoading, setHandoverLoading] = useState(false);
   const [handoverError, setHandoverError] = useState<string | null>(null);
+
+  // Condition Definitions State (for displaying condition names in PDF)
+  const [conditionDefinitions, setConditionDefinitions] = useState<ConditionDefinitionResponse[]>([]);
   const [isHandoverSignModalVisible, setHandoverSignModalVisible] = useState(false);
   const [activeHandoverReport, setActiveHandoverReport] = useState<HandoverReport | null>(null);
 
@@ -604,15 +607,20 @@ export default function OrdersScreen() {
     return settlement?.state === 'AWAITING_RESPONSE';
   }, [settlement?.state]);
 
-  // Load handover reports for an order
+  // Load handover reports for an order (also fetch condition definitions for proper names)
   const loadHandoverReports = useCallback(async (orderId: number) => {
     if (!session?.accessToken) return;
 
     setHandoverLoading(true);
     setHandoverError(null);
     try {
-      const reports = await fetchHandoverReportsByOrderId(session, orderId);
+      // Fetch handover reports and condition definitions in parallel
+      const [reports, conditions] = await Promise.all([
+        fetchHandoverReportsByOrderId(session, orderId),
+        getConditionDefinitions(session).catch(() => []), // Silently fail if conditions API fails
+      ]);
       setHandoverReports(reports);
+      setConditionDefinitions(conditions);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Không thể tải biên bản bàn giao';
       setHandoverError(message);
@@ -2297,7 +2305,7 @@ export default function OrdersScreen() {
               invoicesLoading={invoicesLoading}
               settlement={settlement}
             />
-            <HandoverPdfDownloader>
+            <HandoverPdfDownloader conditionDefinitions={conditionDefinitions}>
               {({ downloadHandoverReport }) => {
                 // Store the download function in ref for use in handleViewHandoverPdf
                 handoverPdfDownloaderRef.current = downloadHandoverReport;

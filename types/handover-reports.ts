@@ -149,3 +149,115 @@ export const HANDOVER_TYPE_MAP: Record<HandoverReportType, string> = {
     CHECKOUT: 'Biên bản bàn giao',  // Khi GIAO thiết bị cho khách
     CHECKIN: 'Biên bản thu hồi',    // Khi THU LẠI thiết bị từ khách
 };
+
+// ==========================================
+// CHECKIN (Thu hồi) Specific Types
+// ==========================================
+
+/**
+ * Loại sự cố thiết bị khi thu hồi
+ */
+export type DiscrepancyType = 'DAMAGE' | 'LOSS' | 'OTHER';
+
+/**
+ * Sự cố phát hiện khi thu hồi thiết bị
+ */
+export type Discrepancy = {
+    discrepancyId?: number;
+    discrepancyType: DiscrepancyType;
+    conditionDefinitionId: number;
+    orderDetailId: number;
+    deviceId: number;
+    serialNumber?: string;          // Serial number của thiết bị bị lỗi
+    deviceSerialNumber?: string;    // Alternative field name
+    penaltyAmount?: number;         // Phí phạt (nếu có)
+    staffNote?: string;             // Ghi chú của nhân viên
+};
+
+/**
+ * Định nghĩa tình trạng thiết bị (để tính phí phạt)
+ */
+export type ConditionDefinition = {
+    conditionDefinitionId: number;
+    id?: number;                    // Alternative ID field
+    name: string;
+    description?: string;
+    penaltyPercentage?: number;     // Phần trăm phạt
+};
+
+/**
+ * Trạng thái chất lượng thiết bị
+ */
+export type QualityStatus = 'GOOD' | 'FAIR' | 'POOR';
+
+/**
+ * Thông tin chất lượng thiết bị
+ */
+export type DeviceQualityInfo = {
+    deviceSerialNumber: string;
+    deviceModelName: string;
+    qualityStatus: QualityStatus;
+    qualityDescription?: string;
+};
+
+/**
+ * Tình trạng thiết bị (snapshots)
+ */
+export type DeviceCondition = {
+    deviceConditionId?: number;
+    deviceId: number;
+    allocationId?: number;
+    deviceSerial?: string;
+    conditionDefinitionId?: number;
+    baselineSnapshots?: Array<{
+        source: string;
+        conditionDetails?: Array<{
+            conditionDefinitionId: number;
+            severity: string;
+        }>;
+        images?: string[];
+        deviceSerial?: string;
+    }>;
+};
+
+// ==========================================
+// Staff API Payload Types
+// ==========================================
+
+/**
+ * Item trong checkin report (cho staff tạo)
+ */
+export type CheckinReportItem = {
+    deviceId: number;
+    evidenceUrls: string[];
+};
+
+/**
+ * Payload tạo biên bản thu hồi mới
+ * POST /api/staff/handover-reports/checkin
+ */
+export type CreateCheckinReportBody = {
+    taskId: number;
+    customerInfo: string;        // Format: "Họ tên • SĐT • Email"
+    technicianInfo: string;
+    handoverDateTime: string;    // ISO string
+    handoverLocation: string;
+    customerSignature: string;   // base64 hoặc URL
+    items: CheckinReportItem[];
+    discrepancies: Omit<Discrepancy, 'discrepancyId' | 'serialNumber' | 'deviceSerialNumber' | 'penaltyAmount'>[];
+};
+
+/**
+ * Payload cập nhật biên bản thu hồi
+ * PUT /api/staff/handover-reports/checkin/{id}
+ */
+export type UpdateCheckinReportBody = Omit<CreateCheckinReportBody, 'taskId'>;
+
+/**
+ * Payload ký biên bản (staff)
+ * PATCH /api/staff/handover-reports/{id}/signature
+ */
+export type StaffSignPayload = {
+    pinCode: string;
+    staffSignature: string;
+};

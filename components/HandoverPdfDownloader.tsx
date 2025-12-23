@@ -10,7 +10,7 @@ import * as Sharing from 'expo-sharing';
 import React, { ReactNode, useCallback, useState } from 'react';
 import { Alert, Platform } from 'react-native';
 
-import type { HandoverReport } from '@/types/handover-reports';
+import type { ConditionDefinition, HandoverReport } from '@/types/handover-reports';
 import { buildHandoverReportHtml } from '@/utils/handover-pdf-utils';
 
 type FileSystemWithDirectories = typeof FileSystem & {
@@ -29,10 +29,13 @@ export type HandoverPdfDownloaderRenderProps = {
 
 type HandoverPdfDownloaderProps = {
     children: (props: HandoverPdfDownloaderRenderProps) => ReactNode;
+    /** Condition definitions for displaying proper condition names in PDF */
+    conditionDefinitions?: ConditionDefinition[];
 };
 
 export default function HandoverPdfDownloader({
     children,
+    conditionDefinitions = [],
 }: HandoverPdfDownloaderProps) {
     const [downloadingReportId, setDownloadingReportId] = useState<number | null>(null);
 
@@ -56,8 +59,8 @@ export default function HandoverPdfDownloader({
 
                 setDownloadingReportId(reportId);
 
-                // Generate HTML for the report
-                const html = buildHandoverReportHtml(report);
+                // Generate HTML for the report with condition definitions for proper names
+                const html = buildHandoverReportHtml(report, conditionDefinitions);
 
                 // Convert HTML to PDF using expo-print
                 const pdfResult = await printToFileAsync({ html });
@@ -113,7 +116,7 @@ export default function HandoverPdfDownloader({
                 setDownloadingReportId((current) => (current === reportId ? null : current));
             }
         },
-        [],
+        [conditionDefinitions],
     );
 
     return <>{children({ downloadHandoverReport, downloadingReportId })}</>;

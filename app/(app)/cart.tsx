@@ -17,8 +17,8 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Image, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Image, NativeScrollEvent, NativeSyntheticEvent, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 const formatAddressTimestamp = (value?: string | null) => {
@@ -47,17 +47,6 @@ const createDateSequence = (start: Date, totalDays: number) => {
 
 const findDateIndex = (dates: Date[], target: Date) =>
   dates.findIndex((item) => item.getTime() === target.getTime());
-
-const parseDateParam = (value: unknown, fallback: Date) => {
-  if (typeof value === 'string') {
-    const parsed = new Date(value);
-    if (!Number.isNaN(parsed.getTime())) {
-      return clampToStartOfDay(parsed);
-    }
-  }
-
-  return clampToStartOfDay(fallback);
-};
 
 type DateScrollPickerProps = {
   value: Date;
@@ -550,8 +539,8 @@ export default function CartScreen() {
     try {
       const createdOrder = await createRentalOrder(
         {
-          startDate: startDate.toISOString(),
-          endDate: endDate.toISOString(),
+          planStartDate: startDate.toISOString(),
+          planEndDate: endDate.toISOString(),
           shippingAddress: shippingAddress.trim(),
           orderDetails,
         },

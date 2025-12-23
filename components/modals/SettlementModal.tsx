@@ -112,13 +112,18 @@ export default function SettlementModal({
     /**
      * ĐIỀU KIỆN LOGIC: Kiểm tra khách có thể phản hồi quyết toán không
      * 
-     * Chỉ cho phép phản hồi khi:
+     * Cho phép phản hồi khi:
      * - settlement tồn tại (không null)
-     * - Trạng thái đang là AWAITING_RESPONSE (chờ phản hồi)
+     * - Trạng thái KHÔNG nằm trong danh sách đã xử lý xong
      * 
-     * Các trạng thái khác (PENDING, ISSUED, REJECTED, CLOSED) không cho phép phản hồi
+     * Các trạng thái cho phép phản hồi: DRAFT, PENDING, AWAITING_CUSTOMER, SUBMITTED, AWAITING_RESPONSE, etc.
+     * Các trạng thái KHÔNG cho phép: ISSUED, REJECTED, CANCELLED, CLOSED
+     * 
+     * Logic này phù hợp với phiên bản web (MyOrderSettlementTab.jsx)
      */
-    const canRespond = settlement?.state === 'AWAITING_RESPONSE';
+    const FINALIZED_STATES = ['ISSUED', 'REJECTED', 'CANCELLED', 'CLOSED'];
+    const normalizedState = settlement?.state?.toUpperCase() ?? '';
+    const canRespond = settlement !== null && !FINALIZED_STATES.includes(normalizedState);
 
     const renderContent = () => {
         // ========== CÁC TRẠNG THÁI HIỂN THỊ ==========
@@ -165,12 +170,18 @@ export default function SettlementModal({
         // ========== LOGIC XỬ LÝ DỮ LIỆU QUYẾT TOÁN ==========
 
         /**
+         * Normalize state to uppercase for consistent comparison
+         * API may return "Draft", "Awaiting_Response" etc. but we need "DRAFT", "AWAITING_RESPONSE"
+         */
+        const normalizedState = settlement.state?.toUpperCase() as keyof typeof SETTLEMENT_STATUS_MAP;
+
+        /**
          * Lấy thông tin hiển thị cho trạng thái
          * - label: Nhãn tiếng Việt
          * - color: Màu sắc badge
          * Fallback về giá trị mặc định nếu trạng thái không có trong map
          */
-        const statusMeta = SETTLEMENT_STATUS_MAP[settlement.state] || {
+        const statusMeta = SETTLEMENT_STATUS_MAP[normalizedState] || {
             label: settlement.state,
             color: '#6b7280',
         };
