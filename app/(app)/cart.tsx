@@ -35,6 +35,125 @@ const formatAddressTimestamp = (value?: string | null) => {
   return date.toLocaleString();
 };
 
+const DATE_SCROLL_ITEM_HEIGHT = 48;
+const DATE_SCROLL_VISIBLE_ROWS = 5;
+const DATE_SCROLL_RANGE_DAYS = 365;
+
+const createDateSequence = (start: Date, totalDays: number) => {
+  const normalizedStart = clampToStartOfDay(start);
+  const length = Math.max(totalDays, 1);
+  return Array.from({ length }, (_, index) => addDays(normalizedStart, index));
+};
+
+const findDateIndex = (dates: Date[], target: Date) =>
+  dates.findIndex((item) => item.getTime() === target.getTime());
+
+const parseDateParam = (value: unknown, fallback: Date) => {
+  if (typeof value === 'string') {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) {
+      return clampToStartOfDay(parsed);
+    }
+  }
+
+  return clampToStartOfDay(fallback);
+};
+
+type DateScrollPickerProps = {
+  value: Date;
+  minimumDate: Date;
+  onChange: (date: Date) => void;
+  rangeInDays?: number;
+};
+
+function DateScrollPicker({ value, minimumDate, onChange, rangeInDays = DATE_SCROLL_RANGE_DAYS }: DateScrollPickerProps) {
+  const dates = useMemo(() => createDateSequence(minimumDate, rangeInDays), [minimumDate, rangeInDays]);
+  const scrollRef = useRef<ScrollView | null>(null);
+  const isInteractingRef = useRef(false);
+
+  const selectedIndex = useMemo(() => {
+    const index = findDateIndex(dates, clampToStartOfDay(value));
+    if (index >= 0) {
+      return index;
+    }
+
+    if (dates.length === 0) {
+      return 0;
+    }
+
+    if (value.getTime() < dates[0].getTime()) {
+      return 0;
+    }
+
+    return dates.length - 1;
+  }, [dates, value]);
+
+  useEffect(() => {
+    if (!scrollRef.current) {
+      return;
+    }
+
+    const targetOffset = selectedIndex * DATE_SCROLL_ITEM_HEIGHT;
+    scrollRef.current.scrollTo({ y: targetOffset, animated: !isInteractingRef.current });
+  }, [selectedIndex]);
+
+  const handleMomentumEnd = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const offsetY = event.nativeEvent.contentOffset.y;
+      const rawIndex = Math.round(offsetY / DATE_SCROLL_ITEM_HEIGHT);
+      const clampedIndex = Math.min(Math.max(rawIndex, 0), Math.max(dates.length - 1, 0));
+      const nextDate = dates[clampedIndex];
+
+      if (nextDate && nextDate.getTime() !== value.getTime()) {
+        onChange(nextDate);
+      }
+
+      isInteractingRef.current = false;
+    },
+    [dates, onChange, value]
+  );
+
+  const handleScrollBegin = useCallback(() => {
+    isInteractingRef.current = true;
+  }, []);
+
+  const handleScrollEndDrag = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      handleMomentumEnd(event);
+    },
+    [handleMomentumEnd]
+  );
+
+  return (
+    <View style={styles.dateScrollPickerContainer}>
+      <ScrollView
+        ref={scrollRef}
+        showsVerticalScrollIndicator={false}
+        snapToInterval={DATE_SCROLL_ITEM_HEIGHT}
+        decelerationRate="fast"
+        onMomentumScrollEnd={handleMomentumEnd}
+        onScrollBeginDrag={handleScrollBegin}
+        onScrollEndDrag={handleScrollEndDrag}
+        contentContainerStyle={styles.dateScrollContent}
+      >
+        {dates.map((date) => {
+          const key = date.getTime();
+          const isSelected = date.getTime() === value.getTime();
+
+          return (
+            <View key={key} style={[styles.dateScrollItem, isSelected && styles.dateScrollItemSelected]}>
+              <Text style={[styles.dateScrollText, isSelected && styles.dateScrollTextSelected]}>
+                {formatDisplayDate(date)}
+              </Text>
+            </View>
+          );
+        })}
+      </ScrollView>
+      <View pointerEvents="none" style={styles.dateScrollHighlight} />
+    </View>
+  );
+}
+
 export default function CartScreen() {
   const router = useRouter();
   const { session, user, ensureSession } = useAuth();
