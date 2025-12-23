@@ -116,9 +116,9 @@ export default function SettlementModal({
      * - settlement tồn tại (không null)
      * - Trạng thái đang là AWAITING_RESPONSE (chờ phản hồi)
      * 
-     * Các trạng thái khác (PENDING, ISSUED, REJECTED, CLOSED) không cho phép phản hồi
+     * Normalized to uppercase because API may return mixed case (e.g., "Awaiting_Response")
      */
-    const canRespond = settlement?.state === 'AWAITING_RESPONSE';
+    const canRespond = settlement?.state?.toUpperCase() === 'AWAITING_RESPONSE';
 
     const renderContent = () => {
         // ========== CÁC TRẠNG THÁI HIỂN THỊ ==========
@@ -165,12 +165,18 @@ export default function SettlementModal({
         // ========== LOGIC XỬ LÝ DỮ LIỆU QUYẾT TOÁN ==========
 
         /**
+         * Normalize state to uppercase for consistent comparison
+         * API may return "Draft", "Awaiting_Response" etc. but we need "DRAFT", "AWAITING_RESPONSE"
+         */
+        const normalizedState = settlement.state?.toUpperCase() as keyof typeof SETTLEMENT_STATUS_MAP;
+
+        /**
          * Lấy thông tin hiển thị cho trạng thái
          * - label: Nhãn tiếng Việt
          * - color: Màu sắc badge
          * Fallback về giá trị mặc định nếu trạng thái không có trong map
          */
-        const statusMeta = SETTLEMENT_STATUS_MAP[settlement.state] || {
+        const statusMeta = SETTLEMENT_STATUS_MAP[normalizedState] || {
             label: settlement.state,
             color: '#6b7280',
         };

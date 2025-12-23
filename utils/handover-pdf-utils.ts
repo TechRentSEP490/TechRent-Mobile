@@ -7,47 +7,47 @@ import type { HandoverReport } from '@/types/handover-reports';
 import { formatDateTime } from '@/utils/order-formatters';
 
 const escapeHtml = (value: string): string =>
-    value
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
+  value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 
 /**
  * Parse info string (format: "name • phone • email")
  */
 export function parseInfoString(infoStr: string | undefined | null): { name: string; phone: string; email: string } {
-    if (!infoStr) return { name: "", phone: "", email: "" };
-    const parts = infoStr.split("•").map(s => s.trim()).filter(Boolean);
-    return {
-        name: parts[0] || "",
-        phone: parts[1] || "",
-        email: parts[2] || "",
-    };
+  if (!infoStr) return { name: "", phone: "", email: "" };
+  const parts = infoStr.split("•").map(s => s.trim()).filter(Boolean);
+  return {
+    name: parts[0] || "",
+    phone: parts[1] || "",
+    email: parts[2] || "",
+  };
 }
 
 /**
  * Translate role to Vietnamese
  */
 export function translateRole(role: string | undefined | null): string {
-    const r = String(role || "").toUpperCase();
-    if (r === "TECHNICIAN") return "Kỹ thuật viên";
-    return role || "";
+  const r = String(role || "").toUpperCase();
+  if (r === "TECHNICIAN") return "Kỹ thuật viên";
+  return role || "";
 }
 
 /**
  * Translate handover status to Vietnamese
  */
 export function translateHandoverStatus(status: string | undefined | null): string {
-    const s = String(status || "").toUpperCase();
-    if (s === "STAFF_SIGNED") return "Nhân viên đã ký";
-    if (s === "CUSTOMER_SIGNED") return "Khách hàng đã ký";
-    if (s === "BOTH_SIGNED") return "2 bên đã ký";
-    if (s === "PENDING_STAFF_SIGNATURE") return "Chờ nhân viên ký";
-    if (s === "COMPLETED") return "Hoàn thành";
-    if (s === "DRAFT") return "Bản nháp";
-    return status || "—";
+  const s = String(status || "").toUpperCase();
+  if (s === "STAFF_SIGNED") return "Nhân viên đã ký";
+  if (s === "CUSTOMER_SIGNED") return "Khách hàng đã ký";
+  if (s === "BOTH_SIGNED") return "2 bên đã ký";
+  if (s === "PENDING_STAFF_SIGNATURE") return "Chờ nhân viên ký";
+  if (s === "COMPLETED") return "Hoàn thành";
+  if (s === "DRAFT") return "Bản nháp";
+  return status || "—";
 }
 
 /**
@@ -66,41 +66,41 @@ const NATIONAL_HEADER_HTML = `
  * Simplified version adapted for mobile PDF generation
  */
 export function buildHandoverReportHtml(report: HandoverReport): string {
-    const customerInfo = parseInfoString(report.customerInfo);
-    const technicianInfo = parseInfoString(report.technicianInfo);
-    const customerName = customerInfo.name || "—";
+  const customerInfo = parseInfoString(report.customerInfo);
+  const technicianInfo = parseInfoString(report.technicianInfo);
+  const customerName = customerInfo.name || "—";
 
-    // Get technician info from deliveryStaff array or fallback to parsed info
-    const technicianEntries: Array<{ name: string; phone: string; email: string }> = [];
+  // Get technician info from deliveryStaff array or fallback to parsed info
+  const technicianEntries: Array<{ name: string; phone: string; email: string }> = [];
 
-    if (Array.isArray(report.deliveryStaff) && report.deliveryStaff.length > 0) {
-        report.deliveryStaff.forEach(staff => {
-            if (staff.fullName || staff.phoneNumber || staff.email) {
-                technicianEntries.push({
-                    name: staff.fullName || staff.username || "—",
-                    phone: staff.phoneNumber || "",
-                    email: staff.email || "",
-                });
-            }
-        });
-    }
-
-    if (technicianEntries.length === 0 && (technicianInfo.name || technicianInfo.phone || technicianInfo.email)) {
+  if (Array.isArray(report.deliveryStaff) && report.deliveryStaff.length > 0) {
+    report.deliveryStaff.forEach(staff => {
+      if (staff.fullName || staff.phoneNumber || staff.email) {
         technicianEntries.push({
-            name: technicianInfo.name || "—",
-            phone: technicianInfo.phone || "",
-            email: technicianInfo.email || "",
+          name: staff.fullName || staff.username || "—",
+          phone: staff.phoneNumber || "",
+          email: staff.email || "",
         });
-    }
+      }
+    });
+  }
 
-    const technicianDisplayName = technicianEntries[0]?.name || technicianInfo.name || "—";
+  if (technicianEntries.length === 0 && (technicianInfo.name || technicianInfo.phone || technicianInfo.email)) {
+    technicianEntries.push({
+      name: technicianInfo.name || "—",
+      phone: technicianInfo.phone || "",
+      email: technicianInfo.email || "",
+    });
+  }
 
-    // Build items rows
-    const itemsRows = (report.items || []).map((item, idx) => {
-        const deviceName = item.deviceModelName || "—";
-        const serialNumber = item.deviceSerialNumber || "—";
+  const technicianDisplayName = technicianEntries[0]?.name || technicianInfo.name || "—";
 
-        return `
+  // Build items rows
+  const itemsRows = (report.items || []).map((item, idx) => {
+    const deviceName = item.deviceModelName || "—";
+    const serialNumber = item.deviceSerialNumber || "—";
+
+    return `
       <tr>
         <td style="text-align:center">${idx + 1}</td>
         <td>${escapeHtml(deviceName)}</td>
@@ -109,17 +109,17 @@ export function buildHandoverReportHtml(report: HandoverReport): string {
         <td style="text-align:center">1</td>
       </tr>
     `;
-    }).join("");
+  }).join("");
 
-    // Determine handover type
-    const handoverType = String(report.handoverType || "").toUpperCase();
-    const isCheckin = handoverType === "CHECKIN";
-    const reportTitle = isCheckin ? "BIÊN BẢN THU HỒI THIẾT BỊ" : "BIÊN BẢN BÀN GIAO THIẾT BỊ";
-    const dateTimeLabel = isCheckin ? "Thời gian thu hồi:" : "Thời gian bàn giao:";
-    const locationLabel = isCheckin ? "Địa điểm thu hồi:" : "Địa điểm bàn giao:";
-    const itemsLabel = isCheckin ? "Danh sách thiết bị thu hồi" : "Danh sách thiết bị bàn giao";
+  // Determine handover type
+  const handoverType = String(report.handoverType || "").toUpperCase();
+  const isCheckin = handoverType === "CHECKIN";
+  const reportTitle = isCheckin ? "BIÊN BẢN THU HỒI THIẾT BỊ" : "BIÊN BẢN BÀN GIAO THIẾT BỊ";
+  const dateTimeLabel = isCheckin ? "Thời gian thu hồi:" : "Thời gian bàn giao:";
+  const locationLabel = isCheckin ? "Địa điểm thu hồi:" : "Địa điểm bàn giao:";
+  const itemsLabel = isCheckin ? "Danh sách thiết bị thu hồi" : "Danh sách thiết bị bàn giao";
 
-    return `
+  return `
     <!DOCTYPE html>
     <html>
       <head>
@@ -210,8 +210,8 @@ export function buildHandoverReportHtml(report: HandoverReport): string {
             </div>
             <div>
               ${report.customerSigned
-            ? `<div style="font-weight:600">${escapeHtml(customerName)}</div>`
-            : "(Ký, ghi rõ họ tên)"}
+      ? `<div style="font-weight:600">${escapeHtml(customerName)}</div>`
+      : "(Ký, ghi rõ họ tên)"}
             </div>
             ${report.customerSignedAt ? `<div style="font-size:11px;color:#666">Ký ngày: ${formatDateTime(report.customerSignedAt)}</div>` : ""}
           </div>
@@ -222,8 +222,8 @@ export function buildHandoverReportHtml(report: HandoverReport): string {
             </div>
             <div>
               ${report.staffSigned
-            ? `<div style="font-weight:600">${escapeHtml(technicianDisplayName)}</div>`
-            : "(Ký, ghi rõ họ tên)"}
+      ? `<div style="font-weight:600">${escapeHtml(technicianDisplayName)}</div>`
+      : "(Ký, ghi rõ họ tên)"}
             </div>
             ${report.staffSignedAt ? `<div style="font-size:11px;color:#666">Ký ngày: ${formatDateTime(report.staffSignedAt)}</div>` : ""}
           </div>
@@ -233,9 +233,140 @@ export function buildHandoverReportHtml(report: HandoverReport): string {
   `;
 }
 
+// ==========================================
+// Additional Utility Functions for Checkin
+// ==========================================
+
+/**
+ * Translate discrepancy type to Vietnamese
+ */
+export function translateDiscrepancyType(type: string | undefined | null): string {
+  const t = String(type || "").toUpperCase();
+  switch (t) {
+    case "DAMAGE": return "Hư hỏng";
+    case "LOSS": return "Mất mát";
+    case "OTHER": return "Khác";
+    default: return type || "—";
+  }
+}
+
+/**
+ * Translate quality status to Vietnamese
+ */
+export function translateQualityStatus(status: string | undefined | null): string {
+  const s = String(status || "").toUpperCase();
+  switch (s) {
+    case "GOOD": return "Tốt";
+    case "FAIR": return "Khá";
+    case "POOR": return "Kém";
+    default: return status || "—";
+  }
+}
+
+/**
+ * Format number to VND currency string
+ */
+export function formatVND(amount: number | undefined | null): string {
+  if (amount == null || isNaN(Number(amount))) return "—";
+  return Number(amount).toLocaleString("vi-VN") + " ₫";
+}
+
+/**
+ * Get color hex for status badges
+ */
+export function getStatusColor(status: string | undefined | null): string {
+  const s = String(status || "").toUpperCase();
+  switch (s) {
+    case "BOTH_SIGNED":
+    case "COMPLETED":
+      return "#52c41a"; // green
+    case "STAFF_SIGNED":
+    case "CUSTOMER_SIGNED":
+      return "#faad14"; // orange
+    case "PENDING_STAFF_SIGNATURE":
+    case "DRAFT":
+      return "#1890ff"; // blue
+    default:
+      return "#999999"; // gray
+  }
+}
+
+/**
+ * Build customer info string from components
+ */
+export function buildCustomerInfoString(name: string, phone: string, email: string): string {
+  return [name, phone, email].filter(Boolean).join(" • ");
+}
+
+/**
+ * Build discrepancies HTML table for checkin reports
+ */
+export function buildDiscrepanciesHtml(
+  discrepancies: Array<{
+    discrepancyType?: string;
+    serialNumber?: string;
+    deviceSerialNumber?: string;
+    conditionDefinitionId?: number;
+    penaltyAmount?: number;
+    staffNote?: string;
+  }>,
+  conditionDefinitions: Array<{ conditionDefinitionId?: number; id?: number; name: string }> = []
+): string {
+  if (!discrepancies || discrepancies.length === 0) return "";
+
+  // Build condition map
+  const conditionMap: Record<number, string> = {};
+  conditionDefinitions.forEach(cd => {
+    const key = cd.conditionDefinitionId || cd.id;
+    if (key) conditionMap[key] = cd.name;
+  });
+
+  const rows = discrepancies.map((disc, idx) => {
+    const conditionName = disc.conditionDefinitionId
+      ? (conditionMap[disc.conditionDefinitionId] || `Tình trạng #${disc.conditionDefinitionId}`)
+      : "—";
+    const serial = disc.serialNumber || disc.deviceSerialNumber || "—";
+
+    return `
+            <tr>
+                <td style="text-align:center">${idx + 1}</td>
+                <td>${translateDiscrepancyType(disc.discrepancyType)}</td>
+                <td>${escapeHtml(serial)}</td>
+                <td>${escapeHtml(conditionName)}</td>
+                <td style="text-align:right">${formatVND(disc.penaltyAmount)}</td>
+            </tr>
+        `;
+  }).join("");
+
+  return `
+        <h3>Sự cố phát hiện khi thu hồi</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th style="width:40px">STT</th>
+                    <th>Loại sự cố</th>
+                    <th>Serial thiết bị</th>
+                    <th>Tình trạng</th>
+                    <th style="width:100px">Phí phạt</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${rows}
+            </tbody>
+        </table>
+    `;
+}
+
 export default {
-    buildHandoverReportHtml,
-    parseInfoString,
-    translateRole,
-    translateHandoverStatus,
+  buildHandoverReportHtml,
+  buildDiscrepanciesHtml,
+  parseInfoString,
+  translateRole,
+  translateHandoverStatus,
+  translateDiscrepancyType,
+  translateQualityStatus,
+  formatVND,
+  getStatusColor,
+  buildCustomerInfoString,
 };
+

@@ -20,6 +20,7 @@
  * - CLOSED: Đã tất toán xong, hoàn cọc thành công
  */
 export type SettlementState =
+    | 'DRAFT'
     | 'PENDING'
     | 'AWAITING_RESPONSE'
     | 'ISSUED'
@@ -98,6 +99,7 @@ export const splitSettlementAmounts = (finalAmount: number) => {
  * - color: Mã màu HEX dùng cho badge/tag
  */
 export const SETTLEMENT_STATUS_MAP: Record<SettlementState, { label: string; color: string }> = {
+    DRAFT: { label: 'Nháp', color: '#6b7280' },                   // Xám - nhân viên đang soạn
     PENDING: { label: 'Đang xử lý', color: '#6b7280' },           // Xám - đang chờ
     AWAITING_RESPONSE: { label: 'Chờ xác nhận', color: '#f59e0b' }, // Vàng - cần hành động
     ISSUED: { label: 'Đã chấp nhận', color: '#10b981' },          // Xanh lá - thành công
@@ -105,3 +107,57 @@ export const SETTLEMENT_STATUS_MAP: Record<SettlementState, { label: string; col
     CANCELLED: { label: 'Đã hủy', color: '#6b7280' },             // Xám - đã hủy
     CLOSED: { label: 'Đã tất toán', color: '#10b981' },           // Xanh lá - hoàn tất
 };
+
+// ==========================================
+// Utility Functions
+// ==========================================
+
+/**
+ * Translate settlement status to Vietnamese label and color
+ */
+export const translateSettlementStatus = (state: string | undefined | null): { label: string; color: string } => {
+    const key = String(state || "").toUpperCase() as SettlementState;
+    return SETTLEMENT_STATUS_MAP[key] || { label: state || "—", color: "#999" };
+};
+
+/**
+ * Check if customer can respond (accept/reject) to settlement
+ * Returns true if settlement is waiting for customer response
+ */
+export const canRespondSettlement = (state: string | undefined | null): boolean => {
+    const s = String(state || "").toUpperCase();
+    // Customer can respond when state is PENDING, AWAITING_RESPONSE, or similar
+    // Cannot respond if already ISSUED, REJECTED, CANCELLED, or CLOSED
+    return !["ISSUED", "REJECTED", "CANCELLED", "CLOSED"].includes(s);
+};
+
+/**
+ * Get status message for customer display
+ */
+export const getSettlementStatusMessage = (state: string | undefined | null): string => {
+    const s = String(state || "").toUpperCase();
+    switch (s) {
+        case "ISSUED":
+            return "✓ Bạn đã chấp nhận quyết toán này.";
+        case "REJECTED":
+            return "✗ Bạn đã từ chối quyết toán này.";
+        case "CLOSED":
+            return "✓ Quyết toán đã tất toán xong. Cảm ơn bạn!";
+        case "CANCELLED":
+            return "Quyết toán đã bị hủy.";
+        case "AWAITING_RESPONSE":
+        case "PENDING":
+            return "Vui lòng xem và xác nhận quyết toán để hoàn tất việc hoàn cọc.";
+        default:
+            return "Quyết toán đang được xử lý.";
+    }
+};
+
+/**
+ * Format VND currency
+ */
+export const formatSettlementVND = (amount: number | undefined | null): string => {
+    if (amount == null || isNaN(Number(amount))) return "0 ₫";
+    return Number(amount).toLocaleString("vi-VN") + " ₫";
+};
+
