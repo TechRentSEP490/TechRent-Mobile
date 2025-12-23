@@ -112,13 +112,18 @@ export default function SettlementModal({
     /**
      * ĐIỀU KIỆN LOGIC: Kiểm tra khách có thể phản hồi quyết toán không
      * 
-     * Chỉ cho phép phản hồi khi:
+     * Cho phép phản hồi khi:
      * - settlement tồn tại (không null)
-     * - Trạng thái đang là AWAITING_RESPONSE (chờ phản hồi)
+     * - Trạng thái KHÔNG nằm trong danh sách đã xử lý xong
      * 
-     * Normalized to uppercase because API may return mixed case (e.g., "Awaiting_Response")
+     * Các trạng thái cho phép phản hồi: DRAFT, PENDING, AWAITING_CUSTOMER, SUBMITTED, AWAITING_RESPONSE, etc.
+     * Các trạng thái KHÔNG cho phép: ISSUED, REJECTED, CANCELLED, CLOSED
+     * 
+     * Logic này phù hợp với phiên bản web (MyOrderSettlementTab.jsx)
      */
-    const canRespond = settlement?.state?.toUpperCase() === 'AWAITING_RESPONSE';
+    const FINALIZED_STATES = ['ISSUED', 'REJECTED', 'CANCELLED', 'CLOSED'];
+    const normalizedState = settlement?.state?.toUpperCase() ?? '';
+    const canRespond = settlement !== null && !FINALIZED_STATES.includes(normalizedState);
 
     const renderContent = () => {
         // ========== CÁC TRẠNG THÁI HIỂN THỊ ==========

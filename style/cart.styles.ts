@@ -612,6 +612,44 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
+  // DateScrollPicker styles
+  dateScrollPickerContainer: {
+    height: 48 * 5, // DATE_SCROLL_ITEM_HEIGHT * DATE_SCROLL_VISIBLE_ROWS
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  dateScrollContent: {
+    paddingVertical: 48 * 2, // Padding to center the selected item
+  },
+  dateScrollItem: {
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  dateScrollItemSelected: {
+    backgroundColor: '#f8f8f8',
+    borderRadius: 12,
+  },
+  dateScrollText: {
+    fontSize: 16,
+    color: '#6f6f6f',
+  },
+  dateScrollTextSelected: {
+    fontWeight: '600',
+    color: '#111111',
+  },
+  dateScrollHighlight: {
+    position: 'absolute',
+    top: 48 * 2, // Center position
+    left: 0,
+    right: 0,
+    height: 48,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: '#ededed',
+    backgroundColor: 'transparent',
+  },
 });
 
 export default styles;

@@ -3,7 +3,7 @@
  * For deposit refund after rental return
  */
 
-import type { RespondSettlementPayload, Settlement, SettlementResponse } from '@/types/settlements';
+import type { Settlement, SettlementResponse } from '@/types/settlements';
 import { buildApiUrl } from './api';
 
 export type SessionCredentials = {
@@ -80,12 +80,15 @@ export async function fetchSettlementByOrderId(
 
 /**
  * Respond to settlement (accept or reject)
+ * PATCH /api/settlements/{id}/respond?accepted={true|false}
+ * 
+ * Note: Backend expects PATCH with query parameter, NOT POST with JSON body
  */
 export async function respondSettlement(
     session: SessionCredentials,
     settlementId: number,
     accepted: boolean,
-    customerNote?: string
+    _customerNote?: string // Note: Backend doesn't use customerNote for this endpoint
 ): Promise<Settlement> {
     if (!session?.accessToken) {
         throw new Error('An access token is required.');
@@ -95,18 +98,17 @@ export async function respondSettlement(
         throw new Error('A valid settlement ID is required.');
     }
 
-    const payload: RespondSettlementPayload = {
-        accepted,
-        customerNote,
-    };
+    // Build URL with query parameter (matching web implementation)
+    const baseUrl = buildApiUrl('settlements', settlementId, 'respond');
+    const urlWithParams = `${baseUrl}?accepted=${Boolean(accepted)}`;
 
-    const response = await fetch(buildApiUrl('settlements', settlementId, 'respond'), {
-        method: 'POST',
+    const response = await fetch(urlWithParams, {
+        method: 'PATCH', // Changed from POST to PATCH
         headers: {
-            ...jsonHeaders,
+            Accept: 'application/json',
             ...buildAuthHeader(session),
         },
-        body: JSON.stringify(payload),
+        // No body - backend expects null/empty body
     });
 
     if (!response.ok) {
@@ -114,13 +116,27 @@ export async function respondSettlement(
         throw new Error(apiMessage ?? `Unable to respond to settlement (status ${response.status}).`);
     }
 
-    const json = (await response.json()) as SettlementResponse | null;
+    // Backend returns empty object {} on success
+    // Try to parse response, fallback to basic success object
+    try {
+        const json = (await response.json()) as SettlementResponse | Record<string, never> | null;
 
-    if (!json || json.status !== 'SUCCESS' || !json.data) {
-        throw new Error(json?.message ?? 'Failed to respond to settlement.');
+        // If response is empty object {} (success case)
+        if (json && typeof json === 'object' && Object.keys(json).length === 0) {
+            return { settlementId } as Settlement;
+        }
+
+        // If response has data wrapper
+        if (json && 'data' in json && (json as SettlementResponse).data) {
+            return (json as SettlementResponse).data!;
+        }
+
+        // Return basic success indicator
+        return { settlementId } as Settlement;
+    } catch {
+        // If response body is empty or not JSON, still success
+        return { settlementId } as Settlement;
     }
-
-    return json.data;
 }
 
 export const settlementsApi = {
