@@ -19,6 +19,7 @@ import { WebView } from 'react-native-webview';
 
 import ContractPdfDownloader from '@/components/ContractPdfDownloader';
 import HandoverPdfDownloader from '@/components/HandoverPdfDownloader';
+import AnnexSignModal from '@/components/modals/AnnexSignModal';
 import EmailEditorModal from '@/components/modals/EmailEditorModal';
 import ExtendRentalModal from '@/components/modals/ExtendRentalModal';
 import HandoverReportsModal from '@/components/modals/HandoverReportsModal';
@@ -30,6 +31,7 @@ import RentalExpiryModal from '@/components/modals/RentalExpiryModal';
 import RentalOrderStepsContent from '@/components/modals/RentalOrderStepsContent';
 import SettlementModal from '@/components/modals/SettlementModal';
 import { OrderCard, OrdersEmptyState, OrdersHeader } from '@/components/orders';
+import { useAnnexes } from '@/hooks/use-annexes';
 import { useContractSigning } from '@/hooks/use-contract-signing';
 import { useOrderDetails } from '@/hooks/use-order-details';
 import { useOrdersData } from '@/hooks/use-orders-data';
@@ -76,6 +78,24 @@ export default function OrdersScreen() {
   const orderDetails = useOrderDetails();
   const contractSigning = useContractSigning(defaultVerificationEmail);
   const paymentFlow = usePaymentFlow();
+
+  // Annexes Hook
+  const {
+    annexes,
+    isLoading: annexesLoading,
+    error: annexesError,
+    loadAnnexes,
+    openSignModal: openAnnexSignModal,
+    closeSignModal: closeAnnexSignModal,
+    isSignModalVisible: isAnnexSignModalVisible,
+    selectedAnnex,
+    isSendingPin: isAnnexSendingPin,
+    isSigning: isAnnexSigning,
+    pinSent: annexPinSent,
+    signError: annexSignError,
+    handleSendPin: handleAnnexSendPin,
+    handleSign: handleAnnexSign,
+  } = useAnnexes();
 
   // Handover PDF Downloader ref
   const handoverPdfDownloaderRef = useRef<((report: HandoverReport) => Promise<void>) | null>(null);
@@ -156,6 +176,32 @@ export default function OrdersScreen() {
         ? ordersData.contractsByOrderId[String(orderDetails.targetOrderId)] ?? null
         : null,
     [ordersData.contractsByOrderId, orderDetails.targetOrderId],
+  );
+
+  // Load annexes when contract is available and signed
+  useEffect(() => {
+    if (
+      contractForSelectedOrder?.status &&
+      ['SIGNED', 'ACTIVE'].includes(contractForSelectedOrder.status.toUpperCase()) &&
+      contractForSelectedOrder.contractId
+    ) {
+      loadAnnexes(contractForSelectedOrder.contractId);
+    }
+  }, [contractForSelectedOrder, loadAnnexes]);
+
+  // Annex Handlers
+  const handlePayAnnex = useCallback(
+    (annex: any) => {
+      const orderCard = ordersData.orders.find((o) => o.orderId === annex.originalOrderId);
+      if (orderCard) {
+        paymentFlow.handleCreatePayment(orderCard, {
+          extensionId: annex.extensionId,
+          amount: annex.extensionFee > 0 ? annex.extensionFee : annex.totalPayable,
+          description: `Thanh toán phụ lục #${annex.annexNumber || annex.id}`,
+        });
+      }
+    },
+    [ordersData.orders, paymentFlow],
   );
 
   // Handover handlers
@@ -569,6 +615,20 @@ export default function OrdersScreen() {
               onSave={contractSigning.handleSaveEmail}
             />
 
+            {/* Annex Sign Modal */}
+            <AnnexSignModal
+              visible={isAnnexSignModalVisible}
+              annex={selectedAnnex}
+              userEmail={defaultVerificationEmail}
+              isSendingPin={isAnnexSendingPin}
+              isSigning={isAnnexSigning}
+              pinSent={annexPinSent}
+              error={annexSignError}
+              onClose={closeAnnexSignModal}
+              onSendPin={handleAnnexSendPin}
+              onSign={handleAnnexSign}
+            />
+
             {/* Order Details Modal */}
             <OrderDetailsModal
               visible={orderDetails.isVisible}
@@ -578,6 +638,12 @@ export default function OrdersScreen() {
               deviceDetailsLookup={ordersData.deviceDetailsLookup}
               contract={contractForSelectedOrder}
               isDownloadingContract={isSelectedContractDownloading}
+              // Annexes props
+              annexes={annexes}
+              annexesLoading={annexesLoading}
+              annexesError={annexesError}
+              onSignAnnex={openAnnexSignModal}
+              onPayAnnex={handlePayAnnex}
               onClose={orderDetails.closeDetails}
               onRetry={orderDetails.retry}
               onDownloadContract={

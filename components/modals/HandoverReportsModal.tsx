@@ -14,6 +14,7 @@ import {
     Text,
     View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type { HandoverReport } from '@/types/handover-reports';
 import { HANDOVER_STATUS_MAP, HANDOVER_TYPE_MAP } from '@/types/handover-reports';
@@ -203,10 +204,10 @@ export default function HandoverReportsModal({
             presentationStyle="pageSheet"
             onRequestClose={onClose}
         >
-            <View style={styles.container}>
+            <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
                 {/* Header */}
                 <View style={styles.header}>
-                    <Text style={styles.title}>Biên bản bàn giao</Text>
+                    <Text style={styles.title}>Biên bản</Text>
                     <Pressable style={styles.closeButton} onPress={onClose}>
                         <Ionicons name="close" size={24} color="#374151" />
                     </Pressable>
@@ -273,7 +274,7 @@ export default function HandoverReportsModal({
                         onRefresh={onRefresh}
                     />
                 )}
-            </View>
+            </SafeAreaView>
         </Modal>
     );
 }

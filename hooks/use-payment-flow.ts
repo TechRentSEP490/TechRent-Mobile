@@ -29,7 +29,10 @@ export interface UsePaymentFlowResult {
     // Actions
     setSelectedPayment: (method: PaymentMethod) => void;
     handleSelectPayment: (method: PaymentMethod) => void;
-    handleCreatePayment: (activeOrder: OrderCard) => Promise<void>;
+    handleCreatePayment: (
+        activeOrder: OrderCard,
+        options?: { extensionId?: number; amount?: number; description?: string }
+    ) => Promise<void>;
     handleClosePaymentModal: () => void;
     handleOpenPaymentInBrowser: () => Promise<void>;
     handlePaymentWebViewLoadStart: () => void;
@@ -95,7 +98,10 @@ export function usePaymentFlow(): UsePaymentFlowResult {
     );
 
     const handleCreatePayment = useCallback(
-        async (activeOrder: OrderCard) => {
+        async (
+            activeOrder: OrderCard,
+            options?: { extensionId?: number; amount?: number; description?: string }
+        ) => {
             if (!activeOrder) {
                 Alert.alert('Payment unavailable', 'Select an order before continuing.');
                 return;
@@ -113,23 +119,30 @@ export function usePaymentFlow(): UsePaymentFlowResult {
                     throw new Error('You must be signed in to continue with payment.');
                 }
 
-                const amount = Number.isFinite(activeOrder.totalDue) ? activeOrder.totalDue : 0;
+                // Use provided amount (for extension) or order total due
+                const paymentAmount = options?.amount ?? activeOrder.totalDue;
+
+                const amount = Number.isFinite(paymentAmount) ? paymentAmount : 0;
                 if (!Number.isFinite(amount) || amount <= 0) {
-                    throw new Error('Unable to determine the total amount due.');
+                    throw new Error('Unable to determine the payment amount.');
                 }
+
+                const description = options?.description ?? `Rent payment for order #${activeOrder.orderId}`;
 
                 const payload = {
                     orderId: activeOrder.orderId,
+                    extensionId: options?.extensionId,
                     invoiceType: 'RENT_PAYMENT' as const,
                     paymentMethod: selectedPayment,
                     amount,
-                    description: `Rent payment for order #${activeOrder.orderId}`,
+                    description: description?.trim()?.length ? description.trim() : `Rent payment for order #${activeOrder.orderId}`,
                     frontendSuccessUrl: buildPaymentUrl(PAYMENT_SUCCESS_URL, activeOrder.orderId),
                     frontendFailureUrl: buildPaymentUrl(PAYMENT_FAILURE_URL, activeOrder.orderId),
                 };
 
                 console.log('[Payment] Creating payment session', {
                     orderId: activeOrder.orderId,
+                    extensionId: payload.extensionId,
                     paymentMethod: payload.paymentMethod,
                     amount: payload.amount,
                 });

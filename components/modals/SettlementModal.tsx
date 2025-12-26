@@ -15,6 +15,7 @@ import {
     TextInput,
     View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type { Settlement } from '@/types/settlements';
 import { SETTLEMENT_STATUS_MAP, splitSettlementAmounts } from '@/types/settlements';
@@ -385,7 +386,7 @@ export default function SettlementModal({
             presentationStyle="pageSheet"
             onRequestClose={onClose}
         >
-            <View style={styles.container}>
+            <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
                 {/* Header */}
                 <View style={styles.header}>
                     <Text style={styles.title}>Quyết toán & Hoàn cọc</Text>
@@ -395,7 +396,7 @@ export default function SettlementModal({
                 </View>
 
                 {renderContent()}
-            </View>
+            </SafeAreaView>
         </Modal>
     );
 }

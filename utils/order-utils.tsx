@@ -106,7 +106,7 @@ export const STATUS_TEMPLATES: Record<
         defaultLabel: 'Hoàn thành',
         color: '#111111',
         background: '#f3f4f6',
-        action: { label: 'Thuê lại', type: 'rentAgain' },
+        // action: { label: 'Thuê lại', type: 'rentAgain' },
     },
 };
 

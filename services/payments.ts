@@ -9,6 +9,7 @@ export type PaymentMethod = 'VNPAY' | 'PAYOS';
 
 export type CreatePaymentPayload = {
   orderId: number;
+  extensionId?: number;
   invoiceType: 'RENT_PAYMENT';
   paymentMethod: PaymentMethod;
   amount: number;
