@@ -66,7 +66,7 @@ export default function ShippingAddressesScreen() {
     const activeSession = session?.accessToken ? session : await ensureSession();
 
     if (!activeSession?.accessToken) {
-      throw new Error('Please sign in to view your shipping addresses.');
+      throw new Error('Vui lòng đăng nhập để xem địa chỉ giao hàng.');
     }
 
     const results = await fetchShippingAddresses({
@@ -99,7 +99,7 @@ export default function ShippingAddressesScreen() {
           const message =
             error instanceof Error
               ? error.message
-              : 'Failed to load shipping addresses. Please try again later.';
+              : 'Không thể tải địa chỉ giao hàng. Vui lòng thử lại sau.';
           setLoadError(message);
           setAddresses([]);
         })
@@ -142,9 +142,9 @@ export default function ShippingAddressesScreen() {
       const message =
         error instanceof Error
           ? error.message
-          : 'Failed to refresh shipping addresses. Please try again later.';
+          : 'Không thể làm mới địa chỉ. Vui lòng thử lại sau.';
       setLoadError(message);
-      Toast.show({ type: 'error', text1: 'Unable to refresh addresses', text2: message });
+      Toast.show({ type: 'error', text1: 'Không thể làm mới', text2: message });
     } finally {
       setIsRefreshing(false);
     }
@@ -158,12 +158,12 @@ export default function ShippingAddressesScreen() {
     const normalized = normalizeInput(newAddress);
 
     if (normalized.length === 0) {
-      setFieldError('Address is required.');
+      setFieldError('Địa chỉ là bắt buộc.');
       return;
     }
 
     if (normalized.length < 3) {
-      setFieldError('Enter a valid shipping address.');
+      setFieldError('Vui lòng nhập địa chỉ hợp lệ.');
       return;
     }
 
@@ -175,7 +175,7 @@ export default function ShippingAddressesScreen() {
       const activeSession = await resolveSession();
 
       if (!activeSession?.accessToken) {
-        throw new Error('Please sign in again to add a shipping address.');
+        throw new Error('Vui lòng đăng nhập lại để thêm địa chỉ.');
       }
 
       const created = await createShippingAddress(
@@ -187,8 +187,8 @@ export default function ShippingAddressesScreen() {
       setNewAddress('');
       Toast.show({
         type: 'success',
-        text1: 'Address added',
-        text2: 'Your shipping address is ready to use at checkout.',
+        text1: 'Đã thêm địa chỉ',
+        text2: 'Địa chỉ giao hàng sẵn sàng sử dụng khi thanh toán.',
       });
       setActionError(null);
       try {
@@ -200,9 +200,9 @@ export default function ShippingAddressesScreen() {
       const message =
         error instanceof Error
           ? error.message
-          : 'We were unable to add your shipping address. Please try again later.';
+          : 'Không thể thêm địa chỉ. Vui lòng thử lại sau.';
       setActionError(message);
-      Toast.show({ type: 'error', text1: 'Add address failed', text2: message });
+      Toast.show({ type: 'error', text1: 'Thêm địa chỉ thất bại', text2: message });
     } finally {
       setIsSubmitting(false);
     }
@@ -211,12 +211,12 @@ export default function ShippingAddressesScreen() {
   const confirmDeleteAddress = useCallback(
     (address: ShippingAddress) => {
       Alert.alert(
-        'Remove this address?',
-        'Deleting this address will remove it from future checkout options.',
+        'Xóa địa chỉ này?',
+        'Xóa địa chỉ sẽ loại bỏ nó khỏi các tùy chọn thanh toán trong tương lai.',
         [
-          { text: 'Cancel', style: 'cancel' },
+          { text: 'Hủy', style: 'cancel' },
           {
-            text: 'Delete',
+            text: 'Xóa',
             style: 'destructive',
             onPress: () => {
               setPendingDeleteId(address.shippingAddressId);
@@ -227,7 +227,7 @@ export default function ShippingAddressesScreen() {
                   const activeSession = await resolveSession();
 
                   if (!activeSession?.accessToken) {
-                    throw new Error('Please sign in again to remove this address.');
+                    throw new Error('Vui lòng đăng nhập lại để xóa địa chỉ.');
                   }
 
                   await deleteShippingAddress(address.shippingAddressId, {
@@ -240,8 +240,8 @@ export default function ShippingAddressesScreen() {
                   );
                   Toast.show({
                     type: 'success',
-                    text1: 'Address removed',
-                    text2: 'The shipping address has been deleted.',
+                    text1: 'Đã xóa địa chỉ',
+                    text2: 'Địa chỉ giao hàng đã được xóa.',
                   });
                   try {
                     await refreshProfile();
@@ -252,9 +252,9 @@ export default function ShippingAddressesScreen() {
                   const message =
                     error instanceof Error
                       ? error.message
-                      : 'We were unable to delete the shipping address. Please try again later.';
+                      : 'Không thể xóa địa chỉ. Vui lòng thử lại sau.';
                   setActionError(message);
-                  Toast.show({ type: 'error', text1: 'Delete address failed', text2: message });
+                  Toast.show({ type: 'error', text1: 'Xóa địa chỉ thất bại', text2: message });
                 } finally {
                   setPendingDeleteId(null);
                 }
@@ -277,10 +277,10 @@ export default function ShippingAddressesScreen() {
         <View key={address.shippingAddressId} style={styles.addressCard}>
           <View style={styles.addressCardHeader}>
             <Ionicons name="location-outline" size={20} color="#111111" />
-            <Text style={styles.addressCardTitle}>Shipping address #{address.shippingAddressId}</Text>
+            <Text style={styles.addressCardTitle}>Địa chỉ #{address.shippingAddressId}</Text>
           </View>
           <Text style={styles.addressCardText}>{address.address}</Text>
-          {timestamp ? <Text style={styles.addressCardMeta}>Updated {timestamp}</Text> : null}
+          {timestamp ? <Text style={styles.addressCardMeta}>Cập nhật {timestamp}</Text> : null}
           <TouchableOpacity
             style={[styles.deleteButton, isDeleting && styles.deleteButtonDisabled]}
             onPress={() => confirmDeleteAddress(address)}
@@ -291,7 +291,7 @@ export default function ShippingAddressesScreen() {
             {isDeleting ? (
               <ActivityIndicator size="small" color="#ffffff" />
             ) : (
-              <Text style={styles.deleteButtonText}>Delete</Text>
+              <Text style={styles.deleteButtonText}>Xóa</Text>
             )}
           </TouchableOpacity>
         </View>
@@ -319,12 +319,12 @@ export default function ShippingAddressesScreen() {
           >
             <Ionicons name="arrow-back" size={22} color="#111111" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Shipping addresses</Text>
+          <Text style={styles.headerTitle}>Địa chỉ giao hàng</Text>
           <View style={styles.headerPlaceholder} />
         </View>
 
         <Text style={styles.subtitle}>
-          Save the places you want us to deliver your rentals. You can reuse these addresses during checkout.
+          Lưu các địa chỉ bạn muốn nhận thiết bị. Bạn có thể sử dụng lại các địa chỉ này khi thanh toán.
         </Text>
 
         {loadError ? (
@@ -342,9 +342,9 @@ export default function ShippingAddressesScreen() {
         ) : null}
 
         <View style={styles.formCard}>
-          <Text style={styles.formTitle}>Add a new address</Text>
+          <Text style={styles.formTitle}>Thêm địa chỉ mới</Text>
           <Text style={styles.formDescription}>
-            Provide a detailed location so our team can reach you quickly when your devices are ready.
+            Cung cấp địa chỉ chi tiết để đội ngũ có thể giao thiết bị nhanh chóng.
           </Text>
           <TextInput
             value={newAddress}
@@ -354,7 +354,7 @@ export default function ShippingAddressesScreen() {
                 setFieldError(null);
               }
             }}
-            placeholder="e.g. 123 Nguyen Hue, District 1, Ho Chi Minh City"
+            placeholder="VD: 123 Nguyễn Huệ, Quận 1, TP. Hồ Chí Minh"
             style={[styles.input, fieldError && styles.inputError]}
             multiline
             numberOfLines={3}
@@ -373,13 +373,13 @@ export default function ShippingAddressesScreen() {
             {isSubmitting ? (
               <ActivityIndicator size="small" color="#ffffff" />
             ) : (
-              <Text style={styles.addButtonText}>Save address</Text>
+              <Text style={styles.addButtonText}>Lưu địa chỉ</Text>
             )}
           </TouchableOpacity>
         </View>
 
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Saved addresses</Text>
+          <Text style={styles.sectionTitle}>Địa chỉ đã lưu</Text>
           <TouchableOpacity
             style={styles.refreshButton}
             onPress={() => void handleRefresh()}
@@ -392,7 +392,7 @@ export default function ShippingAddressesScreen() {
             ) : (
               <>
                 <Ionicons name="refresh" size={18} color="#111111" style={styles.refreshIcon} />
-                <Text style={styles.refreshButtonText}>Refresh</Text>
+                <Text style={styles.refreshButtonText}>Làm mới</Text>
               </>
             )}
           </TouchableOpacity>
@@ -401,16 +401,16 @@ export default function ShippingAddressesScreen() {
         {isLoading ? (
           <View style={styles.loadingState}>
             <ActivityIndicator size="large" color="#111111" />
-            <Text style={styles.loadingStateText}>Loading your addresses…</Text>
+            <Text style={styles.loadingStateText}>Đang tải địa chỉ...</Text>
           </View>
         ) : hasAddresses ? (
           <View style={styles.addressList}>{sortedAddresses.map(renderAddressCard)}</View>
         ) : (
           <View style={styles.emptyState}>
             <Ionicons name="home-outline" size={48} color="#6f6f6f" />
-            <Text style={styles.emptyStateTitle}>No addresses yet</Text>
+            <Text style={styles.emptyStateTitle}>Chưa có địa chỉ</Text>
             <Text style={styles.emptyStateSubtitle}>
-              Add your first shipping address above so we know where to deliver your rentals.
+              Thêm địa chỉ giao hàng đầu tiên để chúng tôi biết nơi giao thiết bị của bạn.
             </Text>
           </View>
         )}

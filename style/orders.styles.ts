@@ -984,6 +984,55 @@ const styles = StyleSheet.create({
     color: '#b91c1c',
     fontWeight: '600',
   },
+  // Search bar styles
+  searchBarContainer: {
+    flex: 1,
+    marginRight: 8,
+  },
+  searchBarExpanded: {
+    flex: 1,
+    marginRight: 8,
+  },
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f4f4f5',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    height: 38,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 15,
+    color: '#111111',
+    paddingVertical: 8,
+  },
+  searchIcon: {
+    marginLeft: 8,
+  },
+  iconButtonActive: {
+    backgroundColor: '#111111',
+  },
+  searchResultBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: '#dcfce7',
+    borderRadius: 12,
+  },
+  searchResultText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#166534',
+    fontWeight: '500',
+  },
+  searchResultClear: {
+    fontSize: 13,
+    color: '#047857',
+    fontWeight: '600',
+  },
 });
 
 export default styles;

@@ -18,7 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Image, NativeScrollEvent, NativeSyntheticEvent, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Modal, NativeScrollEvent, NativeSyntheticEvent, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 const formatAddressTimestamp = (value?: string | null) => {
@@ -43,6 +43,24 @@ const createDateSequence = (start: Date, totalDays: number) => {
   const normalizedStart = clampToStartOfDay(start);
   const length = Math.max(totalDays, 1);
   return Array.from({ length }, (_, index) => addDays(normalizedStart, index));
+};
+
+// Helper to add hours to a date
+const addHours = (date: Date, hours: number): Date => {
+  const result = new Date(date);
+  result.setTime(result.getTime() + hours * 60 * 60 * 1000);
+  return result;
+};
+
+// Format date as local ISO string (keeps local timezone, not UTC)
+const formatLocalDateTime = (date: Date): string => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  const seconds = String(date.getSeconds()).padStart(2, '0');
+  return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
 };
 
 const findDateIndex = (dates: Date[], target: Date) =>
@@ -166,36 +184,37 @@ export default function CartScreen() {
   const hasItems = items.length > 0;
   const isContextBacked = cartItems.length > 0;
 
-  // Default: Start date = ngày mai (today + 1), End date = Start + 1 ngày
-  const today = clampToStartOfDay(new Date());
-  const tomorrow = addDays(today, 1);
-  const initialStartDate = parseDateParam(startParam, tomorrow);
-  const initialEndFallback = addDays(initialStartDate, 1);
-  const initialEndDate = parseDateParam(endParam, initialEndFallback);
+  // Default: Start date = hiện tại + 1 giờ
+  const now = new Date();
+  const defaultStartDate = new Date(now.getTime() + 60 * 60 * 1000); // +1 hour from now
+  const initialStartDate = parseDateParam(startParam, defaultStartDate);
 
   const [startDate, setStartDate] = useState<Date>(initialStartDate);
-  const [endDate, setEndDate] = useState<Date>(
-    initialEndDate.getTime() <= initialStartDate.getTime() ? initialEndFallback : initialEndDate
-  );
+  const [rentalDays, setRentalDays] = useState<number>(1); // Số ngày thuê, tối thiểu 1
+
+  // Tự động tính endDate = startDate + rentalDays * 24 giờ
+  const endDate = useMemo(() => {
+    return addHours(startDate, rentalDays * 24);
+  }, [startDate, rentalDays]);
+
   const [shippingAddress, setShippingAddress] = useState('');
   const [savedAddresses, setSavedAddresses] = useState<ShippingAddress[]>([]);
   const [isLoadingAddresses, setIsLoadingAddresses] = useState(false);
   const [isRefreshingAddresses, setIsRefreshingAddresses] = useState(false);
   const [addressError, setAddressError] = useState<string | null>(null);
   const [isAddressPickerVisible, setIsAddressPickerVisible] = useState(false);
+  const [isTimePickerVisible, setIsTimePickerVisible] = useState(false);
+  const [tempHour, setTempHour] = useState(startDate.getHours());
+  const [tempMinute, setTempMinute] = useState(startDate.getMinutes());
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Ngày bắt đầu tối thiểu = ngày mai (không cho phép thuê trong ngày hôm nay)
-  const minimumStartDate = tomorrow;
-  const minimumEndDate = useMemo(() => addDays(startDate, 1), [startDate]);
-  const isRangeInvalid = endDate.getTime() <= startDate.getTime();
-  const rentalDurationInDays = useMemo(() => {
-    const millisecondsPerDay = 24 * 60 * 60 * 1000;
-    const rawDuration = Math.round((endDate.getTime() - startDate.getTime()) / millisecondsPerDay);
-
-    return Math.max(1, rawDuration);
-  }, [endDate, startDate]);
+  // Ngày bắt đầu tối thiểu = hiện tại (không cho phép trong quá khứ)
+  const minimumStartDate = new Date();
+  // Số ngày thuê hợp lệ (tối thiểu 1 ngày)
+  const isRangeInvalid = rentalDays < 1;
+  const rentalDurationInDays = rentalDays;
+  const rentalDurationInHours = rentalDays * 24;
 
   const fetchSavedAddresses = useCallback(async () => {
     const activeSession = session?.accessToken ? session : await ensureSession();
@@ -389,7 +408,7 @@ export default function CartScreen() {
       return '0 devices';
     }
 
-    return `${totalQuantity} ${totalQuantity === 1 ? 'device' : 'devices'}`;
+    return `${totalQuantity} ${totalQuantity === 1 ? 'thiết bị' : 'thiết bị'}`;
   }, [hasItems, totalQuantity]);
   const totalCostLabel = useMemo(() => {
     if (!hasItems) {
@@ -409,7 +428,7 @@ export default function CartScreen() {
     if (!hasItems) {
       return '—';
     }
-    return `${rentalDurationInDays} ${rentalDurationInDays === 1 ? 'day' : 'days'}`;
+    return `${rentalDurationInDays} ${rentalDurationInDays === 1 ? 'ngày' : 'ngày'}`;
   }, [hasItems, rentalDurationInDays]);
 
   // Tổng tiền thuê = Daily Rate × Số ngày × Số lượng (không bao gồm đặt cọc)
@@ -431,15 +450,15 @@ export default function CartScreen() {
   const summaryMetrics = useMemo(
     (): SummaryMetric[] => {
       const metrics: SummaryMetric[] = [
-        { label: 'Total Items', value: deviceLabel },
-        { label: 'Rental Duration', value: rentalDurationLabel },
-        { label: 'Daily Rate Total', value: formattedTotal },
-        { label: 'Rental Cost', value: rentalCostLabel, description: `(${rentalDurationLabel} × Daily Rate)` },
-        { label: 'Deposit (Refundable)', value: depositTotalLabel, description: 'Hoàn lại khi trả thiết bị' },
-        { label: 'Device Value', value: deviceValueTotalLabel },
+        { label: 'Tổng sản phẩm', value: deviceLabel },
+        { label: 'Thời gian thuê', value: rentalDurationLabel },
+        { label: 'Tổng giá thuê/ngày', value: formattedTotal },
+        { label: 'Chi phí thuê', value: rentalCostLabel, description: `(${rentalDurationLabel} × Giá/ngày)` },
+        { label: 'Tiền cọc (Hoàn lại)', value: depositTotalLabel, description: 'Hoàn lại khi trả thiết bị' },
+        { label: 'Giá trị thiết bị', value: deviceValueTotalLabel },
       ];
 
-      metrics.push({ label: 'Total Payment', value: totalCostLabel, highlight: true, description: 'Rental Cost + Deposit' });
+      metrics.push({ label: 'Tổng thanh toán', value: totalCostLabel, highlight: true, description: 'Chi phí thuê + Tiền cọc' });
 
       return metrics;
     },
@@ -462,20 +481,20 @@ export default function CartScreen() {
           <TouchableOpacity style={styles.headerButton} onPress={() => router.back()}>
             <Ionicons name="chevron-back" size={22} color="#111111" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Cart</Text>
+          <Text style={styles.headerTitle}>Giỏ hàng</Text>
           <View style={styles.headerPlaceholder} />
         </View>
         <View style={styles.loadingState}>
           <Ionicons name="cart-outline" size={64} color="#d0d0d0" />
-          <Text style={styles.loadingStateText}>Your cart is empty</Text>
+          <Text style={styles.loadingStateText}>Giỏ hàng trống</Text>
           <Text style={[styles.loadingStateText, { marginTop: 8, fontSize: 14 }]}>
-            Add devices from the catalog to start renting
+            Thêm thiết bị từ danh mục để bắt đầu thuê
           </Text>
           <TouchableOpacity
             style={{ marginTop: 20, backgroundColor: '#111', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 12 }}
             onPress={() => router.push('/(app)/(tabs)/home')}
           >
-            <Text style={{ color: '#fff', fontWeight: '600' }}>Browse Devices</Text>
+            <Text style={{ color: '#fff', fontWeight: '600' }}>Xem thiết bị</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -488,19 +507,14 @@ export default function CartScreen() {
       : `${formatDisplayDate(startDate)} - ${formatDisplayDate(endDate)}`;
 
   const handleStartDateChange = (nextDate: Date) => {
-    const normalized = clampToStartOfDay(nextDate);
-    setStartDate(normalized);
-    setEndDate((current) => (current.getTime() <= normalized.getTime() ? addDays(normalized, 1) : current));
+    setStartDate(nextDate);
+    // endDate sẽ tự động cập nhật vì là derived value từ startDate + rentalDays
   };
 
-  const handleEndDateChange = (nextDate: Date) => {
-    const normalized = clampToStartOfDay(nextDate);
-    if (normalized.getTime() <= startDate.getTime()) {
-      setEndDate(addDays(startDate, 1));
-      return;
-    }
-
-    setEndDate(normalized);
+  const handleRentalDaysChange = (days: number) => {
+    // Tối thiểu 1 ngày, tối đa 365 ngày
+    const validDays = Math.max(1, Math.min(365, days));
+    setRentalDays(validDays);
   };
 
   const hasInvalidItemId = items.some(
@@ -539,8 +553,8 @@ export default function CartScreen() {
     try {
       const createdOrder = await createRentalOrder(
         {
-          planStartDate: startDate.toISOString(),
-          planEndDate: endDate.toISOString(),
+          planStartDate: formatLocalDateTime(startDate),
+          planEndDate: formatLocalDateTime(endDate),
           shippingAddress: shippingAddress.trim(),
           orderDetails,
         },
@@ -612,7 +626,7 @@ export default function CartScreen() {
         <TouchableOpacity style={styles.headerButton} onPress={() => router.back()}>
           <Ionicons name="chevron-back" size={22} color="#111111" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Cart</Text>
+        <Text style={styles.headerTitle}>Giỏ hàng</Text>
         <View style={styles.headerPlaceholder} />
       </View>
 
@@ -646,7 +660,7 @@ export default function CartScreen() {
         <View style={styles.orderCard}>
           <View style={styles.orderHeader}>
             <View>
-              <Text style={styles.orderTitle}>Rental Summary</Text>
+              <Text style={styles.orderTitle}>Tóm tắt đơn hàng</Text>
               <Text style={styles.orderSubtitle}>{rentalRangeLabel}</Text>
             </View>
             <TouchableOpacity
@@ -671,7 +685,7 @@ export default function CartScreen() {
                 const itemDailyRate = getDailyRate(item.product);
                 const itemLineTotal = formatCurrencyValue(itemDailyRate * item.quantity, itemCurrency);
                 const itemLabel = item.product.model || item.product.name;
-                const itemDailyRateLabel = `${formatCurrencyValue(itemDailyRate, itemCurrency)} / day`;
+                const itemDailyRateLabel = `${formatCurrencyValue(itemDailyRate, itemCurrency)} / ngày`;
                 const depositRatio = getDepositRatio(item.product);
                 const deviceValue = getDeviceValue(item.product);
                 const depositPercentageLabel =
@@ -748,13 +762,13 @@ export default function CartScreen() {
                             </TouchableOpacity>
                           </View>
                           {Number.isFinite(availableStock) ? (
-                            <Text style={styles.productMeta}>{`Stock available: ${availableStock}`}</Text>
+                            <Text style={styles.productMeta}>{`Còn hàng: ${availableStock}`}</Text>
                           ) : null}
                         </View>
                       </View>
                       <View style={styles.orderItemHeaderRight}>
                         <View style={styles.lineTotalGroup}>
-                          <Text style={styles.lineTotalLabel}>Line total</Text>
+                          <Text style={styles.lineTotalLabel}>Tổng dòng</Text>
                           <Text style={styles.productPrice}>{itemLineTotal}</Text>
                         </View>
                         {isContextBacked ? (
@@ -772,30 +786,30 @@ export default function CartScreen() {
 
                     <View style={styles.orderItemDetails}>
                       <View style={styles.orderItemMetric}>
-                        <Text style={styles.orderItemMetricLabel}>Daily rate</Text>
+                        <Text style={styles.orderItemMetricLabel}>Giá thuê/ngày</Text>
                         <Text style={styles.orderItemMetricValue}>{itemDailyRateLabel}</Text>
                       </View>
                       {singleItemTotalPaymentLabel ? (
                         <View style={styles.orderItemMetric}>
-                          <Text style={styles.orderItemMetricLabel}>Single total payment</Text>
+                          <Text style={styles.orderItemMetricLabel}>Tổng thanh toán (1 sp)</Text>
                           <Text style={styles.orderItemMetricValue}>{singleItemTotalPaymentLabel}</Text>
                         </View>
                       ) : null}
                       {depositSummary ? (
                         <View style={styles.orderItemMetric}>
-                          <Text style={styles.orderItemMetricLabel}>Deposit</Text>
+                          <Text style={styles.orderItemMetricLabel}>Tiền cọc</Text>
                           <Text style={styles.orderItemMetricValue}>{depositSummary}</Text>
                           {itemDepositTotalLabel ? (
-                            <Text style={styles.orderItemMetricSubValue}>{`Total: ${itemDepositTotalLabel}`}</Text>
+                            <Text style={styles.orderItemMetricSubValue}>{`Tổng: ${itemDepositTotalLabel}`}</Text>
                           ) : null}
                         </View>
                       ) : null}
                       {deviceValueLabel ? (
                         <View style={styles.orderItemMetric}>
-                          <Text style={styles.orderItemMetricLabel}>Device value</Text>
+                          <Text style={styles.orderItemMetricLabel}>Giá trị thiết bị</Text>
                           <Text style={styles.orderItemMetricValue}>{deviceValueLabel}</Text>
                           {itemDeviceValueTotalLabel ? (
-                            <Text style={styles.orderItemMetricSubValue}>{`Total: ${itemDeviceValueTotalLabel}`}</Text>
+                            <Text style={styles.orderItemMetricSubValue}>{`Tổng: ${itemDeviceValueTotalLabel}`}</Text>
                           ) : null}
                         </View>
                       ) : null}
@@ -805,17 +819,17 @@ export default function CartScreen() {
               })
             ) : (
               <View style={styles.emptyOrderBody}>
-                <Text style={styles.emptyOrderText}>Add devices to your cart to create a rental.</Text>
+                <Text style={styles.emptyOrderText}>Thêm thiết bị vào giỏ hàng để tạo đơn thuê.</Text>
               </View>
             )}
           </View>
         </View>
 
         <View style={styles.formCard}>
-          <Text style={styles.formLabel}>Shipping Address</Text>
+          <Text style={styles.formLabel}>Địa chỉ giao hàng</Text>
           <TextInput
             style={styles.formInput}
-            placeholder="Enter the address where we should deliver the device"
+            placeholder="Nhập địa chỉ nơi bạn muốn nhận thiết bị"
             placeholderTextColor="#9c9c9c"
             value={shippingAddress}
             onChangeText={setShippingAddress}
@@ -835,7 +849,7 @@ export default function CartScreen() {
                 style={styles.addressActionIcon}
               />
               <Text style={styles.addressActionText}>
-                {isLoadingAddresses ? 'Loading saved addresses…' : 'Choose saved address'}
+                {isLoadingAddresses ? 'Đang tải địa chỉ...' : 'Chọn địa chỉ đã lưu'}
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -850,7 +864,7 @@ export default function CartScreen() {
                 color="#111111"
                 style={styles.addressActionIcon}
               />
-              <Text style={styles.addressActionText}>Manage addresses</Text>
+              <Text style={styles.addressActionText}>Quản lý địa chỉ</Text>
             </TouchableOpacity>
           </View>
           {addressError ? (
@@ -858,33 +872,170 @@ export default function CartScreen() {
           ) : (
             <Text style={styles.addressHelperText}>
               {isLoadingAddresses
-                ? 'Loading your saved addresses…'
+                ? 'Đang tải địa chỉ đã lưu...'
                 : savedAddresses.length > 0
-                  ? `You have ${savedAddresses.length} saved ${savedAddresses.length === 1 ? 'address' : 'addresses'
-                  }.`
-                  : 'Add a shipping address so you can reuse it for future rentals.'}
+                  ? `Bạn có ${savedAddresses.length} địa chỉ đã lưu.`
+                  : 'Thêm địa chỉ giao hàng để sử dụng lại cho các lần thuê sau.'}
             </Text>
           )}
         </View>
 
         <View style={styles.formCard}>
-          <Text style={styles.formLabel}>Rental Dates</Text>
+          <Text style={styles.formLabel}>Thời gian thuê</Text>
+
+          {/* Row 1: Ngày bắt đầu + Số ngày thuê */}
           <View style={styles.dateRow}>
             <View style={styles.dateColumn}>
-              <Text style={styles.dateLabel}>Start Date</Text>
+              <Text style={styles.dateLabel}>Ngày bắt đầu</Text>
               <DatePickerField
                 value={startDate}
                 minimumDate={minimumStartDate}
                 onChange={handleStartDateChange}
+                showTime={false}
               />
             </View>
             <View style={styles.dateColumn}>
-              <Text style={styles.dateLabel}>End Date</Text>
-              <DatePickerField value={endDate} minimumDate={minimumEndDate} onChange={handleEndDateChange} />
+              <Text style={styles.dateLabel}>Số ngày thuê</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f9fafb', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 1, borderColor: '#e5e7eb' }}>
+                <TouchableOpacity
+                  style={{ width: 32, height: 32, backgroundColor: rentalDays <= 1 ? '#e5e7eb' : '#111', borderRadius: 8, alignItems: 'center', justifyContent: 'center' }}
+                  onPress={() => handleRentalDaysChange(rentalDays - 1)}
+                  disabled={rentalDays <= 1}
+                >
+                  <Ionicons name="remove" size={18} color={rentalDays <= 1 ? '#9ca3af' : '#fff'} />
+                </TouchableOpacity>
+                <Text style={{ flex: 1, textAlign: 'center', fontSize: 18, fontWeight: '700', color: '#111' }}>{rentalDays}</Text>
+                <TouchableOpacity
+                  style={{ width: 32, height: 32, backgroundColor: '#111', borderRadius: 8, alignItems: 'center', justifyContent: 'center' }}
+                  onPress={() => handleRentalDaysChange(rentalDays + 1)}
+                >
+                  <Ionicons name="add" size={18} color="#fff" />
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
+
+          {/* Row 2: Giờ bắt đầu */}
+          <View style={{ marginTop: 12 }}>
+            <Text style={styles.dateLabel}>Giờ bắt đầu (8:00 - 19:00)</Text>
+            <TouchableOpacity
+              style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f9fafb', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, borderWidth: 1, borderColor: '#e5e7eb', gap: 8 }}
+              onPress={() => {
+                setTempHour(startDate.getHours());
+                setTempMinute(startDate.getMinutes());
+                setIsTimePickerVisible(true);
+              }}
+            >
+              <Ionicons name="time-outline" size={18} color="#6f6f6f" />
+              <Text style={{ fontSize: 15, fontWeight: '600', color: '#111' }}>
+                {startDate.getHours().toString().padStart(2, '0')}:{startDate.getMinutes().toString().padStart(2, '0')}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Time Picker Modal */}
+          <Modal
+            visible={isTimePickerVisible}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setIsTimePickerVisible(false)}
+          >
+            <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+              <View style={{ backgroundColor: '#fff', borderRadius: 20, padding: 20, width: '100%', maxWidth: 360 }}>
+                <Text style={{ fontSize: 18, fontWeight: '700', color: '#111', marginBottom: 16, textAlign: 'center' }}>Chọn giờ bắt đầu</Text>
+
+                {/* Giờ */}
+                <Text style={{ fontSize: 14, fontWeight: '600', color: '#6b7280', marginBottom: 8 }}>Giờ</Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+                  {[8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19].map(h => (
+                    <TouchableOpacity
+                      key={h}
+                      style={{
+                        paddingHorizontal: 14,
+                        paddingVertical: 10,
+                        borderRadius: 10,
+                        backgroundColor: tempHour === h ? '#111' : '#f3f4f6',
+                        borderWidth: 1,
+                        borderColor: tempHour === h ? '#111' : '#e5e7eb',
+                      }}
+                      onPress={() => setTempHour(h)}
+                    >
+                      <Text style={{ fontSize: 14, fontWeight: '600', color: tempHour === h ? '#fff' : '#374151' }}>
+                        {h.toString().padStart(2, '0')}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                {/* Phút */}
+                <Text style={{ fontSize: 14, fontWeight: '600', color: '#6b7280', marginBottom: 8 }}>Phút</Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 20 }}>
+                  {[0, 15, 30, 45].map(m => (
+                    <TouchableOpacity
+                      key={m}
+                      style={{
+                        paddingHorizontal: 16,
+                        paddingVertical: 10,
+                        borderRadius: 10,
+                        backgroundColor: tempMinute === m ? '#111' : '#f3f4f6',
+                        borderWidth: 1,
+                        borderColor: tempMinute === m ? '#111' : '#e5e7eb',
+                      }}
+                      onPress={() => setTempMinute(m)}
+                    >
+                      <Text style={{ fontSize: 14, fontWeight: '600', color: tempMinute === m ? '#fff' : '#374151' }}>
+                        :{m.toString().padStart(2, '0')}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                {/* Preview */}
+                <View style={{ padding: 12, backgroundColor: '#f0f9ff', borderRadius: 10, marginBottom: 16 }}>
+                  <Text style={{ fontSize: 12, color: '#0369a1', fontWeight: '500' }}>Giờ đã chọn</Text>
+                  <Text style={{ fontSize: 20, fontWeight: '700', color: '#111', marginTop: 4 }}>
+                    {tempHour.toString().padStart(2, '0')}:{tempMinute.toString().padStart(2, '0')}
+                  </Text>
+                </View>
+
+                {/* Actions */}
+                <View style={{ flexDirection: 'row', gap: 12 }}>
+                  <TouchableOpacity
+                    style={{ flex: 1, paddingVertical: 14, backgroundColor: '#f3f4f6', borderRadius: 12, alignItems: 'center' }}
+                    onPress={() => setIsTimePickerVisible(false)}
+                  >
+                    <Text style={{ fontSize: 15, fontWeight: '600', color: '#374151' }}>Hủy</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={{ flex: 1, paddingVertical: 14, backgroundColor: '#111', borderRadius: 12, alignItems: 'center' }}
+                    onPress={() => {
+                      const newDate = new Date(startDate);
+                      newDate.setHours(tempHour, tempMinute, 0, 0);
+                      if (newDate.getTime() >= new Date().getTime()) {
+                        handleStartDateChange(newDate);
+                        setIsTimePickerVisible(false);
+                      } else {
+                        Alert.alert('Lỗi', 'Không thể chọn giờ trong quá khứ.');
+                      }
+                    }}
+                  >
+                    <Text style={{ fontSize: 15, fontWeight: '600', color: '#fff' }}>Xác nhận</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </Modal>
+
+          {/* Hiển thị ngày kết thúc tự động tính */}
+          <View style={{ marginTop: 12, padding: 12, backgroundColor: '#f0fdf4', borderRadius: 10, borderWidth: 1, borderColor: '#bbf7d0' }}>
+            <Text style={{ fontSize: 12, color: '#166534', fontWeight: '500' }}>Ngày kết thúc (tự động tính)</Text>
+            <Text style={{ fontSize: 15, color: '#111', fontWeight: '600', marginTop: 4 }}>
+              {endDate.toLocaleString('vi-VN', { dateStyle: 'medium', timeStyle: 'short' })}
+            </Text>
+          </View>
+
           {isRangeInvalid && (
-            <Text style={styles.dateErrorText}>End date must be at least one day after the start date.</Text>
+            <Text style={styles.dateErrorText}>Số ngày thuê phải ít nhất 1 ngày.</Text>
           )}
         </View>
 
@@ -909,7 +1060,7 @@ export default function CartScreen() {
 
       <View style={styles.footerActions}>
         <TouchableOpacity style={styles.cancelButton} onPress={() => router.back()}>
-          <Text style={styles.cancelText}>Cancel</Text>
+          <Text style={styles.cancelText}>Hủy</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.checkoutButton, (isCheckoutDisabled || isSubmitting) && styles.checkoutButtonDisabled]}
@@ -919,7 +1070,7 @@ export default function CartScreen() {
           {isSubmitting ? (
             <ActivityIndicator color="#ffffff" />
           ) : (
-            <Text style={styles.checkoutText}>Place Rental Order</Text>
+            <Text style={styles.checkoutText}>Đặt đơn thuê</Text>
           )}
         </TouchableOpacity>
       </View>

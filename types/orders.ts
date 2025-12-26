@@ -42,6 +42,8 @@ export type OrderCard = {
   deviceSummary: string;
   deviceImageUrls: string[];
   rentalPeriod: string;
+  planStartDate: string; // Ngày dự kiến bắt đầu
+  planEndDate: string;   // Ngày dự kiến kết thúc
   totalAmount: string;
   totalPrice: number;
   totalPriceLabel: string;

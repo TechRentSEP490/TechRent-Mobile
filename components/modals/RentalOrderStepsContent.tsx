@@ -135,7 +135,7 @@ export default function RentalOrderStepsContent({
       typeof activeContract?.depositAmount === 'number' ? formatCurrency(activeContract.depositAmount) : '—';
     const contractRentalDays =
       typeof activeContract?.rentalPeriodDays === 'number'
-        ? `${activeContract.rentalPeriodDays} day${activeContract.rentalPeriodDays === 1 ? '' : 's'}`
+        ? `${activeContract.rentalPeriodDays} ngày`
         : '—';
     const contractStart = formatDateTime(activeContract?.startDate);
     const contractEnd = formatDateTime(activeContract?.endDate);
@@ -152,19 +152,19 @@ export default function RentalOrderStepsContent({
           <Text style={styles.modalOrderName}>{activeOrder?.title ?? 'Rental Order'}</Text>
           <Text style={styles.modalOrderMeta}>{activeOrder?.deviceSummary}</Text>
         </View>
-        <Text style={styles.stepTitle}>Rental Agreement Contract</Text>
-        <Text style={styles.stepSubtitle}>Please review the complete terms and conditions below</Text>
+        <Text style={styles.stepTitle}>Hợp đồng thuê thiết bị</Text>
+        <Text style={styles.stepSubtitle}>Vui lòng xem xét các điều khoản và điều kiện dưới đây</Text>
         <View style={styles.contractContainer}>
           {isContractLoading ? (
             <View style={styles.contractStateWrapper}>
               <ActivityIndicator color="#111111" />
-              <Text style={styles.contractStateText}>Loading rental contract…</Text>
+              <Text style={styles.contractStateText}>Đang tải hợp đồng...</Text>
             </View>
           ) : contractErrorMessage ? (
             <View style={styles.contractStateWrapper}>
               <Text style={[styles.contractStateText, styles.contractErrorText]}>{contractErrorMessage}</Text>
               <Pressable style={styles.contractRetryButton} onPress={onRetryContract}>
-                <Text style={styles.contractRetryButtonText}>Try Again</Text>
+                <Text style={styles.contractRetryButtonText}>Thử lại</Text>
               </Pressable>
             </View>
           ) : activeContract ? (
@@ -172,47 +172,47 @@ export default function RentalOrderStepsContent({
               <Text style={styles.contractHeading}>{contractTitle}</Text>
               <View style={styles.contractMetaList}>
                 <View style={styles.contractMetaRow}>
-                  <Text style={styles.contractMetaLabel}>Contract Number</Text>
+                  <Text style={styles.contractMetaLabel}>Số hợp đồng</Text>
                   <Text style={styles.contractMetaValue}>{contractNumber}</Text>
                 </View>
                 <View style={styles.contractMetaRow}>
-                  <Text style={styles.contractMetaLabel}>Status</Text>
+                  <Text style={styles.contractMetaLabel}>Trạng thái</Text>
                   <Text style={styles.contractMetaValue}>{contractStatusLabel}</Text>
                 </View>
                 <View style={styles.contractMetaRow}>
-                  <Text style={styles.contractMetaLabel}>Rental Period</Text>
+                  <Text style={styles.contractMetaLabel}>Thời gian thuê</Text>
                   <Text style={styles.contractMetaValue}>{contractPeriod}</Text>
                 </View>
                 <View style={styles.contractMetaRow}>
-                  <Text style={styles.contractMetaLabel}>Rental Days</Text>
+                  <Text style={styles.contractMetaLabel}>Số ngày thuê</Text>
                   <Text style={styles.contractMetaValue}>{contractRentalDays}</Text>
                 </View>
                 <View style={styles.contractMetaRow}>
-                  <Text style={styles.contractMetaLabel}>Start Date</Text>
+                  <Text style={styles.contractMetaLabel}>Ngày bắt đầu</Text>
                   <Text style={styles.contractMetaValue}>{contractStart}</Text>
                 </View>
                 <View style={styles.contractMetaRow}>
-                  <Text style={styles.contractMetaLabel}>End Date</Text>
+                  <Text style={styles.contractMetaLabel}>Ngày kết thúc</Text>
                   <Text style={styles.contractMetaValue}>{contractEnd}</Text>
                 </View>
                 <View style={styles.contractMetaRow}>
-                  <Text style={styles.contractMetaLabel}>Total Amount</Text>
+                  <Text style={styles.contractMetaLabel}>Tổng tiền</Text>
                   <Text style={styles.contractMetaValue}>{contractTotal}</Text>
                 </View>
                 <View style={styles.contractMetaRow}>
-                  <Text style={styles.contractMetaLabel}>Deposit</Text>
+                  <Text style={styles.contractMetaLabel}>Tiền cọc</Text>
                   <Text style={styles.contractMetaValue}>{contractDeposit}</Text>
                 </View>
                 <View style={styles.contractMetaRow}>
-                  <Text style={styles.contractMetaLabel}>Expires</Text>
+                  <Text style={styles.contractMetaLabel}>Hết hạn đạt cọc</Text>
                   <Text style={styles.contractMetaValue}>{contractExpires}</Text>
                 </View>
                 <View style={styles.contractMetaRow}>
-                  <Text style={styles.contractMetaLabel}>Created</Text>
+                  <Text style={styles.contractMetaLabel}>Ngày tạo</Text>
                   <Text style={styles.contractMetaValue}>{contractCreated}</Text>
                 </View>
                 <View style={styles.contractMetaRow}>
-                  <Text style={styles.contractMetaLabel}>Updated</Text>
+                  <Text style={styles.contractMetaLabel}>Cập nhật</Text>
                   <Text style={styles.contractMetaValue}>{contractUpdated}</Text>
                 </View>
               </View>
@@ -220,27 +220,27 @@ export default function RentalOrderStepsContent({
                 <View style={styles.contractSignedBanner}>
                   <Ionicons name="checkmark-circle" size={16} color="#15803d" />
                   <Text style={styles.contractSignedText}>
-                    This contract has already been signed. Use the download button below to keep a copy for your records.
+                    Hợp đồng này đã được ký. Nhấn nút Tải xuống để lưu bản sao.
                   </Text>
                 </View>
               ) : null}
               {contractDescription.length > 0 && <Text style={styles.contractBody}>{contractDescription}</Text>}
               {contractBody.length > 0 && (
                 <View style={styles.contractSection}>
-                  <Text style={styles.contractSectionHeading}>Contract Content</Text>
+                  <Text style={styles.contractSectionHeading}>Nội dung hợp đồng</Text>
                   <Text style={styles.contractBody}>{contractBody}</Text>
                 </View>
               )}
               {contractTerms.length > 0 && (
                 <View style={styles.contractTermsSection}>
-                  <Text style={styles.contractTermsHeading}>Terms &amp; Conditions</Text>
+                  <Text style={styles.contractTermsHeading}>Điều khoản & Điều kiện</Text>
                   <Text style={styles.contractTermsText}>{contractTerms}</Text>
                 </View>
               )}
             </ScrollView>
           ) : (
             <View style={styles.contractStateWrapper}>
-              <Text style={styles.contractStateText}>No rental contract is available for this order yet.</Text>
+              <Text style={styles.contractStateText}>Chưa có hợp đồng cho đơn hàng này.</Text>
             </View>
           )}
         </View>
@@ -257,8 +257,8 @@ export default function RentalOrderStepsContent({
             color={canAgreeToContract ? (hasAgreed ? '#111111' : '#8a8a8a') : '#d1d5db'}
           />
           <View style={styles.agreementTextWrapper}>
-            <Text style={styles.agreementLabel}>I agree to the rental contract terms</Text>
-            <Text style={styles.agreementHelper}>You must accept before proceeding to the verification step.</Text>
+            <Text style={styles.agreementLabel}>Tôi đồng ý với các điều khoản hợp đồng thuê</Text>
+            <Text style={styles.agreementHelper}>Bạn phải chấp nhận trước khi tiếp tục bước xác minh.</Text>
           </View>
         </Pressable>
         <View style={styles.primaryActions}>
@@ -280,7 +280,7 @@ export default function RentalOrderStepsContent({
               {isDownloadingActiveContract ? (
                 <ActivityIndicator color="#ffffff" />
               ) : (
-                <Text style={styles.primaryButtonText}>Download Contract</Text>
+                <Text style={styles.primaryButtonText}>Tải hợp đồng</Text>
               )}
             </Pressable>
           ) : (
@@ -302,13 +302,13 @@ export default function RentalOrderStepsContent({
                     !isAgreementComplete && styles.primaryButtonTextDisabled,
                   ]}
                 >
-                  Next
+                  Tiếp tục
                 </Text>
               )}
             </Pressable>
           )}
           <Pressable style={[styles.secondaryButton, styles.buttonFlex]} onPress={onResetFlow}>
-            <Text style={styles.secondaryButtonText}>Cancel</Text>
+            <Text style={styles.secondaryButtonText}>Hủy bỏ</Text>
           </Pressable>
         </View>
       </View>
@@ -321,11 +321,11 @@ export default function RentalOrderStepsContent({
         <View style={styles.verificationIconWrapper}>
           <Ionicons name="shield-checkmark-outline" size={32} color="#111" />
         </View>
-        <Text style={styles.stepTitle}>Verify Your Signature</Text>
+        <Text style={styles.stepTitle}>Xác minh chữ ký</Text>
         <Text style={styles.stepSubtitle}>
           {verificationEmail
-            ? `We've sent a 6-digit code to ${verificationEmail}`
-            : 'Enter the 6-digit code we sent to your email address'}
+            ? `Chúng tôi đã gửi mã 6 chữ số đến ${verificationEmail}`
+            : 'Nhập mã 6 chữ số đã gửi đến email của bạn'}
         </Text>
         <View style={styles.otpInputsRow}>
           {otpDigits.map((digit, index) => (
@@ -352,10 +352,10 @@ export default function RentalOrderStepsContent({
         <View style={styles.verificationHelpers}>
           <Pressable onPress={onResendCode} disabled={isSendingPin}>
             <Text style={[styles.helperLink, isSendingPin && styles.helperLinkDisabled]}>
-              Didn&apos;t receive the code?
+              Không nhận được mã?
             </Text>
           </Pressable>
-          <Text style={styles.helperText}>Resend available in 00:45</Text>
+          <Text style={styles.helperText}>Gửi lại sau 00:45</Text>
         </View>
         <Pressable
           style={[
@@ -371,7 +371,7 @@ export default function RentalOrderStepsContent({
             <Text
               style={[styles.primaryButtonText, !isOtpComplete && styles.primaryButtonTextDisabled]}
             >
-              Verify Code
+              Xác nhận mã
             </Text>
           )}
         </Pressable>
@@ -383,10 +383,10 @@ export default function RentalOrderStepsContent({
           onPress={onOpenEmailEditor}
           disabled={isSigningContract || isSendingPin}
         >
-          <Text style={styles.helperButtonText}>Use a different email</Text>
+          <Text style={styles.helperButtonText}>Dùng email khác</Text>
         </Pressable>
         <Pressable style={styles.secondaryButton} onPress={onGoBack}>
-          <Text style={styles.secondaryButtonText}>Back</Text>
+          <Text style={styles.secondaryButtonText}>Quay lại</Text>
         </Pressable>
       </View>
     );
@@ -394,26 +394,26 @@ export default function RentalOrderStepsContent({
 
   return (
     <View style={styles.stepContent}>
-      <Text style={styles.stepTitle}>Review &amp; Pay</Text>
+      <Text style={styles.stepTitle}>Kiểm tra & Thanh toán</Text>
       <View style={styles.summaryCard}>
         <View style={styles.summaryRow}>
-          <Text style={styles.summaryLabel}>Order</Text>
+          <Text style={styles.summaryLabel}>Đơn hàng</Text>
           <Text style={styles.summaryValue}>{activeOrder?.deviceSummary ?? '—'}</Text>
         </View>
         <View style={styles.summaryRow}>
-          <Text style={styles.summaryLabel}>Rental Period</Text>
+          <Text style={styles.summaryLabel}>Thời gian thuê</Text>
           <Text style={styles.summaryValue}>{activeOrder?.rentalPeriod ?? '—'}</Text>
         </View>
         <View style={styles.summaryRow}>
-          <Text style={styles.summaryLabel}>Rental Fees</Text>
+          <Text style={styles.summaryLabel}>Phí thuê</Text>
           <Text style={styles.summaryValue}>{activeOrder?.totalPriceLabel ?? formatCurrency(0)}</Text>
         </View>
         <View style={styles.summaryRow}>
-          <Text style={styles.summaryLabel}>Deposit</Text>
+          <Text style={styles.summaryLabel}>Tiền cọc</Text>
           <Text style={styles.summaryValue}>{activeOrder?.depositLabel ?? formatCurrency(0)}</Text>
         </View>
         <View style={[styles.summaryRow, styles.summaryRowEmphasis]}>
-          <Text style={styles.summaryLabel}>Total Due</Text>
+          <Text style={styles.summaryLabel}>Tổng thanh toán</Text>
           <Text style={styles.summaryTotal}>{activeOrder?.totalAmount ?? formatCurrency(0)}</Text>
         </View>
       </View>
@@ -447,7 +447,7 @@ export default function RentalOrderStepsContent({
       ) : null}
       <View style={styles.paymentSecurity}>
         <Ionicons name="shield-checkmark" size={16} color="#1f7df4" />
-        <Text style={styles.paymentSecurityText}>Your payment information is secure</Text>
+        <Text style={styles.paymentSecurityText}>Thông tin thanh toán của bạn được bảo mật</Text>
       </View>
       <View style={styles.primaryActions}>
         <Pressable
@@ -463,11 +463,11 @@ export default function RentalOrderStepsContent({
           {isCreatingPayment ? (
             <ActivityIndicator color="#ffffff" />
           ) : (
-            <Text style={styles.primaryButtonText}>Proceed to Payment</Text>
+            <Text style={styles.primaryButtonText}>Tiến hành thanh toán</Text>
           )}
         </Pressable>
         <Pressable style={[styles.secondaryButton, styles.buttonFlex]} onPress={onGoBack}>
-          <Text style={styles.secondaryButtonText}>Back</Text>
+          <Text style={styles.secondaryButtonText}>Quay lại</Text>
         </Pressable>
       </View>
     </View>

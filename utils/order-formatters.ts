@@ -82,8 +82,8 @@ export const formatRentalPeriod = (startDateIso: string, endDateIso: string): st
       return `${startLabel} - ${endLabel}`;
     }
 
-    // Không có ngày kết thúc → Hiển thị "Starting..."
-    return `Starting ${startLabel}`;
+    // Không có ngày kết thúc → Hiển thị "Bắt đầu từ..."
+    return `Bắt đầu từ ${startLabel}`;
   } catch {
     // Fallback khi Intl không khả dụng: dùng toDateString()
     if (hasValidEnd && endDate) {
@@ -152,7 +152,7 @@ export const formatDateTime = (iso: string | null | undefined): string => {
 export const formatContractStatus = (status: string | null | undefined): string => {
   // Validation: Trả về mặc định nếu không có status
   if (!status) {
-    return 'Unknown';
+    return 'Không xác định';
   }
 
   // Chuẩn hóa: Thay underscore/nhiều khoảng trắng bằng 1 khoảng trắng

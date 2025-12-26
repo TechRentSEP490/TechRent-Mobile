@@ -160,7 +160,7 @@ export default function OrderDetailsModal({
                 <View style={styles.detailRow}>
                   <Text style={styles.detailLabel}>Rental Period</Text>
                   <Text style={styles.detailValue}>
-                    {formatRentalPeriod(order.startDate, order.endDate)}
+                    {formatRentalPeriod(order.planStartDate, order.planEndDate)}
                   </Text>
                 </View>
                 <View style={styles.detailRow}>
@@ -438,8 +438,8 @@ export default function OrderDetailsModal({
                     </View>
                   )}
 
-                  {/* Settlement Button */}
-                  {onViewSettlement && (
+                  {/* Settlement Button - only show for IN_USE orders */}
+                  {onViewSettlement && order.orderStatus === 'IN_USE' && (
                     <Pressable
                       style={{
                         flexDirection: 'row',
