@@ -135,19 +135,10 @@ function OrderCardComponent({
                 {/* Expiry Warning Button */}
                 {showExpiryButton && onExpiryAction ? (
                     <Pressable
-                        style={{
-                            flexDirection: 'row',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: 8,
-                            marginTop: 12,
-                            paddingVertical: 12,
-                            paddingHorizontal: 16,
-                            backgroundColor: daysUntilExpiry <= 0 ? '#fef2f2' : '#fffbeb',
-                            borderRadius: 10,
-                            borderWidth: 1,
-                            borderColor: daysUntilExpiry <= 0 ? '#fecaca' : '#fde68a',
-                        }}
+                        style={[
+                            styles.expiryButton,
+                            daysUntilExpiry <= 0 ? styles.expiryButtonExpired : styles.expiryButtonWarning
+                        ]}
                         onPress={onExpiryAction}
                     >
                         <Ionicons
@@ -155,11 +146,13 @@ function OrderCardComponent({
                             size={18}
                             color={daysUntilExpiry <= 0 ? '#dc2626' : '#f59e0b'}
                         />
-                        <Text style={{
-                            fontSize: 14,
-                            fontWeight: '600',
-                            color: daysUntilExpiry <= 0 ? '#dc2626' : '#b45309',
-                        }}>
+                        <Text style={[
+                            styles.expiryText,
+                            daysUntilExpiry <= 0 ? styles.expiryTextExpired : styles.expiryTextWarning
+                        ]}
+                            numberOfLines={1}
+                            ellipsizeMode="tail"
+                        >
                             {daysUntilExpiry <= 0 ? 'Đã hết hạn - Xử lý ngay' : 'Sắp hết hạn - Quyết định xử lý'}
                         </Text>
                         <Ionicons

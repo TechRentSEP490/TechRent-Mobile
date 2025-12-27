@@ -259,6 +259,37 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontWeight: '700',
   },
+  expiryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  expiryButtonExpired: {
+    backgroundColor: '#fef2f2',
+    borderColor: '#fecaca',
+  },
+  expiryButtonWarning: {
+    backgroundColor: '#fffbeb',
+    borderColor: '#fde68a',
+  },
+  expiryText: {
+    fontSize: 14,
+    fontWeight: '600',
+    flexShrink: 1, // Allow text to shrink if needed
+    textAlign: 'center',
+  },
+  expiryTextExpired: {
+    color: '#dc2626',
+  },
+  expiryTextWarning: {
+    color: '#b45309',
+  },
   separator: {
     height: 16,
   },
