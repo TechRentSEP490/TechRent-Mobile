@@ -4,6 +4,7 @@
  * Uses a simple date selection UI compatible with Expo Go
  */
 
+import DatePickerField from '@/components/date-picker-field';
 import { diffDays, formatRemainingDaysText, getDaysRemaining } from '@/utils/dates';
 import { Ionicons } from '@expo/vector-icons';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
@@ -15,7 +16,6 @@ import {
     ScrollView,
     StyleSheet,
     Text,
-    TextInput,
     View,
 } from 'react-native';
 
@@ -33,7 +33,8 @@ type ExtendRentalModalProps = {
  * ExtendRentalModal - Modal gia hạn đơn thuê
  * 
  * Features:
- * - Simple date input for selecting new end date
+ * - Date picker for selecting new end date
+ * - Dropdown for selecting hour and minute
  * - Validation: new date must be at least 24h after current end date
  * - Shows extension duration calculation
  * - Loading state during API call
@@ -52,12 +53,14 @@ export default function ExtendRentalModal({
     const [isProcessing, setIsProcessing] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    // Date input state (format: DD/MM/YYYY)
-    const [dateInput, setDateInput] = useState('');
-    const [timeInput, setTimeInput] = useState('12:00');
-
-    // Parsed date from input
+    // Date/Time state
     const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+    const [showDatePicker, setShowDatePicker] = useState(false);
+
+    // Time picker modal state
+    const [showTimePickerModal, setShowTimePickerModal] = useState(false);
+    const [tempHour, setTempHour] = useState(12);
+    const [tempMinute, setTempMinute] = useState(0);
 
     // Calculate minimum date (current end date + 24 hours)
     const minDate = useMemo(() => {
@@ -66,60 +69,27 @@ export default function ExtendRentalModal({
         return endDate;
     }, [currentEndDate]);
 
-    // Initialize date input with minimum date when modal opens
+    // Available hours (8:00 - 19:00)
+    const availableHours = useMemo(() =>
+        Array.from({ length: 12 }, (_, i) => i + 8), // 8 to 19
+        []);
+
+    // Available minutes (0, 15, 30, 45)
+    const availableMinutes = useMemo(() => [0, 15, 30, 45], []);
+
+    // Initialize date when modal opens
     useEffect(() => {
-        if (visible && !dateInput) {
-            const day = String(minDate.getDate()).padStart(2, '0');
-            const month = String(minDate.getMonth() + 1).padStart(2, '0');
-            const year = minDate.getFullYear();
-            setDateInput(`${day}/${month}/${year}`);
-            setTimeInput(
-                `${String(minDate.getHours()).padStart(2, '0')}:${String(minDate.getMinutes()).padStart(2, '0')}`
-            );
+        if (visible && !selectedDate) {
+            const initialDate = new Date(minDate);
+            // Set to 12:00 if minDate hour is before 12
+            if (initialDate.getHours() < 12) {
+                initialDate.setHours(12, 0, 0, 0);
+            }
+            setSelectedDate(initialDate);
+            setTempHour(initialDate.getHours());
+            setTempMinute(Math.floor(initialDate.getMinutes() / 15) * 15);
         }
-    }, [visible, minDate, dateInput]);
-
-    // Parse date input whenever it changes
-    useEffect(() => {
-        if (!dateInput || !timeInput) {
-            setSelectedDate(null);
-            return;
-        }
-
-        // Parse DD/MM/YYYY format
-        const dateParts = dateInput.split('/');
-        if (dateParts.length !== 3) {
-            setSelectedDate(null);
-            return;
-        }
-
-        const [day, month, year] = dateParts.map(Number);
-        if (!day || !month || !year || day > 31 || month > 12) {
-            setSelectedDate(null);
-            return;
-        }
-
-        // Parse HH:mm format
-        const timeParts = timeInput.split(':');
-        if (timeParts.length !== 2) {
-            setSelectedDate(null);
-            return;
-        }
-
-        const [hours, minutes] = timeParts.map(Number);
-        if (isNaN(hours) || isNaN(minutes) || hours > 23 || minutes > 59) {
-            setSelectedDate(null);
-            return;
-        }
-
-        const date = new Date(year, month - 1, day, hours, minutes);
-        if (isNaN(date.getTime())) {
-            setSelectedDate(null);
-            return;
-        }
-
-        setSelectedDate(date);
-    }, [dateInput, timeInput]);
+    }, [visible, minDate, selectedDate]);
 
     // Calculate extension days
     const extensionDays = useMemo(() => {
@@ -178,11 +148,49 @@ export default function ExtendRentalModal({
     }, []);
 
     /**
+     * Handle date change from DatePickerField
+     */
+    const handleDateChange = useCallback((date: Date) => {
+        // Keep the time from selectedDate but update the date
+        const newDate = new Date(date);
+        if (selectedDate) {
+            newDate.setHours(selectedDate.getHours(), selectedDate.getMinutes(), 0, 0);
+        }
+        setSelectedDate(newDate);
+        setShowDatePicker(false);
+        setError(null);
+    }, [selectedDate]);
+
+    /**
+     * Open time picker modal
+     */
+    const openTimePickerModal = useCallback(() => {
+        if (selectedDate) {
+            setTempHour(selectedDate.getHours());
+            setTempMinute(Math.floor(selectedDate.getMinutes() / 15) * 15);
+        }
+        setShowTimePickerModal(true);
+    }, [selectedDate]);
+
+    /**
+     * Confirm time selection
+     */
+    const confirmTimeSelection = useCallback(() => {
+        if (selectedDate) {
+            const newDate = new Date(selectedDate);
+            newDate.setHours(tempHour, tempMinute, 0, 0);
+            setSelectedDate(newDate);
+        }
+        setShowTimePickerModal(false);
+        setError(null);
+    }, [selectedDate, tempHour, tempMinute]);
+
+    /**
      * Handle extend request submission
      */
     const handleSubmit = useCallback(async () => {
         if (!selectedDate) {
-            setError('Vui lòng nhập ngày kết thúc mới hợp lệ');
+            setError('Vui lòng chọn ngày kết thúc mới');
             return;
         }
 
@@ -216,10 +224,10 @@ export default function ExtendRentalModal({
      * Reset state when modal closes
      */
     const handleClose = useCallback(() => {
-        setDateInput('');
-        setTimeInput('12:00');
         setSelectedDate(null);
         setError(null);
+        setShowDatePicker(false);
+        setShowTimePickerModal(false);
         onClose();
     }, [onClose]);
 
@@ -233,11 +241,9 @@ export default function ExtendRentalModal({
     const handleQuickSelect = useCallback((days: number) => {
         const newDate = new Date(minDate);
         newDate.setDate(newDate.getDate() + days);
-
-        const day = String(newDate.getDate()).padStart(2, '0');
-        const month = String(newDate.getMonth() + 1).padStart(2, '0');
-        const year = newDate.getFullYear();
-        setDateInput(`${day}/${month}/${year}`);
+        // Set time to 12:00
+        newDate.setHours(12, 0, 0, 0);
+        setSelectedDate(newDate);
         setError(null);
     }, [minDate]);
 
@@ -288,7 +294,7 @@ export default function ExtendRentalModal({
                                     <Text style={[
                                         styles.infoValue,
                                         daysRemaining <= 0 && styles.urgentText,
-                                        daysRemaining === 1 && styles.warningText,
+                                        daysRemaining === 1 && styles.warningTextStyle,
                                     ]}>
                                         {formatRemainingDaysText(daysRemaining)}
                                     </Text>
@@ -316,50 +322,34 @@ export default function ExtendRentalModal({
                                 ))}
                             </View>
 
-                            {/* Date Input */}
+                            {/* Date/Time Picker Row */}
                             <View style={styles.inputRow}>
+                                {/* Date Picker */}
                                 <View style={styles.inputGroup}>
                                     <Text style={styles.inputLabel}>Ngày (DD/MM/YYYY)</Text>
-                                    <TextInput
-                                        style={styles.textInput}
-                                        value={dateInput}
-                                        onChangeText={(text) => {
-                                            // Auto-format with slashes
-                                            const cleaned = text.replace(/\D/g, '');
-                                            let formatted = cleaned;
-                                            if (cleaned.length > 2) {
-                                                formatted = `${cleaned.slice(0, 2)}/${cleaned.slice(2)}`;
-                                            }
-                                            if (cleaned.length > 4) {
-                                                formatted = `${cleaned.slice(0, 2)}/${cleaned.slice(2, 4)}/${cleaned.slice(4, 8)}`;
-                                            }
-                                            setDateInput(formatted);
-                                            setError(null);
-                                        }}
-                                        placeholder="DD/MM/YYYY"
-                                        keyboardType="number-pad"
-                                        maxLength={10}
-                                    />
+                                    <Pressable
+                                        style={styles.pickerButton}
+                                        onPress={() => setShowDatePicker(true)}
+                                    >
+                                        <Ionicons name="calendar-outline" size={20} color="#6b7280" />
+                                        <Text style={styles.pickerButtonText}>
+                                            {selectedDate ? formatDate(selectedDate) : 'Chọn ngày'}
+                                        </Text>
+                                    </Pressable>
                                 </View>
+
+                                {/* Time Picker */}
                                 <View style={styles.inputGroup}>
                                     <Text style={styles.inputLabel}>Giờ (HH:MM)</Text>
-                                    <TextInput
-                                        style={styles.textInput}
-                                        value={timeInput}
-                                        onChangeText={(text) => {
-                                            // Auto-format with colon
-                                            const cleaned = text.replace(/\D/g, '');
-                                            let formatted = cleaned;
-                                            if (cleaned.length > 2) {
-                                                formatted = `${cleaned.slice(0, 2)}:${cleaned.slice(2, 4)}`;
-                                            }
-                                            setTimeInput(formatted);
-                                            setError(null);
-                                        }}
-                                        placeholder="HH:MM"
-                                        keyboardType="number-pad"
-                                        maxLength={5}
-                                    />
+                                    <Pressable
+                                        style={styles.pickerButton}
+                                        onPress={openTimePickerModal}
+                                    >
+                                        <Ionicons name="time-outline" size={20} color="#6b7280" />
+                                        <Text style={styles.pickerButtonText}>
+                                            {selectedDate ? formatTime(selectedDate) : '12:00'}
+                                        </Text>
+                                    </Pressable>
                                 </View>
                             </View>
                         </View>
@@ -383,7 +373,7 @@ export default function ExtendRentalModal({
                         {validationError && (
                             <View style={styles.warningBox}>
                                 <Ionicons name="warning-outline" size={20} color="#f59e0b" />
-                                <Text style={styles.warningText}>{validationError}</Text>
+                                <Text style={styles.warningTextStyle}>{validationError}</Text>
                             </View>
                         )}
 
@@ -425,6 +415,114 @@ export default function ExtendRentalModal({
                     </View>
                 </View>
             </View>
+
+            {/* Date Picker Modal */}
+            <Modal
+                visible={showDatePicker}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setShowDatePicker(false)}
+            >
+                <View style={styles.datePickerOverlay}>
+                    <View style={styles.datePickerCard}>
+                        <Text style={styles.timePickerTitle}>Chọn ngày kết thúc</Text>
+                        <DatePickerField
+                            value={selectedDate || minDate}
+                            minimumDate={minDate}
+                            onChange={handleDateChange}
+                            showTime={false}
+                        />
+                        <Pressable
+                            style={styles.datePickerDoneButton}
+                            onPress={() => setShowDatePicker(false)}
+                        >
+                            <Text style={styles.datePickerDoneText}>Đóng</Text>
+                        </Pressable>
+                    </View>
+                </View>
+            </Modal>
+
+            {/* Time Picker Modal */}
+            <Modal
+                visible={showTimePickerModal}
+                transparent
+                animationType="fade"
+            >
+                <View style={styles.timePickerOverlay}>
+                    <View style={styles.timePickerCard}>
+                        <Text style={styles.timePickerTitle}>Chọn giờ</Text>
+
+                        {/* Preview */}
+                        <View style={styles.timePreview}>
+                            <Text style={styles.timePreviewText}>
+                                {String(tempHour).padStart(2, '0')}:{String(tempMinute).padStart(2, '0')}
+                            </Text>
+                        </View>
+
+                        {/* Hour Selection */}
+                        <Text style={styles.timePickerLabel}>Giờ (08:00 - 19:00)</Text>
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.timeOptionsScroll}>
+                            <View style={styles.timeOptionsRow}>
+                                {availableHours.map((hour) => (
+                                    <Pressable
+                                        key={`hour-${hour}`}
+                                        style={[
+                                            styles.timeOption,
+                                            tempHour === hour && styles.timeOptionSelected,
+                                        ]}
+                                        onPress={() => setTempHour(hour)}
+                                    >
+                                        <Text style={[
+                                            styles.timeOptionText,
+                                            tempHour === hour && styles.timeOptionTextSelected,
+                                        ]}>
+                                            {String(hour).padStart(2, '0')}
+                                        </Text>
+                                    </Pressable>
+                                ))}
+                            </View>
+                        </ScrollView>
+
+                        {/* Minute Selection */}
+                        <Text style={styles.timePickerLabel}>Phút</Text>
+                        <View style={styles.minuteOptionsRow}>
+                            {availableMinutes.map((minute) => (
+                                <Pressable
+                                    key={`minute-${minute}`}
+                                    style={[
+                                        styles.minuteOption,
+                                        tempMinute === minute && styles.timeOptionSelected,
+                                    ]}
+                                    onPress={() => setTempMinute(minute)}
+                                >
+                                    <Text style={[
+                                        styles.timeOptionText,
+                                        tempMinute === minute && styles.timeOptionTextSelected,
+                                    ]}>
+                                        {String(minute).padStart(2, '0')}
+                                    </Text>
+                                </Pressable>
+                            ))}
+                        </View>
+
+                        {/* Actions */}
+                        <View style={styles.timePickerActions}>
+                            <Pressable
+                                style={styles.timePickerCancelButton}
+                                onPress={() => setShowTimePickerModal(false)}
+                            >
+                                <Text style={styles.timePickerCancelText}>Hủy</Text>
+                            </Pressable>
+                            <Pressable
+                                style={styles.timePickerConfirmButton}
+                                onPress={confirmTimeSelection}
+                            >
+                                <Text style={styles.timePickerConfirmText}>Xác nhận</Text>
+                            </Pressable>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
         </Modal>
     );
 }
@@ -513,6 +611,12 @@ const styles = StyleSheet.create({
     warningText: {
         color: '#f59e0b',
     },
+    warningTextStyle: {
+        flex: 1,
+        fontSize: 14,
+        color: '#b45309',
+        lineHeight: 20,
+    },
     dateSection: {
         marginBottom: 16,
     },
@@ -559,16 +663,21 @@ const styles = StyleSheet.create({
         color: '#6b7280',
         marginBottom: 6,
     },
-    textInput: {
+    pickerButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
         borderWidth: 1,
         borderColor: '#e5e7eb',
         borderRadius: 12,
         paddingHorizontal: 14,
         paddingVertical: 12,
+        backgroundColor: '#f9fafb',
+    },
+    pickerButtonText: {
         fontSize: 16,
         fontWeight: '500',
         color: '#111827',
-        backgroundColor: '#f9fafb',
     },
     summaryCard: {
         flexDirection: 'row',
@@ -654,4 +763,143 @@ const styles = StyleSheet.create({
         fontWeight: '600',
         color: '#ffffff',
     },
+    // Date Picker Modal Styles
+    datePickerOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 24,
+    },
+    datePickerCard: {
+        backgroundColor: '#ffffff',
+        borderRadius: 16,
+        padding: 16,
+        width: '100%',
+        maxWidth: 350,
+    },
+    datePickerDoneButton: {
+        marginTop: 12,
+        paddingVertical: 12,
+        borderRadius: 10,
+        backgroundColor: '#3b82f6',
+        alignItems: 'center',
+    },
+    datePickerDoneText: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#ffffff',
+    },
+    // Time Picker Modal Styles
+    timePickerOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 24,
+    },
+    timePickerCard: {
+        backgroundColor: '#ffffff',
+        borderRadius: 16,
+        padding: 20,
+        width: '100%',
+        maxWidth: 350,
+    },
+    timePickerTitle: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: '#111827',
+        textAlign: 'center',
+        marginBottom: 16,
+    },
+    timePreview: {
+        alignItems: 'center',
+        marginBottom: 16,
+        padding: 12,
+        backgroundColor: '#f3f4f6',
+        borderRadius: 10,
+    },
+    timePreviewText: {
+        fontSize: 32,
+        fontWeight: '700',
+        color: '#111827',
+    },
+    timePickerLabel: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#374151',
+        marginBottom: 8,
+    },
+    timeOptionsScroll: {
+        marginBottom: 16,
+    },
+    timeOptionsRow: {
+        flexDirection: 'row',
+        gap: 8,
+    },
+    timeOption: {
+        paddingHorizontal: 16,
+        paddingVertical: 10,
+        borderRadius: 8,
+        backgroundColor: '#f3f4f6',
+        borderWidth: 1,
+        borderColor: '#e5e7eb',
+    },
+    timeOptionSelected: {
+        backgroundColor: '#3b82f6',
+        borderColor: '#3b82f6',
+    },
+    timeOptionText: {
+        fontSize: 16,
+        fontWeight: '500',
+        color: '#374151',
+    },
+    timeOptionTextSelected: {
+        color: '#ffffff',
+    },
+    minuteOptionsRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        gap: 8,
+        marginBottom: 20,
+    },
+    minuteOption: {
+        flex: 1,
+        paddingVertical: 12,
+        borderRadius: 8,
+        backgroundColor: '#f3f4f6',
+        borderWidth: 1,
+        borderColor: '#e5e7eb',
+        alignItems: 'center',
+    },
+    timePickerActions: {
+        flexDirection: 'row',
+        gap: 12,
+    },
+    timePickerCancelButton: {
+        flex: 1,
+        paddingVertical: 12,
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: '#e5e7eb',
+        alignItems: 'center',
+    },
+    timePickerCancelText: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: '#374151',
+    },
+    timePickerConfirmButton: {
+        flex: 1,
+        paddingVertical: 12,
+        borderRadius: 10,
+        backgroundColor: '#3b82f6',
+        alignItems: 'center',
+    },
+    timePickerConfirmText: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: '#ffffff',
+    },
 });
+

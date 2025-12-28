@@ -1,4 +1,5 @@
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -9,7 +10,6 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
 
 import ProfileSettingsModal from '@/components/modals/ProfileSettingsModal';
 import { useAuth } from '@/contexts/AuthContext';
@@ -18,7 +18,7 @@ import styles from '@/style/profile.styles';
 
 const formatAccountStatus = (status?: string | null) => {
   if (!status) {
-    return 'Unknown';
+    return 'Không xác định';
   }
 
   return status
@@ -69,6 +69,11 @@ export default function ProfileScreen() {
     router.push('/(app)/shipping-addresses');
   }, [closeSettings, router]);
 
+  const handleManageBankInfoPress = useCallback(() => {
+    closeSettings();
+    router.push('/(app)/bank-informations');
+  }, [closeSettings, router]);
+
   useEffect(() => {
     if (user && profileError) {
       setProfileError(null);
@@ -89,7 +94,7 @@ export default function ProfileScreen() {
       const session = await ensureSession();
 
       if (!session?.accessToken) {
-        throw new Error('Please sign in again to view your KYC details.');
+        throw new Error('Vui lòng đăng nhập lại để xem thông tin KYC.');
       }
 
       const details = await getMyKycDetails({
@@ -102,7 +107,7 @@ export default function ProfileScreen() {
       return details;
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : 'Failed to load KYC information. Please try again later.';
+        error instanceof Error ? error.message : 'Không thể tải thông tin KYC. Vui lòng thử lại sau.';
       setKycError(message);
       return null;
     } finally {
@@ -133,7 +138,7 @@ export default function ProfileScreen() {
       const message =
         error instanceof Error
           ? error.message
-          : 'Unable to refresh your profile. Please try again.';
+          : 'Không thể làm mới hồ sơ. Vui lòng thử lại.';
       setProfileError(message);
     }
     await loadKycDetails();
@@ -147,34 +152,34 @@ export default function ProfileScreen() {
     return [
       {
         id: 'customerId',
-        label: 'Customer ID',
+        label: 'Mã khách hàng',
         value: `#${user.customerId}`,
         icon: 'pricetag-outline' as const,
       },
       {
         id: 'username',
-        label: 'Username',
+        label: 'Tên đăng nhập',
         value: user.username,
         icon: 'person-outline' as const,
       },
       {
         id: 'email',
         label: 'Email',
-        value: user.email ?? 'Not provided',
+        value: user.email ?? 'Chưa cung cấp',
         icon: 'mail-outline' as const,
       },
       {
         id: 'phone',
-        label: 'Phone Number',
+        label: 'Số điện thoại',
         value:
           user.phoneNumber && user.phoneNumber.trim().length > 0
             ? user.phoneNumber
-            : 'Not provided',
+            : 'Chưa cung cấp',
         icon: 'call-outline' as const,
       },
       {
         id: 'status',
-        label: 'Account Status',
+        label: 'Trạng thái tài khoản',
         value: formatAccountStatus(user.status),
         icon: 'shield-checkmark-outline' as const,
       },
@@ -194,8 +199,8 @@ export default function ProfileScreen() {
         badgeStyle: styles.kycStatusBadgeSuccess,
         badgeTextStyle: styles.kycStatusBadgeTextSuccess,
         description: verifiedAt
-          ? `Your identity was verified on ${verifiedAt}.`
-          : 'Your identity has been verified. You are ready to rent devices.',
+          ? `Danh tính của bạn đã được xác minh vào ${verifiedAt}.`
+          : 'Danh tính của bạn đã được xác minh. Bạn có thể thuê thiết bị.',
         actionLabel: null,
         actionType: null,
       } as const;
@@ -206,8 +211,8 @@ export default function ProfileScreen() {
         friendlyStatus,
         badgeStyle: styles.kycStatusBadgeWarning,
         badgeTextStyle: styles.kycStatusBadgeTextWarning,
-        description: 'Thank you! Your documents were submitted and are awaiting review.',
-        actionLabel: 'Refresh Status',
+        description: 'Cảm ơn bạn! Hồ sơ của bạn đã được gửi và đang chờ xét duyệt.',
+        actionLabel: 'Làm mới trạng thái',
         actionType: 'refresh' as const,
       } as const;
     }
@@ -217,8 +222,8 @@ export default function ProfileScreen() {
         friendlyStatus,
         badgeStyle: styles.kycStatusBadgeDanger,
         badgeTextStyle: styles.kycStatusBadgeTextDanger,
-        description: 'Complete identity verification to unlock faster approvals and rentals.',
-        actionLabel: 'Start KYC Process',
+        description: 'Hoàn tất xác minh danh tính để được phê duyệt nhanh hơn.',
+        actionLabel: 'Bắt đầu xác minh KYC',
         actionType: 'start' as const,
       } as const;
     }
@@ -227,8 +232,8 @@ export default function ProfileScreen() {
       friendlyStatus,
       badgeStyle: styles.kycStatusBadgeNeutral,
       badgeTextStyle: styles.kycStatusBadgeTextNeutral,
-      description: 'Keep your documents up to date to avoid delays with future rentals.',
-      actionLabel: 'Refresh Status',
+      description: 'Giữ hồ sơ của bạn cập nhật để tránh chậm trễ khi thuê.',
+      actionLabel: 'Làm mới trạng thái',
       actionType: 'refresh' as const,
     } as const;
   }, [kycDetails?.verifiedAt, normalizedKycStatus]);
@@ -263,21 +268,21 @@ export default function ProfileScreen() {
       <SafeAreaView style={styles.safeArea} edges={["top"]}>
         <View style={styles.unauthContainer}>
           <Ionicons name="person-circle-outline" size={72} color="#111111" />
-          <Text style={styles.unauthTitle}>Sign in to view your profile</Text>
+          <Text style={styles.unauthTitle}>Đăng nhập để xem hồ sơ của bạn</Text>
           <Text style={styles.unauthSubtitle}>
-            Access your orders, manage rentals, and update account information after signing in.
+            Truy cập đơn hàng, quản lý hợp đồng thuê và cập nhật thông tin tài khoản sau khi đăng nhập.
           </Text>
           <TouchableOpacity
             style={[styles.authButton, styles.authPrimaryButton]}
             onPress={() => router.push('/(auth)/sign-in')}
           >
-            <Text style={[styles.authButtonText, styles.authPrimaryButtonText]}>Sign In</Text>
+            <Text style={[styles.authButtonText, styles.authPrimaryButtonText]}>Đăng nhập</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.authButton, styles.authSecondaryButton]}
             onPress={() => router.push('/(auth)/sign-up')}
           >
-            <Text style={[styles.authButtonText, styles.authSecondaryButtonText]}>Create Account</Text>
+            <Text style={[styles.authButtonText, styles.authSecondaryButtonText]}>Tạo tài khoản</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -289,9 +294,9 @@ export default function ProfileScreen() {
       <SafeAreaView style={styles.safeArea} edges={["top"]}>
         <View style={styles.profileErrorContainer}>
           <Ionicons name="cloud-offline-outline" size={64} color="#111111" />
-          <Text style={styles.profileErrorTitle}>Unable to load your profile</Text>
+          <Text style={styles.profileErrorTitle}>Không thể tải hồ sơ của bạn</Text>
           <Text style={styles.profileErrorSubtitle}>
-            {profileError ?? 'We couldn’t fetch your account details. Please try again.'}
+            {profileError ?? 'Không thể lấy thông tin tài khoản. Vui lòng thử lại.'}
           </Text>
           <TouchableOpacity
             style={[styles.authButton, styles.authPrimaryButton]}
@@ -299,7 +304,7 @@ export default function ProfileScreen() {
             disabled={isFetchingProfile}
           >
             <Text style={[styles.authButtonText, styles.authPrimaryButtonText]}>
-              {isFetchingProfile ? 'Refreshing…' : 'Try Again'}
+              {isFetchingProfile ? 'Đang làm mới…' : 'Thử lại'}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
@@ -307,7 +312,7 @@ export default function ProfileScreen() {
             onPress={() => void handleLogout()}
             disabled={isFetchingProfile}
           >
-            <Text style={[styles.authButtonText, styles.authSecondaryButtonText]}>Sign Out</Text>
+            <Text style={[styles.authButtonText, styles.authSecondaryButtonText]}>Đăng xuất</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -330,7 +335,7 @@ export default function ProfileScreen() {
       >
         <View style={styles.header}>
           <Ionicons name="person-circle-outline" size={32} color="#111" />
-          <Text style={styles.headerTitle}>User Profile</Text>
+          <Text style={styles.headerTitle}>Hồ sơ người dùng</Text>
           <View style={styles.headerActions}>
             <TouchableOpacity
               style={[
@@ -369,9 +374,9 @@ export default function ProfileScreen() {
             {user.fullName && user.fullName.trim().length > 0 ? user.fullName : user.username}
           </Text>
           <Text style={styles.profileUsername}>@{user.username}</Text>
-          <Text style={styles.profileEmail}>{user.email ?? 'Email unavailable'}</Text>
+          <Text style={styles.profileEmail}>{user.email ?? 'Email không có sẵn'}</Text>
           <View style={styles.profileBadge}>
-            <Text style={styles.profileBadgeText}>Customer #{user.customerId}</Text>
+            <Text style={styles.profileBadgeText}>Khách hàng #{user.customerId}</Text>
           </View>
         </View>
 
@@ -381,17 +386,17 @@ export default function ProfileScreen() {
             size={28}
             color={isAccountActive ? '#16a34a' : '#dc2626'}
           />
-          <Text style={styles.selfieTitle}>Account Status</Text>
+          <Text style={styles.selfieTitle}>Trạng thái tài khoản</Text>
           <Text style={styles.selfieSubtitle}>
             {isAccountActive
-              ? 'Your account is active and ready for rentals.'
-              : 'Your account is currently inactive. Please contact support for assistance.'}
+              ? 'Tài khoản của bạn đang hoạt động và sẵn sàng để thuê.'
+              : 'Tài khoản của bạn hiện không hoạt động. Vui lòng liên hệ hỗ trợ.'}
           </Text>
           <Text style={styles.selfieStatus}>{formatAccountStatus(user.status)}</Text>
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Account Information</Text>
+          <Text style={styles.sectionTitle}>Thông tin tài khoản</Text>
           <View style={styles.contactList}>
             {contactItems.map((item, index) => (
               <View
@@ -416,7 +421,7 @@ export default function ProfileScreen() {
         <View style={styles.kycCard}>
           <View style={styles.kycHeader}>
             <Ionicons name="shield-checkmark-outline" size={24} color="#111111" />
-            <Text style={styles.kycTitle}>Identity Verification</Text>
+            <Text style={styles.kycTitle}>Xác minh danh tính</Text>
             {isLoadingKyc ? <ActivityIndicator size="small" color="#111111" /> : null}
           </View>
           <View style={[styles.kycStatusBadge, kycStatusMeta.badgeStyle]}>
@@ -435,9 +440,9 @@ export default function ProfileScreen() {
                   <Ionicons name="images-outline" size={18} color="#111111" />
                 </View>
                 <View style={styles.kycLinkCopy}>
-                  <Text style={styles.kycLinkTitle}>Show my KYC documents</Text>
+                  <Text style={styles.kycLinkTitle}>Xem hồ sơ KYC của tôi</Text>
                   <Text style={styles.kycLinkSubtitle}>
-                    View the photos and details you previously submitted for verification.
+                    Xem ảnh và thông tin bạn đã gửi để xác minh.
                   </Text>
                 </View>
                 <Ionicons name="chevron-forward" size={18} color="#9ca3af" />
@@ -446,8 +451,8 @@ export default function ProfileScreen() {
           ) : !kycError && !isLoadingKyc ? (
             <Text style={styles.kycPlaceholderText}>
               {normalizedKycStatus === 'NOT_STARTED'
-                ? 'You have not started the KYC process yet.'
-                : 'We could not find any KYC documents for your account.'}
+                ? 'Bạn chưa bắt đầu quy trình KYC.'
+                : 'Không tìm thấy hồ sơ KYC cho tài khoản của bạn.'}
             </Text>
           ) : null}
           {kycStatusMeta.actionLabel ? (
@@ -475,7 +480,7 @@ export default function ProfileScreen() {
         </View>
 
         <TouchableOpacity style={styles.logoutButton} onPress={() => void handleLogout()}>
-          <Text style={styles.logoutText}>Log Out</Text>
+          <Text style={styles.logoutText}>Đăng xuất</Text>
         </TouchableOpacity>
       </ScrollView>
       <ProfileSettingsModal
@@ -483,6 +488,7 @@ export default function ProfileScreen() {
         onClose={closeSettings}
         onUpdateProfile={handleUpdateProfilePress}
         onAddShippingAddress={handleAddShippingAddressPress}
+        onManageBankInfo={handleManageBankInfoPress}
       />
     </SafeAreaView>
   );

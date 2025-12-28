@@ -24,6 +24,8 @@ export type RentalOrderResponse = {
   orderId: number;
   startDate: string;
   endDate: string;
+  planStartDate: string;  // Ngày dự kiến bắt đầu (người dùng chọn)
+  planEndDate: string;    // Ngày dự kiến kết thúc (người dùng chọn)
   shippingAddress: string;
   orderStatus: string;
   depositAmount: number;
@@ -332,6 +334,7 @@ export type SearchRentalOrdersParams = {
   page?: number;
   size?: number;
   orderStatus?: string;
+  orderId?: number;
   sort?: string[];
 };
 
@@ -365,15 +368,19 @@ export async function searchRentalOrders(
     throw new Error('An access token is required to search rental orders.');
   }
 
-  const { page = 0, size = 10, orderStatus, sort } = params;
+  const { page = 0, size = 20, orderStatus, orderId, sort } = params;
 
   // Build query string
   const queryParams = new URLSearchParams();
   queryParams.set('page', String(page));
   queryParams.set('size', String(size));
 
-  if (orderStatus && orderStatus !== 'ALL') {
+  if (orderStatus && orderStatus !== 'ALL' && orderStatus !== 'All') {
     queryParams.set('orderStatus', orderStatus);
+  }
+
+  if (orderId && Number.isFinite(orderId) && orderId > 0) {
+    queryParams.set('orderId', String(orderId));
   }
 
   if (sort && sort.length > 0) {
