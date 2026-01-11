@@ -1,7 +1,26 @@
 import type { ContractResponse } from '@/services/contracts';
 
-export type OrderStatusFilter = 'All' | 'Pending' | 'Delivered' | 'In Use' | 'Completed';
-export type OrderStatus = Exclude<OrderStatusFilter, 'All'>;
+// Filter categories (grouped)
+export type OrderStatusCategory = 'All' | 'Pending' | 'Delivered' | 'In Use' | 'Completed';
+
+// Specific order statuses from API
+export type OrderStatusValue =
+  | 'PENDING_KYC'
+  | 'PENDING'
+  | 'PROCESSING'
+  | 'DELIVERING'
+  | 'RESCHEDULED'
+  | 'DELIVERY_CONFIRMED'
+  | 'IN_USE'
+  | 'CANCELLED'
+  | 'REJECTED'
+  | 'COMPLETED';
+
+// Combined filter type (can filter by category OR specific status)
+export type OrderStatusFilter = OrderStatusCategory | OrderStatusValue;
+
+// For mapping to categories (used in card display)
+export type OrderStatus = Exclude<OrderStatusCategory, 'All'>;
 
 export type OrderActionType =
   | 'continueProcess'
@@ -29,7 +48,8 @@ export type OrderCard = {
   depositAmount: number;
   depositLabel: string;
   totalDue: number;
-  statusFilter: OrderStatus;
+  rawStatus: string; // Original API status value (e.g., 'PENDING_KYC', 'DELIVERY_CONFIRMED')
+  statusFilter: OrderStatus; // Category for display (Pending, Delivered, In Use, Completed)
   statusLabel: string;
   statusColor: string;
   statusBackground: string;

@@ -82,9 +82,8 @@ export async function createRentalOrder(
     method: 'POST',
     headers: {
       ...jsonHeaders,
-      Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
-        session.accessToken
-      }`,
+      Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${session.accessToken
+        }`,
     },
     body: JSON.stringify(payload),
   });
@@ -143,9 +142,8 @@ export async function fetchRentalOrders(
   const response = await fetch(buildApiUrl('rental-orders'), {
     headers: {
       Accept: 'application/json',
-      Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
-        session.accessToken
-      }`,
+      Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${session.accessToken
+        }`,
     },
   });
 
@@ -178,9 +176,8 @@ export const fetchRentalOrderById = async (
   const response = await fetch(buildApiUrl(`rental-orders/${orderId}`), {
     headers: {
       Accept: 'application/json',
-      Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${
-        session.accessToken
-      }`,
+      Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${session.accessToken
+        }`,
     },
   });
 
@@ -202,10 +199,143 @@ export const fetchRentalOrderById = async (
   return json.data;
 };
 
+/**
+ * Confirm return of rental order (End Contract)
+ * Customer confirms they want to return the rental, triggering the return process
+ */
+export const confirmReturnRentalOrder = async (
+  session: SessionCredentials,
+  orderId: number
+): Promise<RentalOrderResponse> => {
+  if (!session?.accessToken) {
+    throw new Error('An access token is required to confirm return.');
+  }
+
+  if (!Number.isFinite(orderId) || orderId <= 0) {
+    throw new Error('A valid rental order identifier is required.');
+  }
+
+  const url = buildApiUrl(`rental-orders/${orderId}/confirm-return`);
+  console.log('[API] confirmReturnRentalOrder - URL:', url, 'Method: PATCH');
+
+  const response = await fetch(url, {
+    method: 'PATCH', // Changed from POST to PATCH to match backend
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      Authorization: `${session.tokenType && session.tokenType.length > 0 ? session.tokenType : 'Bearer'} ${session.accessToken
+        }`,
+    },
+  });
+
+  console.log('[API] confirmReturnRentalOrder - Response status:', response.status);
+
+  if (!response.ok) {
+    const apiMessage = await parseErrorMessage(response);
+    console.error('[API] confirmReturnRentalOrder - Error:', apiMessage);
+    throw new Error(
+      apiMessage ?? `Unable to confirm return for order ${orderId} (status ${response.status}).`,
+    );
+  }
+
+  const json = (await response.json()) as RentalOrderDetailsResult | null;
+  console.log('[API] confirmReturnRentalOrder - Response:', json?.status, json?.message);
+
+  if (!json || json.status !== 'SUCCESS' || !json.data) {
+    throw new Error(
+      json?.message ?? json?.details ?? 'Failed to confirm return. Please try again.',
+    );
+  }
+
+  return json.data;
+};
+
+// ============================================================
+// SEARCH API - Pagination và Filtering
+// ============================================================
+
+export type SearchRentalOrdersParams = {
+  page?: number;
+  size?: number;
+  orderStatus?: string;
+  sort?: string[];
+};
+
+export type PaginatedOrdersData = {
+  content: RentalOrderResponse[];
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
+  numberOfElements: number;
+  last: boolean;
+};
+
+type SearchRentalOrdersResult = {
+  status: string;
+  message: string;
+  details?: string;
+  code: number;
+  data: PaginatedOrdersData | null;
+};
+
+/**
+ * Search rental orders với pagination và filter
+ * GET /api/rental-orders/search
+ */
+export async function searchRentalOrders(
+  session: SessionCredentials,
+  params: SearchRentalOrdersParams = {}
+): Promise<PaginatedOrdersData> {
+  if (!session?.accessToken) {
+    throw new Error('An access token is required to search rental orders.');
+  }
+
+  const { page = 0, size = 10, orderStatus, sort } = params;
+
+  // Build query string
+  const queryParams = new URLSearchParams();
+  queryParams.set('page', String(page));
+  queryParams.set('size', String(size));
+
+  if (orderStatus && orderStatus !== 'ALL') {
+    queryParams.set('orderStatus', orderStatus);
+  }
+
+  if (sort && sort.length > 0) {
+    sort.forEach((s) => queryParams.append('sort', s));
+  }
+
+  const url = `${buildApiUrl('rental-orders/search')}?${queryParams.toString()}`;
+  console.log('[Orders] searchRentalOrders URL:', url);
+
+  const response = await fetch(url, {
+    headers: {
+      Accept: 'application/json',
+      Authorization: `${session.tokenType || 'Bearer'} ${session.accessToken}`,
+    },
+  });
+
+  if (!response.ok) {
+    const apiMessage = await parseErrorMessage(response);
+    throw new Error(apiMessage ?? `Unable to search rental orders (status ${response.status}).`);
+  }
+
+  const json = (await response.json()) as SearchRentalOrdersResult | null;
+
+  if (!json || json.status !== 'SUCCESS' || !json.data) {
+    throw new Error(json?.message ?? 'Failed to search rental orders. Please try again.');
+  }
+
+  return json.data;
+}
+
 export const rentalOrdersApi = {
   createRentalOrder,
   fetchRentalOrders,
   fetchRentalOrderById,
+  confirmReturnRentalOrder,
+  searchRentalOrders,
 };
 
 export default rentalOrdersApi;

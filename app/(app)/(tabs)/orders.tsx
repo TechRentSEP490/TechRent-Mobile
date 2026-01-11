@@ -1,4 +1,6 @@
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import Constants from 'expo-constants';
+import * as ExpoLinking from 'expo-linking';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, {
   useCallback,
@@ -15,11 +17,12 @@ import {
   Linking,
   NativeSyntheticEvent,
   Pressable,
+  ScrollView,
   Text,
   TextInput,
   TextInputKeyPressEventData,
   View,
-  type DimensionValue,
+  type DimensionValue
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
@@ -29,26 +32,46 @@ import type {
 } from 'react-native-webview/lib/WebViewTypes';
 
 import ContractPdfDownloader from '@/components/ContractPdfDownloader';
+import HandoverPdfDownloader from '@/components/HandoverPdfDownloader';
 import EmailEditorModal from '@/components/modals/EmailEditorModal';
+import HandoverReportsModal from '@/components/modals/HandoverReportsModal';
+import HandoverSignModal from '@/components/modals/HandoverSignModal';
 import OrderDetailsModal from '@/components/modals/OrderDetailsModal';
 import OrderStepsModal from '@/components/modals/OrderStepsModal';
-import RentalOrderStepsContent from '@/components/modals/RentalOrderStepsContent';
 import PaymentModal from '@/components/modals/PaymentModal';
+import RentalExpiryModal from '@/components/modals/RentalExpiryModal';
+import RentalOrderStepsContent from '@/components/modals/RentalOrderStepsContent';
+import SettlementModal from '@/components/modals/SettlementModal';
 import { useAuth } from '@/contexts/AuthContext';
 import { fetchContracts, sendContractPin, signContract, type ContractResponse } from '@/services/contracts';
 import { fetchDeviceModelById } from '@/services/device-models';
 import {
-  fetchRentalOrderById,
-  fetchRentalOrders,
-  type RentalOrderResponse,
-} from '@/services/rental-orders';
+  fetchHandoverReportsByOrderId,
+  sendHandoverReportPin,
+  signHandoverReport,
+} from '@/services/handover-reports';
+import { fetchInvoicesByOrderId, type Invoice } from '@/services/invoices';
 import {
   createPayment,
   type PaymentMethod,
   type PaymentSession,
 } from '@/services/payments';
+import {
+  confirmReturnRentalOrder,
+  fetchRentalOrderById,
+  fetchRentalOrders,
+  type RentalOrderResponse,
+} from '@/services/rental-orders';
+import {
+  fetchSettlementByOrderId,
+  respondSettlement,
+} from '@/services/settlements';
+import {
+  getConfirmedReturnOrders,
+  saveConfirmedReturnOrder,
+} from '@/storage/confirmed-returns';
 import styles from '@/style/orders.styles';
-import { formatCurrency, formatRentalPeriod, toTitleCase } from '@/utils/order-formatters';
+import type { HandoverReport } from '@/types/handover-reports';
 import type {
   DeviceLookupEntry,
   OrderActionType,
@@ -56,10 +79,44 @@ import type {
   OrderStatus,
   OrderStatusFilter,
 } from '@/types/orders';
+import type { Settlement } from '@/types/settlements';
+import { formatCurrency, formatRentalPeriod, toTitleCase } from '@/utils/order-formatters';
 
 type ApiErrorWithStatus = Error & { status?: number };
 
-const ORDER_FILTERS: OrderStatusFilter[] = ['All', 'Pending', 'Delivered', 'In Use', 'Completed'];
+const ORDER_FILTERS: OrderStatusFilter[] = [
+  'All',
+  'PENDING_KYC',
+  'PENDING',
+  'PROCESSING',
+  'DELIVERY_CONFIRMED',
+  'RESCHEDULED',
+  'DELIVERING',
+  'IN_USE',
+  'CANCELLED',
+  'REJECTED',
+  'COMPLETED',
+];
+
+// Formatted labels for filter chips
+const FILTER_LABELS: Record<OrderStatusFilter, string> = {
+  'All': 'All',
+  'PENDING_KYC': 'Pending KYC',
+  'PENDING': 'Pending',
+  'PROCESSING': 'Processing',
+  'DELIVERY_CONFIRMED': 'Confirmed Delivering',
+  'RESCHEDULED': 'Rescheduled',
+  'DELIVERING': 'Delivering',
+  'IN_USE': 'In Use',
+  'CANCELLED': 'Cancelled',
+  'REJECTED': 'Rejected',
+  'COMPLETED': 'Completed',
+  // Categories (for backwards compatibility)
+  'Pending': 'Pending',
+  'Delivered': 'Delivered',
+  'In Use': 'In Use',
+  'Completed': 'Completed',
+};
 
 type StatusMeta = {
   filter: OrderStatus;
@@ -99,70 +156,131 @@ const STATUS_TEMPLATES: Record<OrderStatus, { defaultLabel: string; color: strin
 const resolvePaymentUrl = (value: string | undefined, fallback: string) =>
   value && value.trim().length > 0 ? value.trim() : fallback;
 
+// Universal Links / App Links for VNPay redirect
+// VNPay only supports HTTPS URLs, so we use the website domain with /app prefix
+// The mobile app will intercept these URLs via Universal Links (iOS) / App Links (Android)
+const UNIVERSAL_LINK_BASE = 'https://www.techrent.website/app';
+
+// Generate Universal Link URL for payment result
+const getUniversalLinkPaymentUrl = (status?: string) => {
+  const params = new URLSearchParams();
+  if (status) {
+    params.set('status', status);
+  }
+  const queryString = params.toString();
+  return queryString ? `${UNIVERSAL_LINK_BASE}/payment-result?${queryString}` : `${UNIVERSAL_LINK_BASE}/payment-result`;
+};
+
+// Fallback to custom scheme for development/Expo Go
+const getPaymentResultUrl = (status?: string) => {
+  // In production (standalone app), use Universal Links
+  // In development (Expo Go), use custom scheme
+  const isExpoGo = !Constants.appOwnership || Constants.appOwnership === 'expo';
+
+  if (isExpoGo) {
+    // Expo Go: Use custom scheme (for testing)
+    const baseUrl = ExpoLinking.createURL('payment-result', {
+      queryParams: status ? { status } : undefined,
+    });
+    return baseUrl;
+  }
+
+  // Standalone/Dev Build: Use Universal Links
+  return getUniversalLinkPaymentUrl(status);
+};
+
+// These will be computed at runtime when needed
 const PAYMENT_RETURN_URL = resolvePaymentUrl(
   process.env.EXPO_PUBLIC_PAYMENT_RETURN_URL,
-  'https://example.com/payments/return',
+  getPaymentResultUrl(),
 );
 
 const PAYMENT_CANCEL_URL = resolvePaymentUrl(
   process.env.EXPO_PUBLIC_PAYMENT_CANCEL_URL,
-  'https://example.com/payments/cancel',
+  getPaymentResultUrl('cancel'),
 );
 
 const PAYMENT_SUCCESS_URL = resolvePaymentUrl(
   process.env.EXPO_PUBLIC_PAYMENT_SUCCESS_URL,
-  'https://example.com/payments/success',
+  getPaymentResultUrl('success'),
 );
 
 const PAYMENT_FAILURE_URL = resolvePaymentUrl(
   process.env.EXPO_PUBLIC_PAYMENT_FAILURE_URL,
-  'https://example.com/payments/failure',
+  getPaymentResultUrl('failure'),
 );
 
 const mapStatusToMeta = (status: string | null | undefined): StatusMeta => {
   const normalized = (status ?? '').toUpperCase();
+  // Note: 'filter' is used for styling (color/background) via STATUS_TEMPLATES,
+  // NOT for tab filtering (ORDER_STATUSES uses exact status codes for filtering)
   let filter: OrderStatus = 'Pending';
   let includeAction = true;
   let overrideLabel: string | null = null;
   let overrideAction: StatusMeta['action'] | undefined;
 
   switch (normalized) {
+    // === PENDING STATUSES (before payment/delivery) ===
     case 'PENDING_KYC':
-    case 'PENDING_KYX':
       filter = 'Pending';
       overrideLabel = 'Pending KYC';
       overrideAction = { label: 'Complete KYC', type: 'completeKyc' };
       break;
     case 'PENDING':
-    case 'PROCESSING':
-    case 'AWAITING_PAYMENT':
-    case 'AWAITING_APPROVAL':
-    case 'AWAITING_DOCUMENTS':
       filter = 'Pending';
+      overrideLabel = 'Pending';
+      // Default action: Continue Process (for payment)
       break;
-    case 'DELIVERED':
+    case 'PROCESSING':
+      filter = 'Pending';
+      overrideLabel = 'Processing';
+      // Default action: Continue Process
+      break;
+
+    // === DELIVERY STATUSES (after payment confirmed) ===
+    case 'DELIVERY_CONFIRMED':
+      filter = 'Pending'; // Confirmed for delivery, waiting to be delivered
+      overrideLabel = 'Ready to Deliver';
+      includeAction = false; // Waiting for staff to deliver
+      break;
     case 'DELIVERING':
-    case 'SHIPPED':
-    case 'OUT_FOR_DELIVERY':
       filter = 'Delivered';
+      overrideLabel = 'Delivering';
+      includeAction = false; // No action needed while delivering
       break;
+    case 'RESCHEDULED':
+      filter = 'Delivered';
+      overrideLabel = 'Rescheduled';
+      includeAction = false; // Delivery rescheduled, no customer action
+      break;
+
+    // === IN USE STATUS (customer has the device) ===
     case 'IN_USE':
-    case 'ACTIVE':
-    case 'IN_PROGRESS':
       filter = 'In Use';
+      overrideLabel = 'In Use';
+      // Default action: Extend Rental
       break;
+
+    // === COMPLETED STATUSES (order finished) ===
     case 'COMPLETED':
-    case 'RETURNED':
-    case 'CLOSED':
-    case 'FINISHED':
       filter = 'Completed';
+      overrideLabel = 'Completed';
+      // Default action: Rent Again
       break;
     case 'CANCELLED':
     case 'CANCELED':
       filter = 'Completed';
-      includeAction = false;
+      overrideLabel = 'Cancelled';
+      includeAction = false; // No action for cancelled orders
       break;
+    case 'REJECTED':
+      filter = 'Completed';
+      overrideLabel = 'Rejected';
+      includeAction = false; // No action for rejected orders
+      break;
+
     default:
+      // Unknown status - no action
       includeAction = false;
       break;
   }
@@ -237,7 +355,20 @@ const isContractSignedByCustomer = (contract?: ContractResponse | null): boolean
     return false;
   }
 
-  return contract.customerSignedBy !== null && contract.customerSignedBy !== undefined;
+  // Check signedAt field - API returns null for unsigned, or a timestamp string for signed
+  const signedAt = contract.signedAt;
+
+  // Handle null, undefined, or "null" string (API may return string "null")
+  if (signedAt === null || signedAt === undefined || signedAt === 'null') {
+    return false;
+  }
+
+  // Check if it's a valid non-empty string (timestamp)
+  if (typeof signedAt === 'string' && signedAt.trim().length > 0) {
+    return true;
+  }
+
+  return false;
 };
 
 const mapOrderResponseToCard = (
@@ -266,6 +397,7 @@ const mapOrderResponseToCard = (
     depositAmount,
     depositLabel: formatCurrency(depositAmount),
     totalDue,
+    rawStatus: (order.orderStatus ?? '').toUpperCase(), // Original API status for filtering
     statusFilter: statusMeta.filter,
     statusLabel: statusMeta.label,
     statusColor: statusMeta.color,
@@ -281,19 +413,19 @@ const PAYMENT_OPTIONS: {
   description: string;
   icon: React.ReactNode;
 }[] = [
-  {
-    id: 'VNPAY',
-    label: 'VNPay',
-    description: 'Pay with VNPay gateway',
-    icon: <Ionicons name="card-outline" size={24} color="#111" />,
-  },
-  {
-    id: 'PAYOS',
-    label: 'PayOS',
-    description: 'Pay with PayOS gateway',
-    icon: <MaterialCommunityIcons name="wallet-outline" size={24} color="#111" />,
-  },
-];
+    {
+      id: 'VNPAY',
+      label: 'VNPay',
+      description: 'Pay with VNPay gateway',
+      icon: <Ionicons name="card-outline" size={24} color="#111" />,
+    },
+    {
+      id: 'PAYOS',
+      label: 'PayOS',
+      description: 'Pay with PayOS gateway',
+      icon: <MaterialCommunityIcons name="wallet-outline" size={24} color="#111" />,
+    },
+  ];
 
 export default function OrdersScreen() {
   const router = useRouter();
@@ -356,6 +488,53 @@ export default function OrdersScreen() {
   const orderDetailsTargetIdRef = useRef<number | null>(null);
   const orderDetailsActiveRequestRef = useRef<{ orderId: number; cancelled: boolean } | null>(null);
 
+  // Invoice states for payment history
+  const [orderInvoices, setOrderInvoices] = useState<Invoice[]>([]);
+  const [invoicesLoading, setInvoicesLoading] = useState(false);
+
+  // Frontend lazy loading - show limited items initially for faster UI response
+  const ITEMS_PER_PAGE = 20;
+  const [displayLimit, setDisplayLimit] = useState(ITEMS_PER_PAGE);
+  // Handover PDF Downloader ref
+  const handoverPdfDownloaderRef = useRef<((report: HandoverReport) => Promise<void>) | null>(null);
+
+  // Handover Reports State
+  const [isHandoverModalVisible, setHandoverModalVisible] = useState(false);
+  const [handoverReports, setHandoverReports] = useState<HandoverReport[]>([]);
+  const [handoverLoading, setHandoverLoading] = useState(false);
+  const [handoverError, setHandoverError] = useState<string | null>(null);
+  const [isHandoverSignModalVisible, setHandoverSignModalVisible] = useState(false);
+  const [activeHandoverReport, setActiveHandoverReport] = useState<HandoverReport | null>(null);
+
+  // Settlement State
+  const [isSettlementModalVisible, setSettlementModalVisible] = useState(false);
+  const [settlement, setSettlement] = useState<Settlement | null>(null);
+  const [settlementLoading, setSettlementLoading] = useState(false);
+  const [settlementError, setSettlementError] = useState<string | null>(null);
+
+  // End Contract / Rental Expiry State
+  const [isRentalExpiryModalVisible, setRentalExpiryModalVisible] = useState(false);
+  const [expiringOrder, setExpiringOrder] = useState<OrderCard | null>(null);
+  const [confirmedReturnOrders, setConfirmedReturnOrders] = useState<Set<number>>(new Set());
+
+  // Load confirmed return orders from AsyncStorage on mount
+  useEffect(() => {
+    const loadConfirmedReturns = async () => {
+      try {
+        const confirmed = await getConfirmedReturnOrders();
+        setConfirmedReturnOrders(confirmed);
+      } catch (error) {
+        console.error('[Orders] Failed to load confirmed returns:', error);
+      }
+    };
+    loadConfirmedReturns();
+  }, []);
+
+  // Helper to check if order is confirmed for return
+  const isReturnConfirmed = useCallback((orderId: number) => {
+    return confirmedReturnOrders.has(orderId);
+  }, [confirmedReturnOrders]);
+
   const progressWidth = useMemo<DimensionValue>(() => `${(currentStep / 3) * 100}%`, [currentStep]);
   const isContractAlreadySigned = useMemo(
     () => isContractSignedByCustomer(activeContract),
@@ -384,6 +563,225 @@ export default function OrdersScreen() {
     () => otpDigits.every((digit) => digit.length === 1),
     [otpDigits],
   );
+
+  // Compute days until expiry for the selected order
+  const daysUntilExpiry = useMemo(() => {
+    if (!orderDetailsData?.endDate) return undefined;
+    const endDate = new Date(orderDetailsData.endDate);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    endDate.setHours(0, 0, 0, 0);
+    const diffTime = endDate.getTime() - today.getTime();
+    return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  }, [orderDetailsData?.endDate]);
+
+  // Check if order can end contract (IN_USE status)
+  const canEndContract = useMemo(() => {
+    return orderDetailsData?.orderStatus === 'IN_USE';
+  }, [orderDetailsData?.orderStatus]);
+
+  // Check if handover button should be shown (for orders that may have handover reports)
+  const shouldShowHandoverButton = useMemo(() => {
+    const status = orderDetailsData?.orderStatus?.toUpperCase();
+    // Show handover button for orders that are being delivered, delivered, or in use
+    return ['DELIVERING', 'RESCHEDULED', 'DELIVERY_CONFIRMED', 'IN_USE', 'COMPLETED'].includes(status || '');
+  }, [orderDetailsData?.orderStatus]);
+
+  // Check if there are unsigned handover reports
+  const hasUnsignedHandover = useMemo(() => {
+    return handoverReports.some(r => r.staffSigned && !r.customerSigned);
+  }, [handoverReports]);
+
+  // Check if settlement is awaiting response
+  const hasPendingSettlement = useMemo(() => {
+    return settlement?.state === 'AWAITING_RESPONSE';
+  }, [settlement?.state]);
+
+  // Load handover reports for an order
+  const loadHandoverReports = useCallback(async (orderId: number) => {
+    if (!session?.accessToken) return;
+
+    setHandoverLoading(true);
+    setHandoverError(null);
+    try {
+      const reports = await fetchHandoverReportsByOrderId(session, orderId);
+      setHandoverReports(reports);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Không thể tải biên bản bàn giao';
+      setHandoverError(message);
+    } finally {
+      setHandoverLoading(false);
+    }
+  }, [session]);
+
+  // Load settlement for an order
+  const loadSettlement = useCallback(async (orderId: number) => {
+    if (!session?.accessToken) return;
+
+    setSettlementLoading(true);
+    setSettlementError(null);
+    try {
+      const data = await fetchSettlementByOrderId(session, orderId);
+      setSettlement(data);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Không thể tải thông tin quyết toán';
+      setSettlementError(message);
+    } finally {
+      setSettlementLoading(false);
+    }
+  }, [session]);
+
+  // Handover Reports handlers
+  const handleOpenHandoverReports = useCallback(() => {
+    if (orderDetailsTargetId) {
+      loadHandoverReports(orderDetailsTargetId);
+      setHandoverModalVisible(true);
+    }
+  }, [orderDetailsTargetId, loadHandoverReports]);
+
+  const handleCloseHandoverReports = useCallback(() => {
+    setHandoverModalVisible(false);
+  }, []);
+
+  const handleViewHandoverPdf = useCallback(async (report: HandoverReport) => {
+    // Use the HandoverPdfDownloader ref to download
+    if (!handoverPdfDownloaderRef.current) {
+      Alert.alert('Lỗi', 'Không thể tải PDF. Vui lòng thử lại.');
+      return;
+    }
+    await handoverPdfDownloaderRef.current(report);
+  }, []);
+
+  const handleOpenHandoverSign = useCallback((report: HandoverReport) => {
+    setActiveHandoverReport(report);
+    setHandoverSignModalVisible(true);
+  }, []);
+
+  const handleCloseHandoverSign = useCallback(() => {
+    setHandoverSignModalVisible(false);
+    setActiveHandoverReport(null);
+  }, []);
+
+  const handleSendHandoverPin = useCallback(async (email: string) => {
+    if (!session?.accessToken || !activeHandoverReport) return;
+    await sendHandoverReportPin(session, activeHandoverReport.handoverReportId, { email });
+  }, [session, activeHandoverReport]);
+
+  const handleSignHandover = useCallback(async (pinCode: string, signature: string) => {
+    if (!session?.accessToken || !activeHandoverReport) return;
+    await signHandoverReport(session, activeHandoverReport.handoverReportId, { pinCode, customerSignature: signature });
+    // Refresh handover reports after signing
+    if (orderDetailsTargetId) {
+      loadHandoverReports(orderDetailsTargetId);
+    }
+    handleCloseHandoverSign();
+  }, [session, activeHandoverReport, orderDetailsTargetId, loadHandoverReports, handleCloseHandoverSign]);
+
+  // Settlement handlers
+  const handleOpenSettlement = useCallback(() => {
+    if (orderDetailsTargetId) {
+      loadSettlement(orderDetailsTargetId);
+      setSettlementModalVisible(true);
+    }
+  }, [orderDetailsTargetId, loadSettlement]);
+
+  const handleCloseSettlement = useCallback(() => {
+    setSettlementModalVisible(false);
+  }, []);
+
+  const handleAcceptSettlement = useCallback(async () => {
+    if (!session?.accessToken || !settlement) return;
+    await respondSettlement(session, settlement.settlementId, true);
+    // Refresh settlement after accepting
+    if (orderDetailsTargetId) {
+      loadSettlement(orderDetailsTargetId);
+    }
+  }, [session, settlement, orderDetailsTargetId, loadSettlement]);
+
+  const handleRejectSettlement = useCallback(async (reason?: string) => {
+    if (!session?.accessToken || !settlement) return;
+    await respondSettlement(session, settlement.settlementId, false, reason);
+    // Refresh settlement after rejecting
+    if (orderDetailsTargetId) {
+      loadSettlement(orderDetailsTargetId);
+    }
+  }, [session, settlement, orderDetailsTargetId, loadSettlement]);
+
+  // End Contract handlers
+  const handleOpenEndContract = useCallback(() => {
+    console.log('[EndContract] 🔍 handleOpenEndContract called', {
+      orderDetailsData: !!orderDetailsData,
+      orderDetailsTargetId,
+      ordersCount: orders.length,
+    });
+
+    if (orderDetailsData && orderDetailsTargetId) {
+      // Find the order card for this order
+      const orderCard = orders.find(o => o.orderId === orderDetailsTargetId);
+      console.log('[EndContract] 🔍 Found orderCard:', orderCard ? {
+        orderId: orderCard.orderId,
+        rawStatus: orderCard.rawStatus,
+        statusFilter: orderCard.statusFilter,
+      } : 'NOT FOUND');
+
+      if (orderCard) {
+        setExpiringOrder(orderCard);
+        setRentalExpiryModalVisible(true);
+        console.log('[EndContract] ✅ Modal should open now');
+      }
+    }
+  }, [orderDetailsData, orderDetailsTargetId, orders]);
+
+  const handleCloseEndContract = useCallback(() => {
+    console.log('[EndContract] 🔍 handleCloseEndContract called');
+    setRentalExpiryModalVisible(false);
+    setExpiringOrder(null);
+  }, []);
+
+  const handleConfirmReturn = useCallback(async () => {
+    console.log('[EndContract] 🔍 handleConfirmReturn called', {
+      hasSession: !!session?.accessToken,
+      expiringOrder: expiringOrder ? {
+        orderId: expiringOrder.orderId,
+        rawStatus: expiringOrder.rawStatus,
+      } : null,
+    });
+
+    if (!session?.accessToken || !expiringOrder) {
+      console.log('[EndContract] ❌ Missing session or expiringOrder, aborting');
+      return;
+    }
+
+    try {
+      console.log('[EndContract] 📤 Calling confirmReturnRentalOrder API...');
+      // Call API to confirm return
+      await confirmReturnRentalOrder(session, expiringOrder.orderId);
+      console.log('[EndContract] ✅ API call successful');
+
+      console.log('[EndContract] 💾 Saving to SecureStore...');
+      // Save to AsyncStorage for persistence
+      await saveConfirmedReturnOrder(expiringOrder.orderId);
+      console.log('[EndContract] ✅ Saved to SecureStore');
+
+      // Update local state
+      setConfirmedReturnOrders(prev => {
+        const newSet = new Set(prev);
+        newSet.add(expiringOrder.orderId);
+        console.log('[EndContract] ✅ Updated confirmedReturnOrders state:', Array.from(newSet));
+        return newSet;
+      });
+
+      // Show success message by keeping modal open (RentalExpiryModal handles showing success view)
+      // Don't close modal - let user see the success/thank you view
+
+      // Refresh orders in background
+      console.log('[EndContract] 🔄 Refreshing orders in background...');
+      setIsRefreshing(true);
+    } catch (error) {
+      console.error('[EndContract] ❌ Error confirming return:', error);
+      throw error; // Re-throw so RentalExpiryModal can handle the error
+    }
+  }, [session, expiringOrder]);
 
   const loadOrders = useCallback(
     async (mode: 'initial' | 'refresh' = 'initial') => {
@@ -545,15 +943,42 @@ export default function OrdersScreen() {
       return orders;
     }
 
+    // Check if selected filter is a specific status (uppercase) or a category
+    const isSpecificStatus = selectedFilter === selectedFilter.toUpperCase() || selectedFilter.includes('_');
+
+    if (isSpecificStatus) {
+      // Filter by exact rawStatus match
+      return orders.filter((order) => order.rawStatus === selectedFilter);
+    }
+
+    // Filter by category (statusFilter)
     return orders.filter((order) => order.statusFilter === selectedFilter);
   }, [orders, selectedFilter]);
 
+  // Lazy loading: only display limited items for faster UI
+  const displayedOrders = useMemo(() => {
+    return filteredOrders.slice(0, displayLimit);
+  }, [filteredOrders, displayLimit]);
+
+  const hasMoreToShow = filteredOrders.length > displayLimit;
+
+  // Reset display limit when filter changes
+  useEffect(() => {
+    setDisplayLimit(ITEMS_PER_PAGE);
+  }, [selectedFilter]);
+
+  const handleLoadMore = useCallback(() => {
+    setDisplayLimit((prev) => prev + ITEMS_PER_PAGE);
+  }, []);
+
   const openFlow = useCallback(
     (order: OrderCard, initialPaymentMethod?: PaymentMethod) => {
-      const shouldSkipToPayment = isContractSignedByCustomer(order.contract);
+      // Use the latest contract from contractsByOrderId instead of potentially stale order.contract
+      const latestContract = contractsByOrderId[String(order.orderId)] ?? order.contract ?? null;
+      const shouldSkipToPayment = isContractSignedByCustomer(latestContract);
       lastContractLoadRef.current = { orderId: null, requestId: 0 };
       setActiveOrder(order);
-      setActiveContract(order.contract ?? null);
+      setActiveContract(latestContract);
       setContractErrorMessage(null);
       setContractLoading(false);
       setModalVisible(true);
@@ -576,7 +1001,7 @@ export default function OrdersScreen() {
       setPaymentModalError(null);
       setContractRequestId((previous) => previous + 1);
     },
-    [defaultVerificationEmail],
+    [contractsByOrderId, defaultVerificationEmail],
   );
 
   const resetFlow = useCallback(() => {
@@ -640,8 +1065,8 @@ export default function OrdersScreen() {
       contractRequestId !== lastLoad.requestId || targetOrderId !== lastLoad.orderId;
     const alreadyLoadedForOrder = Boolean(
       activeContract &&
-        typeof activeContract.orderId === 'number' &&
-        activeContract.orderId === targetOrderId,
+      typeof activeContract.orderId === 'number' &&
+      activeContract.orderId === targetOrderId,
     );
 
     if (!hasRequestChanged && alreadyLoadedForOrder) {
@@ -904,7 +1329,7 @@ export default function OrdersScreen() {
       Alert.alert(
         'Verification code sent',
         response?.details ??
-          `We sent a new verification code to ${trimmedEmail}. Please check your inbox.`,
+        `We sent a new verification code to ${trimmedEmail}. Please check your inbox.`,
       );
     } catch (error) {
       const fallbackMessage = 'Unable to resend the verification code. Please try again.';
@@ -1054,22 +1479,37 @@ export default function OrdersScreen() {
         throw new Error('Unable to determine the total amount due for this order.');
       }
 
+      // Build URLs with orderId for the payment result screen to identify the order
+      const orderIdParam = `orderId=${activeOrder.orderId}`;
+      const buildPaymentUrl = (baseUrl: string, additionalParams?: string) => {
+        const separator = baseUrl.includes('?') ? '&' : '?';
+        const params = additionalParams ? `${orderIdParam}&${additionalParams}` : orderIdParam;
+        return `${baseUrl}${separator}${params}`;
+      };
+
+      // IMPORTANT: DO NOT send returnUrl with app deep links!
+      // If returnUrl is set, VNPay redirects DIRECTLY to the app, bypassing backend logic.
+      // Backend needs to handle the VNPay callback first to update payment status.
+      // Put deep links in frontendSuccessUrl/frontendFailureUrl - backend will redirect there after processing.
       const payload = {
         orderId: activeOrder.orderId,
         invoiceType: 'RENT_PAYMENT' as const,
         paymentMethod: selectedPayment,
         amount,
         description: `Rent payment for order #${activeOrder.orderId}`,
-        returnUrl: PAYMENT_RETURN_URL,
-        cancelUrl: PAYMENT_CANCEL_URL,
-        frontendSuccessUrl: PAYMENT_SUCCESS_URL,
-        frontendFailureUrl: PAYMENT_FAILURE_URL,
+        // returnUrl: null - Let backend use its default callback URL
+        // cancelUrl: null - Let backend handle cancellations
+        frontendSuccessUrl: buildPaymentUrl(PAYMENT_SUCCESS_URL),
+        frontendFailureUrl: buildPaymentUrl(PAYMENT_FAILURE_URL),
       };
 
       console.log('[Orders] Creating payment session', {
         orderId: activeOrder.orderId,
         paymentMethod: payload.paymentMethod,
         amount: payload.amount,
+        // Backend will redirect to these after updating payment status
+        frontendSuccessUrl: payload.frontendSuccessUrl,
+        frontendFailureUrl: payload.frontendFailureUrl,
       });
 
       const paymentSession = await createPayment(payload, activeSession);
@@ -1345,6 +1785,37 @@ export default function OrdersScreen() {
         orderDetailsCacheRef.current[orderId] = details;
         setOrderDetailsData(details);
         setOrderDetailsError(null);
+
+        // Fetch invoices for this order (in parallel, non-blocking)
+        setInvoicesLoading(true);
+        fetchInvoicesByOrderId(activeSession, orderId)
+          .then((invoices) => {
+            if (orderDetailsTargetIdRef.current === orderId) {
+              setOrderInvoices(invoices);
+            }
+          })
+          .catch((err) => {
+            console.warn('[Orders] Failed to load invoices', { orderId, err });
+            // Non-blocking, don't show error
+          })
+          .finally(() => {
+            if (orderDetailsTargetIdRef.current === orderId) {
+              setInvoicesLoading(false);
+            }
+          });
+
+        // Fetch settlement for this order (in parallel, non-blocking)
+        // This provides accurate deposit info (totalDeposit, fees, refund)
+        fetchSettlementByOrderId(activeSession, orderId)
+          .then((settlementData) => {
+            if (orderDetailsTargetIdRef.current === orderId) {
+              setSettlement(settlementData);
+            }
+          })
+          .catch((err) => {
+            console.warn('[Orders] Failed to load settlement', { orderId, err });
+            // Non-blocking, order may not have settlement yet
+          });
       } catch (error) {
         if (requestMarker.cancelled || orderDetailsTargetIdRef.current !== orderId) {
           return;
@@ -1389,7 +1860,8 @@ export default function OrdersScreen() {
       setOrderDetailsTargetId(parsedId);
       setOrderDetailsModalVisible(true);
       orderDetailsTargetIdRef.current = parsedId;
-      void loadOrderDetails(parsedId);
+      // Always force refresh to get latest status from server
+      void loadOrderDetails(parsedId, true);
     },
     [loadOrderDetails],
   );
@@ -1405,6 +1877,8 @@ export default function OrdersScreen() {
     setOrderDetailsError(null);
     setOrderDetailsTargetId(null);
     setOrderDetailsLoading(false);
+    setOrderInvoices([]);
+    setInvoicesLoading(false);
     orderDetailsTargetIdRef.current = null;
   }, []);
 
@@ -1423,7 +1897,7 @@ export default function OrdersScreen() {
       {({ downloadContract, downloadingContractId }) => {
         const isSelectedContractDownloading = Boolean(
           contractForSelectedOrder?.contractId &&
-            downloadingContractId === contractForSelectedOrder.contractId,
+          downloadingContractId === contractForSelectedOrder.contractId,
         );
         const isActiveContractDownloading = Boolean(
           activeContract?.contractId && downloadingContractId === activeContract.contractId,
@@ -1432,311 +1906,425 @@ export default function OrdersScreen() {
         return (
           <SafeAreaView style={styles.safeArea} edges={['top']}>
             <FlatList
-        ref={listRef}
-        data={filteredOrders}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.listContent}
-        showsVerticalScrollIndicator={false}
-        refreshing={isRefreshing}
-        onRefresh={handleRefresh}
-        renderItem={({ item }) => {
-          const isHighlighted = highlightedOrderId === item.id;
-          const thumbnailImages = item.deviceImageUrls?.filter((uri) => uri && uri.length > 0) ?? [];
-          const maxVisibleThumbnails = 3;
-          const visibleImages = thumbnailImages.slice(0, maxVisibleThumbnails);
-          const stackWidth =
-            64 +
-            Math.max(visibleImages.length - 1, 0) * 16 +
-            (thumbnailImages.length > maxVisibleThumbnails ? 16 : 0);
-          const canQuickPay = isContractSignedByCustomer(item.contract);
-          return (
-            <View
-              style={[
-                styles.orderCard,
-                isHighlighted && styles.orderCardHighlighted,
-              ]}
-            >
-              <View style={styles.cardLeading}>
-                {visibleImages.length > 0 ? (
-                  <View style={[styles.thumbnailStack, { width: stackWidth }]}>
-                    {visibleImages.map((uri, index) => (
-                      <Image
-                        key={`${item.id}-thumb-${index}`}
-                        source={{ uri }}
-                        resizeMode="cover"
-                        style={[styles.thumbnailImage, { left: index * 16, zIndex: visibleImages.length - index }]}
-                      />
-                    ))}
-                    {thumbnailImages.length > maxVisibleThumbnails ? (
-                      <View style={[styles.thumbnailMore, { left: visibleImages.length * 16 }]}>
-                        <Text style={styles.thumbnailMoreLabel}>
-                          +{thumbnailImages.length - maxVisibleThumbnails}
-                        </Text>
-                      </View>
-                    ) : null}
+              ref={listRef}
+              data={displayedOrders}
+              keyExtractor={(item) => item.id}
+              contentContainerStyle={styles.listContent}
+              showsVerticalScrollIndicator={false}
+              refreshing={isRefreshing}
+              onRefresh={handleRefresh}
+              // Performance optimizations
+              removeClippedSubviews={true}
+              maxToRenderPerBatch={5}
+              windowSize={5}
+              updateCellsBatchingPeriod={50}
+              initialNumToRender={5}
+              getItemLayout={(_, index) => ({
+                length: 200, // Approximate item height
+                offset: 200 * index,
+                index,
+              })}
+              ListFooterComponent={
+                hasMoreToShow ? (
+                  <Pressable
+                    onPress={handleLoadMore}
+                    style={{
+                      paddingVertical: 16,
+                      paddingHorizontal: 24,
+                      marginHorizontal: 16,
+                      marginBottom: 16,
+                      backgroundColor: '#f3f4f6',
+                      borderRadius: 12,
+                      alignItems: 'center',
+                    }}
+                  >
+                    <Text style={{ color: '#111', fontSize: 14, fontWeight: '600' }}>
+                      Load More ({filteredOrders.length - displayLimit} remaining)
+                    </Text>
+                  </Pressable>
+                ) : filteredOrders.length > ITEMS_PER_PAGE ? (
+                  <View style={{ paddingVertical: 16, alignItems: 'center' }}>
+                    <Text style={{ color: '#9ca3af', fontSize: 13 }}>All orders loaded</Text>
                   </View>
-                ) : (
-                  <View style={styles.thumbnail}>
-                    <Text style={styles.thumbnailText}>IMG</Text>
-                  </View>
-                )}
-              </View>
-              <View style={styles.cardBody}>
-                <View style={styles.cardHeader}>
-                  <Text style={styles.productName}>{item.title}</Text>
+                ) : null
+              }
+              renderItem={({ item }) => {
+                const isHighlighted = highlightedOrderId === item.id;
+                const thumbnailImages = item.deviceImageUrls?.filter((uri) => uri && uri.length > 0) ?? [];
+                const maxVisibleThumbnails = 3;
+                const visibleImages = thumbnailImages.slice(0, maxVisibleThumbnails);
+                const stackWidth =
+                  64 +
+                  Math.max(visibleImages.length - 1, 0) * 16 +
+                  (thumbnailImages.length > maxVisibleThumbnails ? 16 : 0);
+                // Quick pay only available if contract is signed AND order is still in Pending status
+                // Orders with DELIVERY_CONFIRMED or other Delivered statuses should not show quick pay
+                const canQuickPay = isContractSignedByCustomer(item.contract) && item.statusFilter === 'Pending';
+                return (
                   <View
                     style={[
-                      styles.statusBadge,
-                      {
-                        backgroundColor: item.statusBackground,
-                      },
+                      styles.orderCard,
+                      isHighlighted && styles.orderCardHighlighted,
                     ]}
                   >
-                    <Text style={[styles.statusText, { color: item.statusColor }]}>
-                      {item.statusLabel}
-                    </Text>
-                  </View>
-                </View>
-                <Text style={styles.orderNumber}>{item.deviceSummary}</Text>
-                <View style={styles.metaRow}>
-                  <View style={styles.metaGroup}>
-                    <Text style={styles.metaLabel}>Rental Period</Text>
-                    <Text style={styles.metaValue}>{item.rentalPeriod}</Text>
-                  </View>
-                  <View style={styles.metaGroup}>
-                    <Text style={styles.metaLabel}>Total Due</Text>
-                    <Text style={styles.metaValue}>{item.totalAmount}</Text>
-                  </View>
-                </View>
-                <View style={styles.cardFooter}>
-                  <Pressable onPress={() => handleViewDetails(item)}>
-                    <Text style={styles.viewDetails}>View Details</Text>
-                  </Pressable>
-                  {item.action ? (
-                    <Pressable
-                      style={styles.cardActionButton}
-                      onPress={() => handleCardAction(item)}
-                    >
-                      <Text style={styles.cardActionLabel}>{item.action.label}</Text>
-                    </Pressable>
-                  ) : null}
-                </View>
-                {canQuickPay ? (
-                  <View style={styles.quickPaySection}>
-                    <Text style={styles.quickPayLabel}>Quick payment</Text>
-                    <View style={styles.quickPayButtons}>
-                      {PAYMENT_OPTIONS.map((option) => (
-                        <Pressable
-                          key={`${item.id}-${option.id}`}
-                          style={styles.quickPayButton}
-                          onPress={() => handleQuickPaymentStart(item, option.id)}
+                    <View style={styles.cardLeading}>
+                      {visibleImages.length > 0 ? (
+                        <View style={[styles.thumbnailStack, { width: stackWidth }]}>
+                          {visibleImages.map((uri, index) => (
+                            <Image
+                              key={`${item.id}-thumb-${index}`}
+                              source={{ uri }}
+                              resizeMode="cover"
+                              style={[styles.thumbnailImage, { left: index * 16, zIndex: visibleImages.length - index }]}
+                            />
+                          ))}
+                          {thumbnailImages.length > maxVisibleThumbnails ? (
+                            <View style={[styles.thumbnailMore, { left: visibleImages.length * 16 }]}>
+                              <Text style={styles.thumbnailMoreLabel}>
+                                +{thumbnailImages.length - maxVisibleThumbnails}
+                              </Text>
+                            </View>
+                          ) : null}
+                        </View>
+                      ) : (
+                        <View style={styles.thumbnail}>
+                          <Text style={styles.thumbnailText}>IMG</Text>
+                        </View>
+                      )}
+                    </View>
+                    <View style={styles.cardBody}>
+                      <View style={styles.cardHeader}>
+                        <Text style={styles.productName}>{item.title}</Text>
+                        <View
+                          style={[
+                            styles.statusBadge,
+                            {
+                              backgroundColor: item.statusBackground,
+                            },
+                          ]}
                         >
-                          <View style={styles.quickPayButtonIcon}>
-                            {React.isValidElement(option.icon)
-                              ? React.cloneElement(option.icon, { size: 18 })
-                              : option.icon}
-                          </View>
-                          <Text style={styles.quickPayButtonLabel}>{option.label}</Text>
+                          <Text style={[styles.statusText, { color: item.statusColor }]}>
+                            {item.statusLabel}
+                          </Text>
+                        </View>
+                      </View>
+                      <Text style={styles.orderNumber}>{item.deviceSummary}</Text>
+                      <View style={styles.metaRow}>
+                        <View style={styles.metaGroup}>
+                          <Text style={styles.metaLabel}>Rental Period</Text>
+                          <Text style={styles.metaValue}>{item.rentalPeriod}</Text>
+                        </View>
+                        <View style={styles.metaGroup}>
+                          <Text style={styles.metaLabel}>Total Due</Text>
+                          <Text style={styles.metaValue}>{item.totalAmount}</Text>
+                        </View>
+                      </View>
+                      <View style={styles.cardFooter}>
+                        <Pressable onPress={() => handleViewDetails(item)}>
+                          <Text style={styles.viewDetails}>View Details</Text>
                         </Pressable>
-                      ))}
+                        {item.action ? (
+                          <Pressable
+                            style={styles.cardActionButton}
+                            onPress={() => handleCardAction(item)}
+                          >
+                            <Text style={styles.cardActionLabel}>{item.action.label}</Text>
+                          </Pressable>
+                        ) : null}
+                      </View>
+                      {canQuickPay ? (
+                        <View style={styles.quickPaySection}>
+                          <Text style={styles.quickPayLabel}>Quick payment</Text>
+                          <View style={styles.quickPayButtons}>
+                            {PAYMENT_OPTIONS.map((option) => (
+                              <Pressable
+                                key={`${item.id}-${option.id}`}
+                                style={styles.quickPayButton}
+                                onPress={() => handleQuickPaymentStart(item, option.id)}
+                              >
+                                <View style={styles.quickPayButtonIcon}>
+                                  {React.isValidElement(option.icon)
+                                    ? React.cloneElement(option.icon, { size: 18 })
+                                    : option.icon}
+                                </View>
+                                <Text style={styles.quickPayButtonLabel}>{option.label}</Text>
+                              </Pressable>
+                            ))}
+                          </View>
+                        </View>
+                      ) : null}
                     </View>
                   </View>
-                ) : null}
-              </View>
-            </View>
-          );
-        }}
-        ListHeaderComponent={() => (
-          <View style={styles.headerSection}>
-            <View style={styles.topBar}>
-              <Text style={styles.title}>My Orders</Text>
-              <View style={styles.headerActions}>
-                <Pressable style={styles.iconButton}>
-                  <Ionicons name="search" size={18} color="#111" />
-                </Pressable>
-                <Pressable style={styles.iconButton}>
-                  <Ionicons name="options-outline" size={18} color="#111" />
-                </Pressable>
-              </View>
-            </View>
-            <Text style={styles.subtitle}>
-              Track your order history, deliveries, and active rentals in one place.
-            </Text>
-            <View style={styles.filterRow}>
-              {ORDER_FILTERS.map((filter) => {
-                const isSelected = selectedFilter === filter;
-                return (
-                  <Pressable
-                    key={filter}
-                    style={[styles.filterChip, isSelected && styles.filterChipSelected]}
-                    onPress={() => setSelectedFilter(filter)}
-                  >
-                    <Text
-                      style={[styles.filterLabel, isSelected && styles.filterLabelSelected]}
-                    >
-                      {filter}
-                    </Text>
-                  </Pressable>
                 );
-              })}
-            </View>
-            {errorMessage && orders.length > 0 ? (
-              <View style={styles.inlineErrorBanner}>
-                <Ionicons name="warning-outline" size={16} color="#b45309" />
-                <Text style={styles.inlineErrorText}>{errorMessage}</Text>
-                <Pressable onPress={handleRetry}>
-                  <Text style={styles.inlineErrorAction}>Try again</Text>
-                </Pressable>
-              </View>
-            ) : null}
-          </View>
-        )}
-        ListEmptyComponent={() => (
-          <View style={styles.emptyState}>
-            {isLoading ? (
-              <>
-                <ActivityIndicator size="large" color="#111111" />
-                <Text style={styles.emptyTitle}>Loading orders…</Text>
-                <Text style={styles.emptySubtitle}>
-                  Hang tight while we fetch your latest rentals.
-                </Text>
-              </>
-            ) : (
-              <>
-                <Ionicons name="cube-outline" size={48} color="#9ca3af" />
-                <Text style={styles.emptyTitle}>
-                  {errorMessage ? 'Unable to load orders' : 'No orders found'}
-                </Text>
-                <Text style={styles.emptySubtitle}>
-                  {errorMessage
-                    ? errorMessage
-                    : 'Orders matching the selected status will appear here.'}
-                </Text>
-                {errorMessage ? (
-                  <Pressable style={styles.retryButton} onPress={handleRetry}>
-                    <Text style={styles.retryButtonText}>Try Again</Text>
-                  </Pressable>
-                ) : null}
-              </>
-            )}
-          </View>
-        )}
-        ItemSeparatorComponent={() => <View style={styles.separator} />}
-      />
-
-      <OrderStepsModal
-        visible={isModalVisible}
-        onClose={resetFlow}
-        currentStep={currentStep}
-        progressWidth={progressWidth}
-      >
-        <RentalOrderStepsContent
-          currentStep={currentStep}
-          activeOrder={activeOrder}
-          activeContract={activeContract}
-          isContractAlreadySigned={isContractAlreadySigned}
-          isContractLoading={isContractLoading}
-          contractErrorMessage={contractErrorMessage}
-          onRetryContract={handleRetryContract}
-          isDownloadingActiveContract={isActiveContractDownloading}
-          onDownloadContract={() => downloadContract(activeContract, activeOrder?.title)}
-          hasAgreed={hasAgreed}
-          onToggleAgreement={handleToggleAgreement}
-          isAgreementComplete={isAgreementComplete}
-          isSendingPin={isSendingPin}
-          onAgreementContinue={handleAgreementContinue}
-          onResetFlow={resetFlow}
-          verificationEmail={verificationEmail}
-          otpDigits={otpDigits}
-          otpRefs={otpRefs}
-          onOtpChange={handleOtpChange}
-          onOtpKeyPress={handleOtpKeyPress}
-          verificationError={verificationError}
-          onResendCode={handleResendCode}
-          isOtpComplete={isOtpComplete}
-          onVerifyCode={handleVerifyCode}
-          isSigningContract={isSigningContract}
-          onOpenEmailEditor={handleOpenEmailEditor}
-          onGoBack={goToPreviousStep}
-          paymentOptions={PAYMENT_OPTIONS}
-          selectedPayment={selectedPayment}
-          onSelectPayment={handleSelectPayment}
-          paymentError={paymentError}
-          onCreatePayment={handleCreatePayment}
-          isCreatingPayment={isCreatingPayment}
-        />
-      </OrderStepsModal>
-      <EmailEditorModal
-        visible={isEmailEditorVisible}
-        value={pendingEmailInput}
-        error={emailEditorError}
-        onChangeText={(value) => {
-          setPendingEmailInput(value);
-          if (emailEditorError) {
-            setEmailEditorError(null);
-          }
-        }}
-        onCancel={handleCloseEmailEditor}
-        onSave={handleSaveEmail}
-      />
-      <OrderDetailsModal
-        visible={isOrderDetailsModalVisible}
-        loading={orderDetailsLoading}
-        error={orderDetailsError}
-        order={orderDetailsData}
-        deviceDetailsLookup={deviceDetailsLookup}
-        contract={contractForSelectedOrder}
-        isDownloadingContract={isSelectedContractDownloading}
-        onClose={handleCloseOrderDetails}
-        onRetry={handleRetryOrderDetails}
-        onDownloadContract={
-          contractForSelectedOrder
-            ? () =>
-                downloadContract(
-                  contractForSelectedOrder,
-                  orderDetailsData ? `Order #${orderDetailsData.orderId}` : undefined,
-                )
-            : undefined
-        }
-      />
-      <PaymentModal
-        visible={isPaymentModalVisible}
-        title={paymentModalTitle}
-        onClose={handleClosePaymentModal}
-        canOpenInBrowser={Boolean(paymentCheckoutUrl)}
-        onOpenInBrowser={paymentCheckoutUrl ? handleOpenPaymentInBrowser : undefined}
-        errorMessage={paymentModalError}
-      >
-        {paymentCheckoutUrl ? (
-          <View style={styles.paymentWebViewContainer}>
-            <WebView
-              key={`payment-webview-${paymentWebViewKey}`}
-              source={{ uri: paymentCheckoutUrl }}
-              javaScriptEnabled
-              domStorageEnabled
-              cacheEnabled={false}
-              sharedCookiesEnabled
-              setSupportMultipleWindows={false}
-              originWhitelist={['https://*', 'http://*']}
-              mixedContentMode="always"
-              onLoadStart={handlePaymentWebViewLoadStart}
-              onLoadEnd={handlePaymentWebViewLoadEnd}
-              onError={handlePaymentWebViewError}
-              onHttpError={handlePaymentWebViewHttpError}
-              style={styles.paymentWebView}
+              }}
+              ListHeaderComponent={() => (
+                <View style={styles.headerSection}>
+                  <View style={styles.topBar}>
+                    <Text style={styles.title}>My Orders</Text>
+                    <View style={styles.headerActions}>
+                      <Pressable style={styles.iconButton}>
+                        <Ionicons name="search" size={18} color="#111" />
+                      </Pressable>
+                      <Pressable style={styles.iconButton}>
+                        <Ionicons name="options-outline" size={18} color="#111" />
+                      </Pressable>
+                    </View>
+                  </View>
+                  <Text style={styles.subtitle}>
+                    Track your order history, deliveries, and active rentals in one place.
+                  </Text>
+                  <View style={styles.filterRow}>
+                    {/* All button - always visible outside scroll */}
+                    <Pressable
+                      style={[styles.filterChip, selectedFilter === 'All' && styles.filterChipSelected]}
+                      onPress={() => setSelectedFilter('All')}
+                    >
+                      <Text
+                        style={[styles.filterLabel, selectedFilter === 'All' && styles.filterLabelSelected]}
+                      >
+                        All
+                      </Text>
+                    </Pressable>
+                    {/* Status filters - horizontal scrollable */}
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={styles.filterScrollContent}
+                    >
+                      {ORDER_FILTERS.filter((f) => f !== 'All').map((filter) => {
+                        const isSelected = selectedFilter === filter;
+                        const label = FILTER_LABELS[filter] || filter;
+                        return (
+                          <Pressable
+                            key={filter}
+                            style={[styles.filterChip, isSelected && styles.filterChipSelected]}
+                            onPress={() => setSelectedFilter(filter)}
+                          >
+                            <Text
+                              style={[styles.filterLabel, isSelected && styles.filterLabelSelected]}
+                            >
+                              {label}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+                  {errorMessage && orders.length > 0 ? (
+                    <View style={styles.inlineErrorBanner}>
+                      <Ionicons name="warning-outline" size={16} color="#b45309" />
+                      <Text style={styles.inlineErrorText}>{errorMessage}</Text>
+                      <Pressable onPress={handleRetry}>
+                        <Text style={styles.inlineErrorAction}>Try again</Text>
+                      </Pressable>
+                    </View>
+                  ) : null}
+                </View>
+              )}
+              ListEmptyComponent={() => (
+                <View style={styles.emptyState}>
+                  {isLoading ? (
+                    <>
+                      <ActivityIndicator size="large" color="#111111" />
+                      <Text style={styles.emptyTitle}>Loading orders…</Text>
+                      <Text style={styles.emptySubtitle}>
+                        Hang tight while we fetch your latest rentals.
+                      </Text>
+                    </>
+                  ) : (
+                    <>
+                      <Ionicons name="cube-outline" size={48} color="#9ca3af" />
+                      <Text style={styles.emptyTitle}>
+                        {errorMessage ? 'Unable to load orders' : 'No orders found'}
+                      </Text>
+                      <Text style={styles.emptySubtitle}>
+                        {errorMessage
+                          ? errorMessage
+                          : 'Orders matching the selected status will appear here.'}
+                      </Text>
+                      {errorMessage ? (
+                        <Pressable style={styles.retryButton} onPress={handleRetry}>
+                          <Text style={styles.retryButtonText}>Try Again</Text>
+                        </Pressable>
+                      ) : null}
+                    </>
+                  )}
+                </View>
+              )}
+              ItemSeparatorComponent={() => <View style={styles.separator} />}
             />
-            {isPaymentWebViewLoading ? renderPaymentLoading() : null}
-          </View>
-        ) : (
-          <View style={styles.paymentModalPlaceholder}>
-            <Ionicons name="warning-outline" size={24} color="#6b7280" />
-            <Text style={styles.paymentModalPlaceholderText}>
-              The payment link is unavailable. Close this screen and try again.
-            </Text>
-          </View>
-        )}
-      </PaymentModal>
-    </SafeAreaView>
+
+            <OrderStepsModal
+              visible={isModalVisible}
+              onClose={resetFlow}
+              currentStep={currentStep}
+              progressWidth={progressWidth}
+            >
+              <RentalOrderStepsContent
+                currentStep={currentStep}
+                activeOrder={activeOrder}
+                activeContract={activeContract}
+                isContractAlreadySigned={isContractAlreadySigned}
+                isContractLoading={isContractLoading}
+                contractErrorMessage={contractErrorMessage}
+                onRetryContract={handleRetryContract}
+                isDownloadingActiveContract={isActiveContractDownloading}
+                onDownloadContract={() => downloadContract(activeContract, activeOrder?.title)}
+                hasAgreed={hasAgreed}
+                onToggleAgreement={handleToggleAgreement}
+                isAgreementComplete={isAgreementComplete}
+                isSendingPin={isSendingPin}
+                onAgreementContinue={handleAgreementContinue}
+                onResetFlow={resetFlow}
+                verificationEmail={verificationEmail}
+                otpDigits={otpDigits}
+                otpRefs={otpRefs}
+                onOtpChange={handleOtpChange}
+                onOtpKeyPress={handleOtpKeyPress}
+                verificationError={verificationError}
+                onResendCode={handleResendCode}
+                isOtpComplete={isOtpComplete}
+                onVerifyCode={handleVerifyCode}
+                isSigningContract={isSigningContract}
+                onOpenEmailEditor={handleOpenEmailEditor}
+                onGoBack={goToPreviousStep}
+                paymentOptions={PAYMENT_OPTIONS}
+                selectedPayment={selectedPayment}
+                onSelectPayment={handleSelectPayment}
+                paymentError={paymentError}
+                onCreatePayment={handleCreatePayment}
+                isCreatingPayment={isCreatingPayment}
+              />
+            </OrderStepsModal>
+            <EmailEditorModal
+              visible={isEmailEditorVisible}
+              value={pendingEmailInput}
+              error={emailEditorError}
+              onChangeText={(value) => {
+                setPendingEmailInput(value);
+                if (emailEditorError) {
+                  setEmailEditorError(null);
+                }
+              }}
+              onCancel={handleCloseEmailEditor}
+              onSave={handleSaveEmail}
+            />
+            <OrderDetailsModal
+              visible={isOrderDetailsModalVisible}
+              loading={orderDetailsLoading}
+              error={orderDetailsError}
+              order={orderDetailsData}
+              deviceDetailsLookup={deviceDetailsLookup}
+              contract={contractForSelectedOrder}
+              isDownloadingContract={isSelectedContractDownloading}
+              onClose={handleCloseOrderDetails}
+              onRetry={handleRetryOrderDetails}
+              onDownloadContract={
+                contractForSelectedOrder
+                  ? () =>
+                    downloadContract(
+                      contractForSelectedOrder,
+                      orderDetailsData ? `Order #${orderDetailsData.orderId}` : undefined,
+                    )
+                  : undefined
+              }
+              onViewHandoverReports={handleOpenHandoverReports}
+              onViewSettlement={handleOpenSettlement}
+              onEndContract={canEndContract ? handleOpenEndContract : undefined}
+              hasUnsignedHandover={hasUnsignedHandover}
+              hasPendingSettlement={hasPendingSettlement}
+              canEndContract={canEndContract}
+              daysUntilExpiry={daysUntilExpiry}
+              shouldShowHandoverButton={shouldShowHandoverButton}
+              invoices={orderInvoices}
+              invoicesLoading={invoicesLoading}
+              settlement={settlement}
+            />
+            <HandoverPdfDownloader>
+              {({ downloadHandoverReport }) => {
+                // Store the download function in ref for use in handleViewHandoverPdf
+                handoverPdfDownloaderRef.current = downloadHandoverReport;
+                return (
+                  <HandoverReportsModal
+                    visible={isHandoverModalVisible}
+                    reports={handoverReports}
+                    loading={handoverLoading}
+                    error={handoverError}
+                    onClose={handleCloseHandoverReports}
+                    onViewReport={downloadHandoverReport}
+                    onSignReport={handleOpenHandoverSign}
+                    onRefresh={() => orderDetailsTargetId && loadHandoverReports(orderDetailsTargetId)}
+                  />
+                );
+              }}
+            </HandoverPdfDownloader>
+            <HandoverSignModal
+              visible={isHandoverSignModalVisible}
+              report={activeHandoverReport}
+              userEmail={user?.email ?? ''}
+              onClose={handleCloseHandoverSign}
+              onSendPin={handleSendHandoverPin}
+              onSign={handleSignHandover}
+            />
+            <SettlementModal
+              visible={isSettlementModalVisible}
+              settlement={settlement}
+              loading={settlementLoading}
+              error={settlementError}
+              onClose={handleCloseSettlement}
+              onAccept={handleAcceptSettlement}
+              onReject={handleRejectSettlement}
+              onRefresh={() => orderDetailsTargetId && loadSettlement(orderDetailsTargetId)}
+            />
+            <RentalExpiryModal
+              visible={isRentalExpiryModalVisible}
+              orderId={expiringOrder?.orderId ?? 0}
+              orderDisplayId={String(expiringOrder?.orderId ?? '')}
+              startDate={orderDetailsData?.startDate ?? ''}
+              endDate={orderDetailsData?.endDate ?? ''}
+              daysRemaining={daysUntilExpiry ?? 0}
+              isConfirmed={expiringOrder ? isReturnConfirmed(expiringOrder.orderId) : false}
+              onConfirmReturn={handleConfirmReturn}
+              onClose={handleCloseEndContract}
+            />
+            <PaymentModal
+              visible={isPaymentModalVisible}
+              title={paymentModalTitle}
+              onClose={handleClosePaymentModal}
+              canOpenInBrowser={Boolean(paymentCheckoutUrl)}
+              onOpenInBrowser={paymentCheckoutUrl ? handleOpenPaymentInBrowser : undefined}
+              errorMessage={paymentModalError}
+            >
+              {paymentCheckoutUrl ? (
+                <View style={styles.paymentWebViewContainer}>
+                  <WebView
+                    key={`payment-webview-${paymentWebViewKey}`}
+                    source={{ uri: paymentCheckoutUrl }}
+                    javaScriptEnabled
+                    domStorageEnabled
+                    cacheEnabled={false}
+                    sharedCookiesEnabled
+                    setSupportMultipleWindows={false}
+                    originWhitelist={['https://*', 'http://*']}
+                    mixedContentMode="always"
+                    onLoadStart={handlePaymentWebViewLoadStart}
+                    onLoadEnd={handlePaymentWebViewLoadEnd}
+                    onError={handlePaymentWebViewError}
+                    onHttpError={handlePaymentWebViewHttpError}
+                    style={styles.paymentWebView}
+                  />
+                  {isPaymentWebViewLoading ? renderPaymentLoading() : null}
+                </View>
+              ) : (
+                <View style={styles.paymentModalPlaceholder}>
+                  <Ionicons name="warning-outline" size={24} color="#6b7280" />
+                  <Text style={styles.paymentModalPlaceholderText}>
+                    The payment link is unavailable. Close this screen and try again.
+                  </Text>
+                </View>
+              )}
+            </PaymentModal>
+          </SafeAreaView>
         );
       }}
     </ContractPdfDownloader>

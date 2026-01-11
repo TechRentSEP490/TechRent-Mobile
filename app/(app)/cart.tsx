@@ -1,10 +1,3 @@
-import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native';
-import { useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import Toast from 'react-native-toast-message';
 import DatePickerField from '@/components/date-picker-field';
 import SavedAddressesModal from '@/components/modals/SavedAddressesModal';
 import { useAuth } from '@/contexts/AuthContext';
@@ -12,6 +5,7 @@ import { useCart } from '@/contexts/CartContext';
 import { useDeviceModel } from '@/hooks/use-device-model';
 import { createRentalOrder } from '@/services/rental-orders';
 import { fetchShippingAddresses, type ShippingAddress } from '@/services/shipping-addresses';
+import styles from '@/style/cart.styles';
 import { addDays, clampToStartOfDay, formatDisplayDate, parseDateParam } from '@/utils/dates';
 import {
   determineCurrency,
@@ -20,7 +14,13 @@ import {
   getDepositRatio,
   getDeviceValue,
 } from '@/utils/product-pricing';
-import styles from '@/style/cart.styles';
+import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useMemo, useState } from 'react';
+import { ActivityIndicator, Alert, Image, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import Toast from 'react-native-toast-message';
 const formatAddressTimestamp = (value?: string | null) => {
   if (!value) {
     return null;
@@ -53,29 +53,15 @@ export default function CartScreen() {
     return Number.isNaN(parsed) || parsed <= 0 ? 1 : parsed;
   }, [quantityParam]);
 
-  const fallbackItem = useMemo(() => {
-    if (!product) {
-      return null;
-    }
-
-    return {
-      product,
-      quantity,
-    };
-  }, [product, quantity]);
-
-  const items = useMemo(() => {
-    if (cartItems.length > 0) {
-      return cartItems;
-    }
-
-    return fallbackItem ? [fallbackItem] : [];
-  }, [cartItems, fallbackItem]);
+  // Chỉ dùng items từ CartContext, không có fallback mock data
+  const items = cartItems;
   const hasItems = items.length > 0;
   const isContextBacked = cartItems.length > 0;
 
+  // Default: Start date = ngày mai (today + 1), End date = Start + 1 ngày
   const today = clampToStartOfDay(new Date());
-  const initialStartDate = parseDateParam(startParam, today);
+  const tomorrow = addDays(today, 1);
+  const initialStartDate = parseDateParam(startParam, tomorrow);
   const initialEndFallback = addDays(initialStartDate, 1);
   const initialEndDate = parseDateParam(endParam, initialEndFallback);
 
@@ -92,7 +78,8 @@ export default function CartScreen() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const minimumStartDate = today;
+  // Ngày bắt đầu tối thiểu = ngày mai (không cho phép thuê trong ngày hôm nay)
+  const minimumStartDate = tomorrow;
   const minimumEndDate = useMemo(() => addDays(startDate, 1), [startDate]);
   const isRangeInvalid = endDate.getTime() <= startDate.getTime();
   const rentalDurationInDays = useMemo(() => {
@@ -309,31 +296,79 @@ export default function CartScreen() {
 
     return formatCurrencyValue(totalOrderAmount + depositValue, summaryCurrency);
   }, [depositTotalValue, hasItems, summaryCurrency, totalOrderAmount]);
+  // Label hiển thị số ngày thuê
+  const rentalDurationLabel = useMemo(() => {
+    if (!hasItems) {
+      return '—';
+    }
+    return `${rentalDurationInDays} ${rentalDurationInDays === 1 ? 'day' : 'days'}`;
+  }, [hasItems, rentalDurationInDays]);
+
+  // Tổng tiền thuê = Daily Rate × Số ngày × Số lượng (không bao gồm đặt cọc)
+  const rentalCostLabel = useMemo(() => {
+    if (!hasItems || summaryCurrency === null || totalOrderAmount === null) {
+      return '—';
+    }
+    return formatCurrencyValue(totalOrderAmount, summaryCurrency);
+  }, [hasItems, summaryCurrency, totalOrderAmount]);
+
+  // Type cho các metrics hiển thị trong summary
+  type SummaryMetric = {
+    label: string;
+    value: string;
+    description?: string;
+    highlight?: boolean;
+  };
+
   const summaryMetrics = useMemo(
-    () => {
-      const metrics = [
+    (): SummaryMetric[] => {
+      const metrics: SummaryMetric[] = [
         { label: 'Total Items', value: deviceLabel },
-        { label: 'Daily Total', value: formattedTotal },
-        { label: 'Deposit Total', value: depositTotalLabel },
-        { label: 'Device Value Total', value: deviceValueTotalLabel },
+        { label: 'Rental Duration', value: rentalDurationLabel },
+        { label: 'Daily Rate Total', value: formattedTotal },
+        { label: 'Rental Cost', value: rentalCostLabel, description: `(${rentalDurationLabel} × Daily Rate)` },
+        { label: 'Deposit (Refundable)', value: depositTotalLabel, description: 'Hoàn lại khi trả thiết bị' },
+        { label: 'Device Value', value: deviceValueTotalLabel },
       ];
 
-      metrics.push({ label: 'Total Cost', value: totalCostLabel, highlight: true });
+      metrics.push({ label: 'Total Payment', value: totalCostLabel, highlight: true, description: 'Rental Cost + Deposit' });
 
       return metrics;
     },
-    [depositTotalLabel, deviceLabel, deviceValueTotalLabel, formattedTotal, totalCostLabel]
+    [
+      depositTotalLabel,
+      deviceLabel,
+      deviceValueTotalLabel,
+      formattedTotal,
+      rentalCostLabel,
+      rentalDurationLabel,
+      totalCostLabel,
+    ]
   );
 
-  if (!hasItems && !product) {
+  // Hiển thị empty state khi cart trống
+  if (!hasItems) {
     return (
       <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
+        <View style={styles.header}>
+          <TouchableOpacity style={styles.headerButton} onPress={() => router.back()}>
+            <Ionicons name="chevron-back" size={22} color="#111111" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Cart</Text>
+          <View style={styles.headerPlaceholder} />
+        </View>
         <View style={styles.loadingState}>
-          {loading ? (
-            <ActivityIndicator size="large" color="#111111" />
-          ) : (
-            <Text style={styles.loadingStateText}>Device not found.</Text>
-          )}
+          <Ionicons name="cart-outline" size={64} color="#d0d0d0" />
+          <Text style={styles.loadingStateText}>Your cart is empty</Text>
+          <Text style={[styles.loadingStateText, { marginTop: 8, fontSize: 14 }]}>
+            Add devices from the catalog to start renting
+          </Text>
+          <TouchableOpacity
+            style={{ marginTop: 20, backgroundColor: '#111', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 12 }}
+            onPress={() => router.push('/(app)/(tabs)/home')}
+          >
+            <Text style={{ color: '#fff', fontWeight: '600' }}>Browse Devices</Text>
+          </TouchableOpacity>
         </View>
       </SafeAreaView>
     );
@@ -493,6 +528,9 @@ export default function CartScreen() {
               <Text style={[styles.summaryValue, metric.highlight && styles.summaryValueHighlight]}>
                 {metric.value}
               </Text>
+              {metric.description ? (
+                <Text style={styles.summaryDescription}>{metric.description}</Text>
+              ) : null}
             </View>
           ))}
         </View>
@@ -520,7 +558,7 @@ export default function CartScreen() {
 
           <View style={styles.orderBody}>
             {hasItems ? (
-              items.map((item) => {
+              items.map((item, index) => {
                 const itemCurrency = determineCurrency(item.product);
                 const itemDailyRate = getDailyRate(item.product);
                 const itemLineTotal = formatCurrencyValue(itemDailyRate * item.quantity, itemCurrency);
@@ -547,6 +585,13 @@ export default function CartScreen() {
                   deviceValue !== null && item.quantity > 1
                     ? formatCurrencyValue(deviceValue * item.quantity, itemCurrency)
                     : null;
+                const singleItemTotalPaymentLabel =
+                  index === 0
+                    ? formatCurrencyValue(
+                      itemDailyRate * item.quantity + (depositAmountPerUnit ?? 0) * item.quantity,
+                      itemCurrency
+                    )
+                    : null;
                 const availableStock = Number.isFinite(item.product.stock)
                   ? Math.max(0, Math.floor(item.product.stock))
                   : Number.POSITIVE_INFINITY;
@@ -561,7 +606,15 @@ export default function CartScreen() {
                     <View style={styles.orderItemHeader}>
                       <View style={styles.orderItemTitle}>
                         <View style={styles.productBadge}>
-                          <Ionicons name="phone-portrait-outline" size={24} color="#6f6f6f" />
+                          {item.product.imageURL ? (
+                            <Image
+                              source={{ uri: item.product.imageURL }}
+                              style={styles.productImage}
+                              resizeMode="cover"
+                            />
+                          ) : (
+                            <Ionicons name="phone-portrait-outline" size={24} color="#6f6f6f" />
+                          )}
                         </View>
                         <View style={styles.productDetails}>
                           <Text style={styles.productName}>{itemLabel}</Text>
@@ -614,6 +667,12 @@ export default function CartScreen() {
                         <Text style={styles.orderItemMetricLabel}>Daily rate</Text>
                         <Text style={styles.orderItemMetricValue}>{itemDailyRateLabel}</Text>
                       </View>
+                      {singleItemTotalPaymentLabel ? (
+                        <View style={styles.orderItemMetric}>
+                          <Text style={styles.orderItemMetricLabel}>Single total payment</Text>
+                          <Text style={styles.orderItemMetricValue}>{singleItemTotalPaymentLabel}</Text>
+                        </View>
+                      ) : null}
                       {depositSummary ? (
                         <View style={styles.orderItemMetric}>
                           <Text style={styles.orderItemMetricLabel}>Deposit</Text>
@@ -693,10 +752,9 @@ export default function CartScreen() {
               {isLoadingAddresses
                 ? 'Loading your saved addresses…'
                 : savedAddresses.length > 0
-                ? `You have ${savedAddresses.length} saved ${
-                    savedAddresses.length === 1 ? 'address' : 'addresses'
+                  ? `You have ${savedAddresses.length} saved ${savedAddresses.length === 1 ? 'address' : 'addresses'
                   }.`
-                : 'Add a shipping address so you can reuse it for future rentals.'}
+                  : 'Add a shipping address so you can reuse it for future rentals.'}
             </Text>
           )}
         </View>
