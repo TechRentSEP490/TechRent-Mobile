@@ -351,6 +351,12 @@ export default function CartScreen() {
   const minimumStartDate = today;
   const minimumEndDate = useMemo(() => addDays(startDate, 1), [startDate]);
   const isRangeInvalid = endDate.getTime() <= startDate.getTime();
+  const rentalDurationInDays = useMemo(() => {
+    const millisecondsPerDay = 24 * 60 * 60 * 1000;
+    const rawDuration = Math.round((endDate.getTime() - startDate.getTime()) / millisecondsPerDay);
+
+    return Math.max(1, rawDuration);
+  }, [endDate, startDate]);
 
   const fetchSavedAddresses = useCallback(async () => {
     const activeSession = session?.accessToken ? session : await ensureSession();
@@ -458,20 +464,37 @@ export default function CartScreen() {
     return uniqueCurrencies.values().next().value ?? null;
   }, [hasItems, items]);
 
-  const totalAmount =
-    summaryCurrency !== null
-      ? items.reduce((sum, item) => sum + getDailyRate(item.product) * item.quantity, 0)
-      : null;
-  const formattedTotal =
-    hasItems && totalAmount !== null && summaryCurrency
-      ? formatCurrencyValue(totalAmount, summaryCurrency)
-      : '—';
+  const totalAmount = useMemo(() => {
+    if (summaryCurrency === null) {
+      return null;
+    }
 
-  const { depositTotalLabel, deviceValueTotalLabel } = useMemo(() => {
+    return items.reduce((sum, item) => sum + getDailyRate(item.product) * item.quantity, 0);
+  }, [items, summaryCurrency]);
+  const totalOrderAmount = useMemo(() => {
+    if (summaryCurrency === null) {
+      return null;
+    }
+
+    return items.reduce(
+      (sum, item) => sum + getDailyRate(item.product) * item.quantity * rentalDurationInDays,
+      0
+    );
+  }, [items, rentalDurationInDays, summaryCurrency]);
+  const formattedTotal = useMemo(() => {
+    if (!hasItems || totalAmount === null || !summaryCurrency) {
+      return '—';
+    }
+
+    return formatCurrencyValue(totalAmount, summaryCurrency);
+  }, [hasItems, summaryCurrency, totalAmount]);
+
+  const { depositTotalLabel, deviceValueTotalLabel, depositTotalValue } = useMemo(() => {
     if (!hasItems || summaryCurrency === null) {
       return {
         depositTotalLabel: '—',
         deviceValueTotalLabel: '—',
+        depositTotalValue: null,
       };
     }
 
@@ -504,8 +527,49 @@ export default function CartScreen() {
         hasDeviceValue && summaryCurrency
           ? formatCurrencyValue(deviceValueSum, summaryCurrency)
           : '—',
+      depositTotalValue: hasDepositAmount ? depositSum : null,
     };
   }, [hasItems, items, summaryCurrency]);
+
+  const totalQuantity = useMemo(
+    () => items.reduce((sum, item) => sum + item.quantity, 0),
+    [items]
+  );
+  const deviceLabel = useMemo(() => {
+    if (!hasItems) {
+      return '0 devices';
+    }
+
+    return `${totalQuantity} ${totalQuantity === 1 ? 'device' : 'devices'}`;
+  }, [hasItems, totalQuantity]);
+  const totalCostLabel = useMemo(() => {
+    if (!hasItems) {
+      return '—';
+    }
+
+    if (summaryCurrency === null || totalOrderAmount === null) {
+      return '—';
+    }
+
+    const depositValue = depositTotalValue ?? 0;
+
+    return formatCurrencyValue(totalOrderAmount + depositValue, summaryCurrency);
+  }, [depositTotalValue, hasItems, summaryCurrency, totalOrderAmount]);
+  const summaryMetrics = useMemo(
+    () => {
+      const metrics = [
+        { label: 'Total Items', value: deviceLabel },
+        { label: 'Daily Total', value: formattedTotal },
+        { label: 'Deposit Total', value: depositTotalLabel },
+        { label: 'Device Value Total', value: deviceValueTotalLabel },
+      ];
+
+      metrics.push({ label: 'Total Cost', value: totalCostLabel, highlight: true });
+
+      return metrics;
+    },
+    [depositTotalLabel, deviceLabel, deviceValueTotalLabel, formattedTotal, totalCostLabel]
+  );
 
   if (!hasItems && !product) {
     return (
@@ -521,10 +585,6 @@ export default function CartScreen() {
     );
   }
 
-  const totalQuantity = items.reduce((sum, item) => sum + item.quantity, 0);
-  const deviceLabel = hasItems
-    ? `${totalQuantity} ${totalQuantity === 1 ? 'device' : 'devices'}`
-    : '0 devices';
   const rentalRangeLabel =
     endDate.getTime() === startDate.getTime()
       ? formatDisplayDate(startDate)
@@ -673,15 +733,12 @@ export default function CartScreen() {
         )}
 
         <View style={styles.summaryRow}>
-          {[
-            { label: 'Total Items', value: deviceLabel },
-            { label: 'Daily Total', value: formattedTotal },
-            { label: 'Deposit Total', value: depositTotalLabel },
-            { label: 'Device Value Total', value: deviceValueTotalLabel },
-          ].map((metric) => (
+          {summaryMetrics.map((metric) => (
             <View key={metric.label} style={styles.summaryMetric}>
               <Text style={styles.summaryLabel}>{metric.label}</Text>
-              <Text style={styles.summaryValue}>{metric.value}</Text>
+              <Text style={[styles.summaryValue, metric.highlight && styles.summaryValueHighlight]}>
+                {metric.value}
+              </Text>
             </View>
           ))}
         </View>
@@ -1133,6 +1190,9 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#111111',
     marginTop: 4,
+  },
+  summaryValueHighlight: {
+    color: '#d32f2f',
   },
   orderCard: {
     borderRadius: 20,
